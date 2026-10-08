@@ -1,0 +1,6 @@
+{
+  "name": "Flontmie - Music Streaming & Industry Hub",
+  "description": "Next-generation music streaming web app with YouTube Music inspired player, mobile dock, playlist curation, social jam sharing, distributor ingestion portal, and comprehensive owner admin governance.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
