@@ -43,6 +43,7 @@ interface HomeFeedProps {
   onAddToQueue: (track: Track) => void;
   onOpenCreatePlaylist: () => void;
   onToggleFollowAccount: (accountId: string) => void;
+  onSelectArtist?: (artistId: string) => void;
 }
 
 export const HomeFeed: React.FC<HomeFeedProps> = ({
@@ -62,6 +63,7 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
   onAddToQueue,
   onOpenCreatePlaylist,
   onToggleFollowAccount,
+  onSelectArtist,
 }) => {
   // AUTOMATIC DETECTION OF TIME OF DAY (NO MANUAL USER SELECTOR)
   const getAutoDetectedTimeOfDay = (): { id: TimeOfDay; title: string; greeting: string; icon: string } => {
@@ -306,7 +308,8 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
         {artistList.map((artist) => (
           <div
             key={artist.id}
-            className="w-44 sm:w-52 shrink-0 p-3.5 rounded-2xl bg-gradient-to-b from-neutral-900/60 to-neutral-950 border border-white/[0.08] hover:border-white/20 transition-all flex flex-col items-center text-center snap-start select-none group"
+            onClick={() => onSelectArtist && onSelectArtist(artist.id)}
+            className="w-44 sm:w-52 shrink-0 p-3.5 rounded-2xl bg-gradient-to-b from-neutral-900/60 to-neutral-950 border border-white/[0.08] hover:border-white/20 transition-all flex flex-col items-center text-center snap-start select-none group cursor-pointer"
           >
             <div className="relative w-24 h-24 sm:w-28 sm:h-28 rounded-full overflow-hidden mb-3 border-2 border-white/20 group-hover:border-red-500 shadow-xl">
               <img
@@ -316,7 +319,8 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
                 className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
               />
               <button
-                onClick={() => {
+                onClick={(e) => {
+                  e.stopPropagation();
                   const firstTrack = tracks.find((t) => t.artistId === artist.id);
                   if (firstTrack) onPlayTrack(firstTrack);
                 }}

@@ -43,6 +43,8 @@ import { ArtistDashboard } from './components/artist/ArtistDashboard';
 import { LabelDashboard } from './components/label/LabelDashboard';
 import { DistributorDashboard } from './components/distributor/DistributorDashboard';
 import { AdminDashboard } from './components/admin/AdminDashboard';
+import { FullPlaybackScreen } from './components/player/FullPlaybackScreen';
+import { PublicArtistPage } from './components/artist/PublicArtistPage';
 import { Heart } from 'lucide-react';
 
 export default function App() {
@@ -52,6 +54,7 @@ export default function App() {
   const [selectedMood, setSelectedMood] = useState<MoodCategory>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
+  const [selectedArtistId, setSelectedArtistId] = useState<string | null>(null);
 
   // Desktop sidebar collapse state
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
@@ -59,6 +62,7 @@ export default function App() {
   // Music Catalog & Hub State
   const [tracks, setTracks] = useState<Track[]>(INITIAL_TRACKS);
   const [playlists, setPlaylists] = useState<Playlist[]>(INITIAL_PLAYLISTS);
+  const [artistProfiles, setArtistProfiles] = useState<Record<string, ArtistProfile>>(ARTIST_PROFILES);
   const [likedTrackIds, setLikedTrackIds] = useState<string[]>(['track-afro-1', 'track-pop-1', 'track-synth-1']);
   const [labelArtists, setLabelArtists] = useState<LabelArtist[]>(LABEL_ARTISTS);
   const [upcomingReleases, setUpcomingReleases] = useState<ReleaseScheduleItem[]>(UPCOMING_RELEASES);
@@ -77,6 +81,7 @@ export default function App() {
   const [repeatMode, setRepeatMode] = useState<'off' | 'all' | 'one'>('off');
   const [isVideoMode, setIsVideoMode] = useState<boolean>(false);
   const [queue, setQueue] = useState<Track[]>(INITIAL_TRACKS.slice(1));
+  const [isFullPlayerOpen, setIsFullPlayerOpen] = useState<boolean>(false);
 
   // Drawer & Modal States
   const [isQueueOpen, setIsQueueOpen] = useState<boolean>(false);
@@ -341,20 +346,20 @@ export default function App() {
       artist: newSong.artist || 'Unknown Artist',
       artistId: newSong.artistId || 'artist-unknown',
       album: newSong.album || 'Flontmie Single',
-      coverUrl: IMAGES.partymix,
+      coverUrl: newSong.coverUrl || IMAGES.partymix,
       duration: newSong.duration || 210,
       genre: (newSong.genre as any) || 'afrobeat',
       bpm: newSong.bpm || 115,
       moods: ['energize'],
       streams: 1,
       likes: 1,
-      isExplicit: false,
-      releaseDate: new Date().toISOString().split('T')[0],
+      isExplicit: Boolean(newSong.isExplicit),
+      releaseDate: newSong.releaseDate || new Date().toISOString().split('T')[0],
       isrc: newSong.isrc || `US-FLN-26-${Math.floor(10000 + Math.random() * 90000)}`,
       upc: newSong.upc || `840192837${Math.floor(100 + Math.random() * 900)}`,
       label: newSong.label || 'Independent Label',
       distributor: newSong.distributor || 'TuneCore Direct on Flontmie',
-      status: 'active',
+      status: newSong.status || 'active',
       featuredOnHome: true,
     };
 
@@ -365,6 +370,67 @@ export default function App() {
     setTracks((prev) =>
       prev.map((t) => (t.id === trackId ? { ...t, ...updates } : t))
     );
+  };
+
+  const handleDeleteSong = (trackId: string) => {
+    setTracks((prev) => prev.filter((t) => t.id !== trackId));
+    setQueue((prev) => prev.filter((t) => t.id !== trackId));
+    if (currentTrack?.id === trackId) {
+      handleNextTrack();
+    }
+  };
+
+  // Artist Management Handlers
+  const handleViewArtist = (artistId: string) => {
+    let id = artistId;
+    if (!artistProfiles[id]) {
+      const foundEntry = Object.entries(artistProfiles).find(
+        ([k, v]) => v.name.toLowerCase() === artistId.toLowerCase() || k.toLowerCase() === artistId.toLowerCase()
+      );
+      if (foundEntry) {
+        id = foundEntry[0];
+      } else {
+        const newId = `artist-${artistId.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+        const fallbackProfile: ArtistProfile = {
+          id: newId,
+          name: artistId,
+          avatarUrl: IMAGES.partymix,
+          headerUrl: IMAGES.partymix,
+          bio: `${artistId} is an official recording artist streaming on Flontmie.`,
+          verified: true,
+          monthlyListeners: 142000,
+          totalStreams: 920000,
+          followers: 18500,
+          label: 'Independent Flontmie Release',
+          topTracks: [],
+          primaryGenre: 'Pop',
+          country: 'US',
+          claimedStatus: 'Verified',
+        };
+        setArtistProfiles((prev) => ({ ...prev, [newId]: fallbackProfile }));
+        id = newId;
+      }
+    }
+    setSelectedArtistId(id);
+    setSelectedPlaylistId(null);
+    setCurrentPersona('listener');
+  };
+
+  const handleCreateArtistProfile = (newProfile: ArtistProfile) => {
+    setArtistProfiles((prev) => ({
+      ...prev,
+      [newProfile.id]: newProfile,
+    }));
+  };
+
+  const handleUpdateArtistProfile = (artistId: string, updates: Partial<ArtistProfile>) => {
+    setArtistProfiles((prev) => {
+      if (!prev[artistId]) return prev;
+      return {
+        ...prev,
+        [artistId]: { ...prev[artistId], ...updates },
+      };
+    });
   };
 
   // Admin Master Handlers
@@ -412,12 +478,12 @@ export default function App() {
         onSelectPersona={(p) => {
           setCurrentPersona(p);
           setSelectedPlaylistId(null);
+          setSelectedArtistId(null);
         }}
         selectedMood={selectedMood}
         onSelectMood={setSelectedMood}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
-        onOpenShareModal={() => setIsShareModalOpen(true)}
         onOpenJamModal={() => setIsJamModalOpen(true)}
         isJamActive={isJamActive}
         jamParticipantCount={jamParticipants.length}
@@ -432,11 +498,13 @@ export default function App() {
           onSelectTab={(tab) => {
             setCurrentTab(tab);
             setSelectedPlaylistId(null);
+            setSelectedArtistId(null);
           }}
           playlists={playlists}
           selectedPlaylistId={selectedPlaylistId}
           onSelectPlaylist={(id) => {
             setSelectedPlaylistId(id);
+            setSelectedArtistId(null);
             setCurrentPersona('listener');
           }}
           onCreatePlaylist={() => setIsCreatePlaylistOpen(true)}
@@ -444,6 +512,7 @@ export default function App() {
           onSelectPersona={(p) => {
             setCurrentPersona(p);
             setSelectedPlaylistId(null);
+            setSelectedArtistId(null);
           }}
           isCollapsed={isSidebarCollapsed}
           onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
@@ -454,7 +523,24 @@ export default function App() {
           {/* Persona View 1: Consumer Streaming App (Flontmie) */}
           {currentPersona === 'listener' && (
             <>
-              {selectedPlaylist ? (
+              {selectedArtistId && artistProfiles[selectedArtistId] ? (
+                <PublicArtistPage
+                  artist={artistProfiles[selectedArtistId]}
+                  tracks={tracks}
+                  onPlayTrack={handlePlayTrack}
+                  onPlayAll={handlePlayAll}
+                  onShuffleAll={handleShuffleAll}
+                  onToggleLike={handleToggleLike}
+                  likedTrackIds={likedTrackIds}
+                  onAddToQueue={handleAddToQueue}
+                  onOpenAddToPlaylist={(track) => {
+                    setCurrentTrack(track);
+                    setIsAddToPlaylistOpen(true);
+                  }}
+                  onOpenShareModal={() => setIsShareModalOpen(true)}
+                  onBack={() => setSelectedArtistId(null)}
+                />
+              ) : selectedPlaylist ? (
                 <PlaylistView
                   playlist={selectedPlaylist}
                   allTracks={tracks}
@@ -593,13 +679,14 @@ export default function App() {
                   searchQuery={searchQuery}
                   likedTrackIds={likedTrackIds}
                   featuredAccounts={featuredAccounts}
-                  artistProfiles={ARTIST_PROFILES}
+                  artistProfiles={artistProfiles}
                   onPlayTrack={handlePlayTrack}
                   onToggleLike={handleToggleLike}
                   onSelectPlaylist={(id) => setSelectedPlaylistId(id)}
                   onAddToQueue={handleAddToQueue}
                   onOpenCreatePlaylist={() => setIsCreatePlaylistOpen(true)}
                   onToggleFollowAccount={handleToggleFollowAccount}
+                  onSelectArtist={handleViewArtist}
                 />
               )}
             </>
@@ -608,7 +695,7 @@ export default function App() {
           {/* Persona View 2: Artist Studio Dashboard */}
           {currentPersona === 'artist' && (
             <ArtistDashboard
-              artistProfile={ARTIST_PROFILES['artist-nova']}
+              artistProfile={artistProfiles['artist-nova'] || Object.values(artistProfiles)[0]}
               tracks={tracks}
               onAddNewTrack={handleAddNewArtistTrack}
             />
@@ -629,7 +716,12 @@ export default function App() {
               accessGrants={distributorAccessGrants}
               onUploadSongToFlontmie={handleUploadSongToFlontmie}
               onModifySongOnFlontmie={handleModifySongOnFlontmie}
+              onDeleteSongFromFlontmie={handleDeleteSong}
               tracks={tracks}
+              artistProfiles={artistProfiles}
+              onCreateArtistProfile={handleCreateArtistProfile}
+              onUpdateArtistProfile={handleUpdateArtistProfile}
+              onViewArtistPublicPage={handleViewArtist}
             />
           )}
 
@@ -654,11 +746,13 @@ export default function App() {
         onSelectTab={(tab) => {
           setCurrentTab(tab);
           setSelectedPlaylistId(null);
+          setSelectedArtistId(null);
         }}
         currentPersona={currentPersona}
         onSelectPersona={(p) => {
           setCurrentPersona(p);
           setSelectedPlaylistId(null);
+          setSelectedArtistId(null);
         }}
         isJamActive={isJamActive}
         onOpenJamModal={() => setIsJamModalOpen(true)}
@@ -697,6 +791,46 @@ export default function App() {
         onToggleLike={() => handleToggleLike()}
         onOpenAddToPlaylist={() => setIsAddToPlaylistOpen(true)}
         onShareTrack={() => setIsShareModalOpen(true)}
+        onOpenFullPlayer={() => setIsFullPlayerOpen(true)}
+        onNavigateToArtist={handleViewArtist}
+      />
+
+      {/* DEDICATED FULL PLAYBACK SCREEN */}
+      <FullPlaybackScreen
+        isOpen={isFullPlayerOpen}
+        onClose={() => setIsFullPlayerOpen(false)}
+        currentTrack={currentTrack}
+        isPlaying={isPlaying}
+        currentTime={currentTime}
+        duration={duration}
+        volume={volume}
+        isShuffle={isShuffle}
+        repeatMode={repeatMode}
+        isVideoMode={isVideoMode}
+        isLiked={Boolean(currentTrack && likedTrackIds.includes(currentTrack.id))}
+        queue={queue}
+        onTogglePlay={handleTogglePlay}
+        onNext={handleNextTrack}
+        onPrev={handlePrevTrack}
+        onSeek={handleSeek}
+        onVolumeChange={handleVolumeChange}
+        onToggleShuffle={handleToggleShuffle}
+        onToggleRepeat={handleToggleRepeat}
+        onToggleVideoMode={() => setIsVideoMode(!isVideoMode)}
+        onToggleLike={() => handleToggleLike()}
+        onOpenAddToPlaylist={() => setIsAddToPlaylistOpen(true)}
+        onShareTrack={() => setIsShareModalOpen(true)}
+        onPlayQueueTrack={handlePlayTrack}
+        onRemoveFromQueue={handleRemoveFromQueue}
+        onClearQueue={handleClearQueue}
+        onMoveQueueItem={handleMoveQueueItem}
+        onNavigateToArtist={(artistId) => {
+          setIsFullPlayerOpen(false);
+          handleViewArtist(artistId);
+        }}
+        onNavigateToAlbum={(_albumTitle) => {
+          setIsFullPlayerOpen(false);
+        }}
       />
 
       {/* Up Next / Queue Drawer */}

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Search, Radio, Share2, ChevronDown, Check, ShieldCheck, Sparkles, PanelLeftOpen, PanelLeftClose } from 'lucide-react';
+import { Search, Users, ChevronDown, Check, ShieldCheck, Sparkles, PanelLeftOpen, PanelLeftClose } from 'lucide-react';
 import { MoodCategory, Persona } from '../../types/music';
 
 interface NavbarProps {
@@ -9,7 +9,7 @@ interface NavbarProps {
   onSelectMood: (m: MoodCategory) => void;
   searchQuery: string;
   onSearchChange: (q: string) => void;
-  onOpenShareModal: () => void;
+  onOpenShareModal?: () => void;
   onOpenJamModal: () => void;
   isJamActive: boolean;
   jamParticipantCount: number;
@@ -24,7 +24,6 @@ export const Navbar: React.FC<NavbarProps> = ({
   onSelectMood,
   searchQuery,
   onSearchChange,
-  onOpenShareModal,
   onOpenJamModal,
   isJamActive,
   jamParticipantCount,
@@ -73,7 +72,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   return (
     <header className="sticky top-0 z-40 bg-[#030303]/95 backdrop-blur-md border-b border-white/[0.08] px-3 md:px-6 py-2 flex items-center justify-between gap-2 md:gap-4 h-[57px]">
-      {/* Zone 1: Brand Wordmark (Flontmie) + Desktop sidebar toggle */}
+      {/* Zone 1: Pure uppercase FLONTMIE Wordmark without play icon + Desktop sidebar toggle */}
       <div className="flex items-center gap-2 md:gap-3 shrink-0">
         <button
           onClick={onToggleSidebar}
@@ -83,12 +82,9 @@ export const Navbar: React.FC<NavbarProps> = ({
           {isSidebarCollapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
         </button>
 
-        <a href="#home" className="flex items-center gap-2 text-white hover:opacity-90 transition-opacity">
-          <div className="w-7 h-7 md:w-8 md:h-8 rounded-full bg-red-600 flex items-center justify-center shadow-lg shadow-red-600/30 shrink-0">
-            <div className="w-3 h-3 md:w-3.5 md:h-3.5 border-t-[4px] md:border-t-[5px] border-t-transparent border-b-[4px] md:border-b-[5px] border-b-transparent border-l-[7px] md:border-l-[8px] border-l-white ml-0.5" />
-          </div>
-          <span className="text-lg md:text-xl font-extrabold tracking-tight text-white flex items-center gap-1.5">
-            Flontmie
+        <a href="#home" className="flex items-center text-white hover:opacity-90 transition-opacity">
+          <span className="text-xl md:text-2xl font-black tracking-widest text-white uppercase select-none">
+            FLONTMIE
           </span>
         </a>
       </div>
@@ -142,9 +138,9 @@ export const Navbar: React.FC<NavbarProps> = ({
         )}
       </div>
 
-      {/* Zone 3: Primary Actions + Persona Switcher */}
+      {/* Zone 3: Primary Actions (No share icon, no wave icon) + Persona Switcher */}
       <div className="flex items-center gap-1.5 md:gap-2.5 shrink-0">
-        {/* Jam Session Button */}
+        {/* Jam Session Button (using Users icon instead of wave/radio) */}
         <button
           onClick={onOpenJamModal}
           className={`flex items-center gap-1.5 px-2.5 md:px-3 py-1.5 text-xs font-medium rounded-full transition-all border ${
@@ -154,20 +150,10 @@ export const Navbar: React.FC<NavbarProps> = ({
           }`}
           title="Social Jam Listening Room"
         >
-          <Radio className={`w-3.5 h-3.5 ${isJamActive ? 'animate-pulse text-emerald-400' : ''}`} />
+          <Users className={`w-3.5 h-3.5 ${isJamActive ? 'text-emerald-400 animate-pulse' : ''}`} />
           <span className="hidden sm:inline">
             {isJamActive ? `Jam (${jamParticipantCount})` : 'Jam'}
           </span>
-        </button>
-
-        {/* Social Share Button */}
-        <button
-          onClick={onOpenShareModal}
-          className="p-1.5 md:px-3 md:py-1.5 flex items-center gap-1.5 text-xs font-medium rounded-full bg-white/[0.05] border border-white/10 text-neutral-300 hover:bg-white/10 hover:text-white transition-colors"
-          title="Share playlist or track"
-        >
-          <Share2 className="w-3.5 h-3.5" />
-          <span className="hidden md:inline">Share</span>
         </button>
 
         {/* Persona Switcher Dropdown */}

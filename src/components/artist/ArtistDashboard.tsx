@@ -39,9 +39,9 @@ export const ArtistDashboard: React.FC<ArtistDashboardProps> = ({
   const [releaseSuccessMessage, setReleaseSuccessMessage] = useState(false);
 
   // Split Sheets State
-  const [selectedSplitTrackId, setSelectedSplitTrackId] = useState(artistProfile.splitSheets[0]?.trackId || 'track-1');
+  const [selectedSplitTrackId, setSelectedSplitTrackId] = useState(artistProfile.splitSheets?.[0]?.trackId || 'track-1');
   const [collaborators, setCollaborators] = useState<SplitMember[]>(
-    artistProfile.splitSheets[0]?.members || []
+    artistProfile.splitSheets?.[0]?.members || []
   );
   const [newCollabName, setNewCollabName] = useState('');
   const [newCollabRole, setNewCollabRole] = useState<SplitMember['role']>('Producer');

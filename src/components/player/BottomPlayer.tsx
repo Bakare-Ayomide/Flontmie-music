@@ -16,7 +16,9 @@ import {
   Plus, 
   Tv, 
   Music2, 
-  Share2
+  Share2,
+  ChevronUp,
+  Maximize2
 } from 'lucide-react';
 
 interface BottomPlayerProps {
@@ -45,6 +47,8 @@ interface BottomPlayerProps {
   onToggleLike: () => void;
   onOpenAddToPlaylist: () => void;
   onShareTrack: () => void;
+  onOpenFullPlayer: () => void;
+  onNavigateToArtist?: (artistId: string) => void;
 }
 
 export const BottomPlayer: React.FC<BottomPlayerProps> = ({
@@ -73,6 +77,8 @@ export const BottomPlayer: React.FC<BottomPlayerProps> = ({
   onToggleLike,
   onOpenAddToPlaylist,
   onShareTrack,
+  onOpenFullPlayer,
+  onNavigateToArtist,
 }) => {
   const [isHoveringSeek, setIsHoveringSeek] = useState(false);
   const [hoverSeekTime, setHoverSeekTime] = useState(0);
@@ -143,50 +149,81 @@ export const BottomPlayer: React.FC<BottomPlayerProps> = ({
       </div>
 
       <div className="h-16 md:h-18 px-3 md:px-6 flex items-center justify-between gap-2 md:gap-4 max-w-full">
-        {/* Left: Track Information */}
+        {/* Left: Track Information - Clicking opens Full Playback Screen */}
         <div className="flex items-center gap-2.5 md:gap-3 flex-1 md:w-1/4 md:min-w-[200px] min-w-0">
-          <div className="relative w-10 h-10 md:w-12 md:h-12 rounded-lg overflow-hidden shrink-0 bg-neutral-800 shadow-md">
+          <div 
+            onClick={onOpenFullPlayer}
+            className="relative w-10 h-10 md:w-12 md:h-12 rounded-lg overflow-hidden shrink-0 bg-neutral-800 shadow-md cursor-pointer group"
+            title="Open Full Player"
+          >
             <img
               src={currentTrack.coverUrl}
               alt={currentTrack.title}
               referrerPolicy="no-referrer"
-              className="w-full h-full object-cover"
+              className="w-full h-full object-cover group-hover:scale-105 transition-transform"
             />
+            <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+              <ChevronUp className="w-4 h-4 text-white" />
+            </div>
           </div>
 
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
-              <span className="font-semibold text-xs md:text-sm text-white truncate block">
+              <button
+                onClick={onOpenFullPlayer}
+                className="font-semibold text-xs md:text-sm text-white hover:text-red-400 text-left truncate block transition-colors cursor-pointer"
+                title="Open Full Player"
+              >
                 {currentTrack.title}
-              </span>
+              </button>
               {currentTrack.isExplicit && (
                 <span className="text-[9px] font-bold px-1 py-0.2 bg-white/20 text-neutral-300 rounded shrink-0">
                   E
                 </span>
               )}
             </div>
-            <span className="text-[11px] text-neutral-400 truncate block">
-              {currentTrack.artist}
-            </span>
+            {onNavigateToArtist ? (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onNavigateToArtist(currentTrack.artistId || currentTrack.artist);
+                }}
+                className="text-[11px] text-neutral-400 hover:text-white truncate block text-left transition-colors cursor-pointer"
+                title={`Go to ${currentTrack.artist}`}
+              >
+                {currentTrack.artist}
+              </button>
+            ) : (
+              <span className="text-[11px] text-neutral-400 truncate block">
+                {currentTrack.artist}
+              </span>
+            )}
           </div>
 
-          {/* Action buttons (Heart / Add) */}
-          <div className="hidden sm:flex items-center gap-1 shrink-0">
+          {/* Action buttons (Expand / Heart / Add) */}
+          <div className="hidden sm:flex items-center gap-0.5 shrink-0">
+            <button
+              onClick={onOpenFullPlayer}
+              className="min-h-[32px] min-w-[32px] flex items-center justify-center rounded-full text-neutral-400 hover:text-white hover:bg-white/[0.06] transition-colors"
+              title="Expand to Full Player"
+            >
+              <Maximize2 className="w-3.5 h-3.5" />
+            </button>
             <button
               onClick={onToggleLike}
-              className={`min-h-[36px] min-w-[36px] flex items-center justify-center rounded-full transition-colors ${
+              className={`min-h-[32px] min-w-[32px] flex items-center justify-center rounded-full transition-colors ${
                 isLiked ? 'text-red-500' : 'text-neutral-400 hover:text-white'
               }`}
               title={isLiked ? 'Remove from liked songs' : 'Save to liked songs'}
             >
-              <Heart className={`w-4 h-4 ${isLiked ? 'fill-red-500' : ''}`} />
+              <Heart className={`w-3.5 h-3.5 ${isLiked ? 'fill-red-500' : ''}`} />
             </button>
             <button
               onClick={onOpenAddToPlaylist}
-              className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-full text-neutral-400 hover:text-white transition-colors"
+              className="min-h-[32px] min-w-[32px] flex items-center justify-center rounded-full text-neutral-400 hover:text-white transition-colors"
               title="Add to playlist"
             >
-              <Plus className="w-4 h-4" />
+              <Plus className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>

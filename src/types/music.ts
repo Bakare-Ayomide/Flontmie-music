@@ -69,6 +69,41 @@ export interface Playlist {
   country?: string;
 }
 
+export interface AlbumTrackItem {
+  id: string;
+  trackNumber: number;
+  title: string;
+  duration: number;
+  isrc: string;
+  isExplicit?: boolean;
+  audioFileName?: string;
+  producer?: string;
+  composer?: string;
+  featuredArtists?: string;
+  bpm?: number;
+  keyScale?: string;
+}
+
+export interface AlbumRelease {
+  id: string;
+  title: string;
+  artistId: string;
+  artistName: string;
+  type: 'Single' | 'EP' | 'Album';
+  coverUrl: string;
+  genre: MusicGenre;
+  subgenre?: string;
+  label: string;
+  distributor: string;
+  upc: string;
+  releaseDate: string;
+  preorderDate?: string;
+  status: 'draft' | 'under_review' | 'live' | 'action_required';
+  tracks: AlbumTrackItem[];
+  validationErrors?: string[];
+  audioFormat?: '24-bit FLAC (Lossless)' | 'WAV 48kHz / 24-bit' | 'MP3 320kbps CBR';
+}
+
 export interface ArtistProfile {
   id: string;
   name: string;
@@ -81,9 +116,20 @@ export interface ArtistProfile {
   followers: number;
   label: string;
   topTracks: string[];
-  splitSheets: SplitSheet[];
+  splitSheets?: SplitSheet[];
   country?: string;
   primaryGenre?: string;
+  distributorId?: string;
+  distributorName?: string;
+  claimedStatus?: 'Verified' | 'Pending Claim' | 'Claimed' | 'Official Ingestion';
+  socialLinks?: {
+    instagram?: string;
+    twitter?: string;
+    spotify?: string;
+    youtube?: string;
+    website?: string;
+  };
+  associatedAlbums?: AlbumRelease[];
 }
 
 export interface FeaturedAccount {
