@@ -26,6 +26,7 @@ import {
   IMAGES 
 } from './data/mockCatalog';
 import { audioEngine } from './services/audioEngine';
+import { api } from './services/api';
 import { Navbar } from './components/layout/Navbar';
 import { Sidebar } from './components/layout/Sidebar';
 import { MobileDock } from './components/layout/MobileDock';
@@ -45,6 +46,8 @@ import { DistributorDashboard } from './components/distributor/DistributorDashbo
 import { AdminDashboard } from './components/admin/AdminDashboard';
 import { FullPlaybackScreen } from './components/player/FullPlaybackScreen';
 import { PublicArtistPage } from './components/artist/PublicArtistPage';
+import { AuthModal, AuthUser } from './components/auth/AuthModal';
+import { ProfilePage } from './components/profile/ProfilePage';
 import { Heart } from 'lucide-react';
 
 export default function App() {
@@ -55,6 +58,19 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
   const [selectedArtistId, setSelectedArtistId] = useState<string | null>(null);
+
+  // Authentication & User Session State
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>({
+    id: 'usr_admin_001',
+    username: 'admin',
+    email: 'admin@flontmie.com',
+    role: 'admin',
+    display_name: 'Flontmie Owner & Platform Admin',
+    avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
+    country: 'US',
+  });
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
+  const [authInitialMode, setAuthInitialMode] = useState<'login' | 'signup'>('login');
 
   // Desktop sidebar collapse state
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
@@ -101,6 +117,42 @@ export default function App() {
   ]);
   const [reactions, setReactions] = useState<{ id: string; emoji: string; x: number }[]>([]);
 
+  // Load Live Catalog from MySQL Backend
+  useEffect(() => {
+    api.getTracks().then((backendTracks) => {
+      if (backendTracks && backendTracks.length > 0) {
+        setTracks(backendTracks);
+      }
+    }).catch(() => {});
+
+    api.getArtists().then((backendArtists) => {
+      if (backendArtists && backendArtists.length > 0) {
+        const artistMap: Record<string, ArtistProfile> = {};
+        backendArtists.forEach((a) => {
+          artistMap[a.id] = a;
+        });
+        setArtistProfiles((prev) => ({ ...prev, ...artistMap }));
+      }
+    }).catch(() => {});
+
+    api.getPlaylists().then((backendPlaylists) => {
+      if (backendPlaylists && backendPlaylists.length > 0) {
+        setPlaylists((prev) => {
+          const ids = new Set(backendPlaylists.map((p) => p.id));
+          return [...backendPlaylists, ...prev.filter((p) => !ids.has(p.id))];
+        });
+      }
+    }).catch(() => {});
+
+    // Hydrate current user session if token exists
+    api.getCurrentUser().then((res) => {
+      if (res && res.user) {
+        setCurrentUser(res.user);
+        setCurrentPersona(res.user.role);
+      }
+    }).catch(() => {});
+  }, []);
+
   // Configure Audio Engine Listeners
   useEffect(() => {
     audioEngine.onTimeUpdate((time, dur) => {
@@ -119,6 +171,8 @@ export default function App() {
     setCurrentTime(startAt);
     setIsPlaying(true);
     audioEngine.playTrack(track.genre, track.bpm, track.duration, startAt);
+    // Report stream play to backend MySQL
+    api.registerStream(track.id);
   };
 
   const handleTogglePlay = () => {
@@ -206,6 +260,8 @@ export default function App() {
   const handleToggleLike = (trackId?: string) => {
     const targetId = trackId || currentTrack?.id;
     if (!targetId) return;
+
+    api.toggleLike(targetId).catch(() => {});
 
     setLikedTrackIds((prev) =>
       prev.includes(targetId) ? prev.filter((id) => id !== targetId) : [...prev, targetId]
@@ -489,6 +545,15 @@ export default function App() {
         jamParticipantCount={jamParticipants.length}
         isSidebarCollapsed={isSidebarCollapsed}
         onToggleSidebar={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+        currentUser={currentUser}
+        onOpenAuth={() => {
+          setAuthInitialMode('login');
+          setIsAuthModalOpen(true);
+        }}
+        onOpenProfile={() => {
+          setCurrentTab('profile');
+          setCurrentPersona('listener');
+        }}
       />
 
       <div className="flex-1 flex overflow-hidden relative">
@@ -668,6 +733,30 @@ export default function App() {
                       ))}
                   </div>
                 </div>
+              ) : currentTab === 'profile' ? (
+                <ProfilePage
+                  currentUser={currentUser}
+                  likedTracks={tracks.filter((t) => likedTrackIds.includes(t.id))}
+                  userPlaylists={playlists}
+                  onPlayTrack={handlePlayTrack}
+                  onSelectPlaylist={(id) => {
+                    setSelectedPlaylistId(id);
+                    setCurrentTab('library');
+                  }}
+                  onUpdateProfile={(updated) => {
+                    setCurrentUser((prev) => (prev ? { ...prev, ...updated } : null));
+                  }}
+                  onSignOut={() => {
+                    api.setToken(null);
+                    setCurrentUser(null);
+                    setCurrentTab('home');
+                  }}
+                  onSwitchPortal={(role) => {
+                    setCurrentPersona(role);
+                    setCurrentTab('home');
+                  }}
+                  onBackToHome={() => setCurrentTab('home')}
+                />
               ) : (
                 <HomeFeed
                   tracks={tracks}
@@ -898,6 +987,18 @@ export default function App() {
         playlist={selectedPlaylist}
         allTracks={tracks}
         onToggleTrack={handleToggleTrackInPlaylist}
+      />
+
+      {/* Real Secure Authentication Modal (Login / Sign Up) */}
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        initialMode={authInitialMode}
+        onAuthSuccess={(user) => {
+          setCurrentUser(user);
+          setCurrentPersona(user.role);
+          setIsAuthModalOpen(false);
+        }}
       />
     </div>
   );

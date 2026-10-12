@@ -157,7 +157,28 @@ export const FullPlaybackScreen: React.FC<FullPlaybackScreenProps> = ({
     }
   };
 
-  const activeLyricIndex = currentTrack.lyrics?.findIndex((line, idx, arr) => {
+  // Normalize lyrics: handles LyricLine[], string[], or multiline string from MySQL
+  const normalizedLyrics: { time: number; text: string }[] = React.useMemo(() => {
+    if (!currentTrack?.lyrics) return [];
+    if (Array.isArray(currentTrack.lyrics)) {
+      if (currentTrack.lyrics.length === 0) return [];
+      if (typeof currentTrack.lyrics[0] === 'string') {
+        const strLines = (currentTrack.lyrics as unknown as string[]).filter(Boolean);
+        const step = (duration || 180) / Math.max(1, strLines.length);
+        return strLines.map((text, i) => ({ time: Math.floor(i * step), text }));
+      }
+      return currentTrack.lyrics as { time: number; text: string }[];
+    }
+    if (typeof (currentTrack as any).lyrics === 'string') {
+      const rawText = (currentTrack as any).lyrics as string;
+      const lines = rawText.split('\n').map((l) => l.trim()).filter(Boolean);
+      const step = (duration || 180) / Math.max(1, lines.length);
+      return lines.map((text, i) => ({ time: Math.floor(i * step), text }));
+    }
+    return [];
+  }, [currentTrack, duration]);
+
+  const activeLyricIndex = normalizedLyrics.findIndex((line, idx, arr) => {
     const nextLine = arr[idx + 1];
     return currentTime >= line.time && (!nextLine || currentTime < nextLine.time);
   });
@@ -393,9 +414,9 @@ export const FullPlaybackScreen: React.FC<FullPlaybackScreenProps> = ({
               </p>
             </div>
 
-            {currentTrack.lyrics && currentTrack.lyrics.length > 0 ? (
+            {normalizedLyrics && normalizedLyrics.length > 0 ? (
               <div className="space-y-4 py-8 px-2">
-                {currentTrack.lyrics.map((line, idx) => {
+                {normalizedLyrics.map((line, idx) => {
                   const isActive = idx === activeLyricIndex;
                   return (
                     <div

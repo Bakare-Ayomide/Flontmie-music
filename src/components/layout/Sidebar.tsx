@@ -12,7 +12,8 @@ import {
   ChevronLeft,
   ChevronRight,
   PanelLeftClose,
-  PanelLeftOpen
+  PanelLeftOpen,
+  User
 } from 'lucide-react';
 import { Playlist, Persona } from '../../types/music';
 
@@ -151,6 +152,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <Heart className="w-5 h-5 text-red-500 shrink-0" />
           <span className={isCollapsed ? 'text-[9px] font-medium tracking-tight mt-0.5' : 'text-sm font-medium'}>
             Liked
+          </span>
+        </button>
+
+        <button
+          onClick={() => {
+            onSelectTab('profile');
+            onSelectPersona('listener');
+          }}
+          className={`w-full flex items-center rounded-xl transition-all ${
+            isCollapsed
+              ? 'flex-col justify-center py-2 h-13'
+              : 'gap-3 px-3 py-2.5 text-sm font-medium'
+          } ${
+            currentTab === 'profile'
+              ? 'bg-white/10 text-white font-semibold'
+              : 'text-neutral-400 hover:text-white hover:bg-white/[0.04]'
+          }`}
+          title="Account Profile & Settings"
+        >
+          <User className="w-5 h-5 text-neutral-300 shrink-0" />
+          <span className={isCollapsed ? 'text-[9px] font-medium tracking-tight mt-0.5' : 'text-sm font-medium'}>
+            Profile
           </span>
         </button>
       </div>

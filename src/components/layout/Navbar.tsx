@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Search, Users, ChevronDown, Check, ShieldCheck, Sparkles, PanelLeftOpen, PanelLeftClose } from 'lucide-react';
+import { Search, Users, ChevronDown, Check, ShieldCheck, Sparkles, PanelLeftOpen, PanelLeftClose, LogIn } from 'lucide-react';
 import { MoodCategory, Persona } from '../../types/music';
+import { AuthUser } from '../auth/AuthModal';
 
 interface NavbarProps {
   currentPersona: Persona;
@@ -15,6 +16,9 @@ interface NavbarProps {
   jamParticipantCount: number;
   isSidebarCollapsed: boolean;
   onToggleSidebar: () => void;
+  currentUser?: AuthUser | null;
+  onOpenAuth: () => void;
+  onOpenProfile: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -29,6 +33,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   jamParticipantCount,
   isSidebarCollapsed,
   onToggleSidebar,
+  currentUser,
+  onOpenAuth,
+  onOpenProfile,
 }) => {
   const [isPersonaMenuOpen, setIsPersonaMenuOpen] = useState(false);
 
@@ -216,6 +223,33 @@ export const Navbar: React.FC<NavbarProps> = ({
             </>
           )}
         </div>
+
+        {/* Auth / Profile Trigger */}
+        {currentUser ? (
+          <button
+            onClick={onOpenProfile}
+            className="flex items-center gap-1.5 p-1 pr-2.5 rounded-full bg-white/[0.06] hover:bg-white/10 border border-white/10 text-white text-xs font-semibold transition-all cursor-pointer"
+            title="View Profile & Account Settings"
+          >
+            <div className="w-5 h-5 rounded-full overflow-hidden bg-neutral-800 shrink-0 border border-white/20">
+              <img
+                src={currentUser.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100'}
+                alt={currentUser.display_name}
+                className="w-full h-full object-cover"
+              />
+            </div>
+            <span className="hidden sm:inline max-w-[90px] truncate">{currentUser.display_name}</span>
+          </button>
+        ) : (
+          <button
+            onClick={onOpenAuth}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-red-600 hover:bg-red-500 text-white text-xs font-bold shadow-md shadow-red-600/30 transition-all cursor-pointer"
+            title="Log In / Join Flontmie"
+          >
+            <LogIn className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Sign In</span>
+          </button>
+        )}
       </div>
     </header>
   );

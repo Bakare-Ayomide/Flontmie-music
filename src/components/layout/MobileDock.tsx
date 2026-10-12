@@ -10,7 +10,8 @@ import {
   ShieldCheck, 
   Mic2, 
   Building2, 
-  Network 
+  Network,
+  User 
 } from 'lucide-react';
 import { Persona } from '../../types/music';
 
@@ -112,6 +113,23 @@ export const MobileDock: React.FC<MobileDockProps> = ({
           >
             <Heart className="w-4 h-4 text-red-500" />
             <span className="text-[10px] mt-0.5 font-medium">Liked</span>
+          </button>
+
+          {/* Profile */}
+          <button
+            onClick={() => {
+              onSelectTab('profile');
+              onSelectPersona('listener');
+            }}
+            className={`min-h-[44px] flex-1 flex flex-col items-center justify-center rounded-xl transition-all ${
+              currentTab === 'profile' && currentPersona === 'listener'
+                ? 'bg-white/15 text-white font-semibold'
+                : 'text-neutral-400 hover:text-white hover:bg-white/[0.04]'
+            }`}
+            title="Profile"
+          >
+            <User className="w-4 h-4" />
+            <span className="text-[10px] mt-0.5 font-medium">Profile</span>
           </button>
 
           {/* Role Hub / Portal Switcher Drawer */}
