@@ -158,7 +158,7 @@ export const ArtistDashboard: React.FC<ArtistDashboardProps> = ({
             <Users className="w-4 h-4 text-neutral-400" />
           </div>
           <p className="text-2xl font-bold font-mono tabular-nums text-white">
-            {artistProfile.monthlyListeners.toLocaleString()}
+            {(Number(artistProfile.monthlyListeners) || 0).toLocaleString()}
           </p>
           <div className="text-[11px] text-emerald-400 font-mono tabular-nums">
             +14.2% from last 30 days
@@ -171,7 +171,7 @@ export const ArtistDashboard: React.FC<ArtistDashboardProps> = ({
             <TrendingUp className="w-4 h-4 text-neutral-400" />
           </div>
           <p className="text-2xl font-bold font-mono tabular-nums text-white">
-            {totalArtistStreams.toLocaleString()}
+            {(Number(totalArtistStreams) || 0).toLocaleString()}
           </p>
           <div className="text-[11px] text-neutral-400">Across 220 countries</div>
         </div>
@@ -273,16 +273,16 @@ export const ArtistDashboard: React.FC<ArtistDashboardProps> = ({
                       </td>
                       <td className="py-3 px-4 font-mono text-neutral-400">{t.isrc}</td>
                       <td className="py-3 px-4 text-right font-mono tabular-nums text-white">
-                        {t.streams.toLocaleString()}
+                        {(Number(t.streams) || 0).toLocaleString()}
                       </td>
                       <td className="py-3 px-4 text-right font-mono tabular-nums text-emerald-400">
-                        {((t.likes / (t.streams || 1)) * 100).toFixed(1)}%
+                        {(((Number(t.likes) || 0) / (Number(t.streams) || 1)) * 100).toFixed(1)}%
                       </td>
                       <td className="py-3 px-4 text-right font-mono tabular-nums text-neutral-300">
-                        {Math.floor(t.streams / 3200).toLocaleString()}
+                        {Math.floor((Number(t.streams) || 0) / 3200).toLocaleString()}
                       </td>
                       <td className="py-3 px-4 text-right font-mono tabular-nums text-white font-medium">
-                        ${Math.round(t.streams * 0.0038).toLocaleString()}
+                        ${Math.round((Number(t.streams) || 0) * 0.0038).toLocaleString()}
                       </td>
                     </tr>
                   ))}

@@ -14,7 +14,14 @@ import {
   AlertTriangle, 
   Sliders, 
   CheckCircle2, 
-  Star 
+  Star,
+  Search,
+  Download,
+  Youtube,
+  Play,
+  Loader2,
+  ExternalLink,
+  Radio
 } from 'lucide-react';
 import { 
   Track, 
@@ -22,6 +29,7 @@ import {
   LabelArtist, 
   AdminRolePermission 
 } from '../../types/music';
+import { api } from '../../services/api';
 
 interface AdminDashboardProps {
   tracks: Track[];
@@ -31,6 +39,7 @@ interface AdminDashboardProps {
   permissions: AdminRolePermission[];
   onUpdatePermission: (updated: AdminRolePermission) => void;
   labelArtists: LabelArtist[];
+  onTrackImported?: (track: Track) => void;
 }
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({
@@ -41,10 +50,30 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   permissions,
   onUpdatePermission,
   labelArtists,
+  onTrackImported,
 }) => {
-  const [activeTab, setActiveTab] = useState<'overview' | 'roles' | 'catalog' | 'entities'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'roles' | 'catalog' | 'entities' | 'importer'>('overview');
   const [selectedRoleToEdit, setSelectedRoleToEdit] = useState<AdminRolePermission>(permissions[0]);
   const [saveSuccessNotice, setSaveSuccessNotice] = useState(false);
+
+  // YouTube / Public Music Importer state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [importingId, setImportingId] = useState<string | null>(null);
+  const [importedIds, setImportedIds] = useState<string[]>([]);
+  const [importNotice, setImportNotice] = useState<string | null>(null);
+  const [previewAudioUrl, setPreviewAudioUrl] = useState<string | null>(null);
+
+  // Manual import form
+  const [manualTitle, setManualTitle] = useState('');
+  const [manualArtist, setManualArtist] = useState('');
+  const [manualAlbum, setManualAlbum] = useState('');
+  const [manualGenre, setManualGenre] = useState('Afrobeats');
+  const [manualAudioUrl, setManualAudioUrl] = useState('');
+  const [manualCoverUrl, setManualCoverUrl] = useState('');
+  const [manualYoutubeUrl, setManualYoutubeUrl] = useState('');
+  const [isManualImporting, setIsManualImporting] = useState(false);
 
   const totalStreams = tracks.reduce((acc, t) => acc + t.streams, 0);
   const totalRevenue = totalStreams * 0.0042; // Platform master pool
@@ -54,6 +83,88 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     onUpdatePermission(selectedRoleToEdit);
     setSaveSuccessNotice(true);
     setTimeout(() => setSaveSuccessNotice(false), 2000);
+  };
+
+  const handleSearchMusic = async (queryToSearch?: string) => {
+    const q = queryToSearch !== undefined ? queryToSearch : searchQuery;
+    if (!q.trim()) return;
+    setIsSearching(true);
+    setImportNotice(null);
+    try {
+      const res = await api.searchPublicMusic(q);
+      if (res && res.results) {
+        setSearchResults(res.results);
+      }
+    } catch (err: any) {
+      setImportNotice(`Search error: ${err.message || 'Failed to search'}`);
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  const handleImportTrack = async (item: any) => {
+    setImportingId(item.source_id);
+    setImportNotice(null);
+    try {
+      const res = await api.importPublicTrack({
+        title: item.title,
+        artist: item.artist,
+        album: item.album,
+        genre: item.genre,
+        duration: item.duration,
+        cover_url: item.cover_url,
+        audio_url: item.audio_url,
+        release_date: item.release_date
+      });
+      if (res && res.status === 'success') {
+        setImportedIds(prev => [...prev, item.source_id]);
+        setImportNotice(`✓ "${item.title}" by ${item.artist} successfully imported to MySQL!`);
+        if (onTrackImported && res.track) {
+          onTrackImported(res.track);
+        }
+      }
+    } catch (err: any) {
+      setImportNotice(`Import error: ${err.message || 'Failed to import'}`);
+    } finally {
+      setImportingId(null);
+    }
+  };
+
+  const handleManualImport = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!manualTitle.trim() || !manualArtist.trim()) {
+      setImportNotice('Please provide at least a track title and artist name');
+      return;
+    }
+    setIsManualImporting(true);
+    setImportNotice(null);
+    try {
+      const res = await api.importPublicTrack({
+        title: manualTitle,
+        artist: manualArtist,
+        album: manualAlbum || `${manualTitle} - Single`,
+        genre: manualGenre,
+        cover_url: manualCoverUrl || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600',
+        audio_url: manualAudioUrl || 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3',
+        release_date: new Date().toISOString().split('T')[0]
+      });
+      if (res && res.status === 'success') {
+        setImportNotice(`✓ Successfully imported "${manualTitle}" by ${manualArtist} into MySQL!`);
+        setManualTitle('');
+        setManualArtist('');
+        setManualAlbum('');
+        setManualAudioUrl('');
+        setManualCoverUrl('');
+        setManualYoutubeUrl('');
+        if (onTrackImported && res.track) {
+          onTrackImported(res.track);
+        }
+      }
+    } catch (err: any) {
+      setImportNotice(`Manual import failed: ${err.message || 'Error occurred'}`);
+    } finally {
+      setIsManualImporting(false);
+    }
   };
 
   return (
@@ -168,6 +279,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           }`}
         >
           Artists, Labels & Partner Distributors
+        </button>
+
+        <button
+          onClick={() => setActiveTab('importer')}
+          className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap flex items-center gap-1.5 ${
+            activeTab === 'importer' ? 'bg-red-600 text-white shadow-lg shadow-red-600/30' : 'text-neutral-400 hover:text-white'
+          }`}
+        >
+          <Youtube className="w-3.5 h-3.5 text-red-400" />
+          <span>YouTube & Music Importer</span>
         </button>
       </div>
 
@@ -417,7 +538,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       <td className="py-3 px-4 capitalize text-neutral-300">{t.genre}</td>
                       <td className="py-3 px-4 text-neutral-400">{t.distributor}</td>
                       <td className="py-3 px-4 text-right font-mono tabular-nums text-white">
-                        {t.streams.toLocaleString()}
+                        {(Number(t.streams) || 0).toLocaleString()}
                       </td>
                       <td className="py-3 px-4 text-center">
                         <button
@@ -475,7 +596,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     <img src={la.avatarUrl} alt={la.name} referrerPolicy="no-referrer" className="w-8 h-8 rounded-full object-cover" />
                     <div>
                       <p className="font-semibold text-white">{la.name}</p>
-                      <p className="text-[10px] text-neutral-400">{la.catalogCount} tracks · ${la.monthlyRevenue.toLocaleString()}/mo</p>
+                      <p className="text-[10px] text-neutral-400">{la.catalogCount} tracks · ${(Number(la.monthlyRevenue) || 0).toLocaleString()}/mo</p>
                     </div>
                   </div>
                   <span className="text-emerald-400 font-semibold font-mono">Approved</span>
@@ -505,6 +626,320 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </div>
               ))}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 5: YouTube & Public Music Importer */}
+      {activeTab === 'importer' && (
+        <div className="space-y-6">
+          {/* Header Banner */}
+          <div className="p-6 rounded-2xl bg-gradient-to-r from-red-950/40 via-neutral-900 to-neutral-900 border border-red-500/20 space-y-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-red-600/20 border border-red-500/40 flex items-center justify-center text-red-400">
+                <Youtube className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                  <span>YouTube & Public Music Catalog Ingestion</span>
+                  <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-red-500/20 text-red-400 border border-red-500/30">
+                    Live MySQL Importer
+                  </span>
+                </h3>
+                <p className="text-xs text-neutral-400">
+                  Search and import tracks, artists, albums, and playlists from YouTube and public audio sources directly into your production MySQL database.
+                </p>
+              </div>
+            </div>
+
+            {/* Quick Trending Discovery Presets */}
+            <div className="pt-2 flex items-center gap-2 flex-wrap">
+              <span className="text-[11px] text-neutral-400 font-medium">Quick Discovery:</span>
+              {[
+                'Burna Boy',
+                'Rema Calm Down',
+                'Asake Lonely At The Top',
+                'Wizkid Essence',
+                'Amapiano Groove',
+                'Afrobeats Sunset',
+                'Lo-Fi Study Chill',
+                'Synthwave Neon'
+              ].map((term) => (
+                <button
+                  key={term}
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery(term);
+                    handleSearchMusic(term);
+                  }}
+                  className="px-2.5 py-1 rounded-full text-[11px] bg-white/[0.05] hover:bg-red-500/20 hover:text-red-300 border border-white/[0.08] hover:border-red-500/30 text-neutral-300 transition-colors"
+                >
+                  {term}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Feedback notice */}
+          {importNotice && (
+            <div className={`p-4 rounded-xl border text-xs flex items-center justify-between ${
+              importNotice.startsWith('✓') 
+                ? 'bg-emerald-950/30 border-emerald-500/30 text-emerald-300' 
+                : 'bg-amber-950/30 border-amber-500/30 text-amber-300'
+            }`}>
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <span>{importNotice}</span>
+              </div>
+              <button 
+                onClick={() => setImportNotice(null)} 
+                className="text-neutral-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
+          {/* Search bar */}
+          <div className="p-4 rounded-xl bg-neutral-900/60 border border-white/[0.08] flex items-center gap-3">
+            <Search className="w-5 h-5 text-neutral-400 shrink-0" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSearchMusic()}
+              placeholder="Search by artist name, YouTube track title, or public playlist (e.g. Asake, Rema, Burna Boy, Lo-Fi)..."
+              className="bg-transparent text-sm text-white focus:outline-none flex-1 placeholder:text-neutral-500"
+            />
+            <button
+              onClick={() => handleSearchMusic()}
+              disabled={isSearching || !searchQuery.trim()}
+              className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors"
+            >
+              {isSearching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+              <span>{isSearching ? 'Searching...' : 'Search Music'}</span>
+            </button>
+          </div>
+
+          {/* Search Results */}
+          {searchResults.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-bold text-white uppercase tracking-wider">
+                  Discovered Music ({searchResults.length} tracks found)
+                </h4>
+                <span className="text-[11px] text-neutral-400">
+                  Click 'Import to MySQL' to permanently register in the live catalog
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {searchResults.map((item) => {
+                  const isImported = importedIds.includes(item.source_id);
+                  const isImporting = importingId === item.source_id;
+
+                  return (
+                    <div
+                      key={item.source_id}
+                      className="p-3.5 rounded-xl bg-neutral-900/40 border border-white/[0.06] hover:border-white/[0.12] transition-colors flex items-center justify-between gap-3"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <img
+                          src={item.cover_url}
+                          alt={item.title}
+                          className="w-14 h-14 rounded-lg object-cover shrink-0 border border-white/[0.08]"
+                        />
+                        <div className="min-w-0 space-y-0.5">
+                          <p className="text-sm font-semibold text-white truncate">{item.title}</p>
+                          <p className="text-xs text-neutral-400 truncate">{item.artist}</p>
+                          <div className="flex items-center gap-2 text-[11px] text-neutral-500">
+                            <span>{item.genre}</span>
+                            <span>•</span>
+                            <span>{Math.floor(item.duration / 60)}:{(item.duration % 60).toString().padStart(2, '0')}</span>
+                            {item.youtube_search_url && (
+                              <>
+                                <span>•</span>
+                                <a
+                                  href={item.youtube_search_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-red-400 hover:text-red-300 flex items-center gap-0.5"
+                                >
+                                  <span>YouTube</span>
+                                  <ExternalLink className="w-3 h-3" />
+                                </a>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        {item.audio_url && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (previewAudioUrl === item.audio_url) {
+                                setPreviewAudioUrl(null);
+                              } else {
+                                setPreviewAudioUrl(item.audio_url);
+                              }
+                            }}
+                            className={`p-2 rounded-lg border text-xs transition-colors ${
+                              previewAudioUrl === item.audio_url
+                                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                                : 'bg-white/[0.04] text-neutral-300 border-white/[0.08] hover:bg-white/[0.08]'
+                            }`}
+                            title="Preview Audio"
+                          >
+                            <Play className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+
+                        <button
+                          type="button"
+                          disabled={isImported || isImporting}
+                          onClick={() => handleImportTrack(item)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all ${
+                            isImported
+                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                              : 'bg-white text-black hover:bg-neutral-200'
+                          }`}
+                        >
+                          {isImporting ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : isImported ? (
+                            <Check className="w-3.5 h-3.5" />
+                          ) : (
+                            <Download className="w-3.5 h-3.5" />
+                          )}
+                          <span>{isImported ? 'Imported' : isImporting ? 'Saving...' : 'Import to MySQL'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Audio Preview Element if Active */}
+          {previewAudioUrl && (
+            <div className="p-3 rounded-xl bg-neutral-900 border border-amber-500/30 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-2 text-xs text-amber-300">
+                <Radio className="w-4 h-4 animate-pulse text-amber-400" />
+                <span>Audio Preview Playing</span>
+              </div>
+              <audio src={previewAudioUrl} autoPlay controls className="h-8 max-w-sm" />
+              <button
+                onClick={() => setPreviewAudioUrl(null)}
+                className="text-xs text-neutral-400 hover:text-white"
+              >
+                Close
+              </button>
+            </div>
+          )}
+
+          {/* Manual YouTube / Public Content Ingestion Form */}
+          <div className="p-6 rounded-2xl bg-neutral-900/40 border border-white/[0.08] space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Download className="w-4 h-4 text-red-400" />
+                  <span>Direct YouTube Music / Content Form</span>
+                </h4>
+                <p className="text-xs text-neutral-400 mt-0.5">
+                  Input custom song titles, artist profiles, cover art URLs, and stream links to register instantly in the production MySQL database
+                </p>
+              </div>
+            </div>
+
+            <form onSubmit={handleManualImport} className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+              <div className="space-y-1">
+                <label className="text-xs text-neutral-300 font-medium">Song Title *</label>
+                <input
+                  type="text"
+                  required
+                  value={manualTitle}
+                  onChange={(e) => setManualTitle(e.target.value)}
+                  placeholder="e.g. Higher Vibration (Acoustic)"
+                  className="w-full px-3 py-2 rounded-lg bg-neutral-800/80 border border-white/[0.08] text-xs text-white focus:outline-none focus:border-red-500"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs text-neutral-300 font-medium">Artist Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={manualArtist}
+                  onChange={(e) => setManualArtist(e.target.value)}
+                  placeholder="e.g. Burna Boy / Asake / Tyla"
+                  className="w-full px-3 py-2 rounded-lg bg-neutral-800/80 border border-white/[0.08] text-xs text-white focus:outline-none focus:border-red-500"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs text-neutral-300 font-medium">Album or Release Name</label>
+                <input
+                  type="text"
+                  value={manualAlbum}
+                  onChange={(e) => setManualAlbum(e.target.value)}
+                  placeholder="e.g. I Told Them... or Single"
+                  className="w-full px-3 py-2 rounded-lg bg-neutral-800/80 border border-white/[0.08] text-xs text-white focus:outline-none focus:border-red-500"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs text-neutral-300 font-medium">Genre</label>
+                <select
+                  value={manualGenre}
+                  onChange={(e) => setManualGenre(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-neutral-800/80 border border-white/[0.08] text-xs text-white focus:outline-none focus:border-red-500"
+                >
+                  {['Afrobeats', 'Pop', 'Hip-Hop', 'Amapiano', 'R&B', 'Electronic', 'Lo-Fi', 'Reggae', 'Gospel'].map((g) => (
+                    <option key={g} value={g}>{g}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs text-neutral-300 font-medium">Cover Art Image URL</label>
+                <input
+                  type="url"
+                  value={manualCoverUrl}
+                  onChange={(e) => setManualCoverUrl(e.target.value)}
+                  placeholder="https://images.unsplash.com/... or direct image link"
+                  className="w-full px-3 py-2 rounded-lg bg-neutral-800/80 border border-white/[0.08] text-xs text-white focus:outline-none focus:border-red-500"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs text-neutral-300 font-medium">Audio Stream / MP3 URL</label>
+                <input
+                  type="url"
+                  value={manualAudioUrl}
+                  onChange={(e) => setManualAudioUrl(e.target.value)}
+                  placeholder="https://... direct audio URL or SoundHelix test URL"
+                  className="w-full px-3 py-2 rounded-lg bg-neutral-800/80 border border-white/[0.08] text-xs text-white focus:outline-none focus:border-red-500"
+                />
+              </div>
+
+              <div className="md:col-span-2 pt-2 flex items-center justify-end gap-3">
+                <button
+                  type="submit"
+                  disabled={isManualImporting}
+                  className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-2 transition-all shadow-lg shadow-red-600/20"
+                >
+                  {isManualImporting ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Download className="w-4 h-4" />
+                  )}
+                  <span>{isManualImporting ? 'Writing to MySQL...' : 'Save & Import to MySQL Catalog'}</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

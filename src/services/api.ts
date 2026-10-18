@@ -78,12 +78,16 @@ class ApiService {
           audioUrl: t.audio_url,
           streams: Number(t.stream_count) || 0,
           likes: Number(t.likes_count) || 0,
-          releaseDate: t.release_date,
+          releaseDate: t.release_date || new Date().toISOString().split('T')[0],
           lyrics: t.lyrics,
-          isrc: t.isrc,
+          isrc: t.isrc || 'USFLM2026001',
+          upc: '012345678901',
+          label: 'Flontmie Music',
+          distributor: 'TuneCore Direct',
           isExplicit: Boolean(Number(t.explicit)),
           scale: t.scale,
           bpm: Number(t.bpm) || 120,
+          moods: ['trending', 'party'] as any[],
           moodTags: t.mood_tags || [t.genre]
         }));
       }
@@ -151,21 +155,130 @@ class ApiService {
     try {
       const res = await this.request<{ status: string; playlists: any[] }>('/playlists.php');
       if (res && Array.isArray(res.playlists)) {
-        return res.playlists.map(p => ({
-          id: p.id,
-          title: p.title,
-          description: p.description,
-          coverUrl: p.cover_art_url,
-          curator: 'Flontmie Editorial',
-          tracksCount: p.track_count || 0,
-          trackIds: JSON.parse(p.track_ids_json || '[]'),
-          category: 'featured'
-        }));
+        return res.playlists.map(p => {
+          let trackIds: string[] = [];
+          if (Array.isArray(p.track_ids)) {
+            trackIds = p.track_ids;
+          } else if (Array.isArray(p.track_ids_json)) {
+            trackIds = p.track_ids_json;
+          } else if (typeof p.track_ids_json === 'string' && p.track_ids_json.trim()) {
+            try {
+              const parsed = JSON.parse(p.track_ids_json);
+              trackIds = Array.isArray(parsed) ? parsed : [];
+            } catch {
+              trackIds = [];
+            }
+          }
+
+          const pid = String(p.id || '');
+          let genreCat = p.genre_category || p.category;
+          if (!genreCat) {
+            if (pid.includes('love')) genreCat = 'love_songs';
+            else if (pid.includes('old')) genreCat = 'old_school';
+            else if (pid.includes('work')) genreCat = 'workout';
+            else if (pid.includes('focus') || pid.includes('chill')) genreCat = 'coding';
+            else if (pid.includes('road')) genreCat = 'road_trip';
+            else genreCat = 'all';
+          }
+
+          return {
+            id: pid,
+            title: p.title || 'Curated Collection',
+            description: p.description || '',
+            coverUrl: p.cover_art_url || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600',
+            curator: p.curator || 'Flontmie Editorial',
+            trackIds,
+            category: (p.category || 'trending') as any,
+            genreCategory: genreCat,
+            isPublic: Boolean(Number(p.is_public ?? 1)),
+            isCollaborative: Boolean(Number(p.is_collaborative ?? 0)),
+            followers: Number(p.followers) || 142000,
+            createdAt: p.created_at || new Date().toISOString().split('T')[0]
+          };
+        });
       }
     } catch (e) {
       console.warn('Backend playlists fetch error:', e);
     }
     return [];
+  }
+
+  public async getPlaylistById(id: string): Promise<{ playlist: Playlist; tracks: Track[] } | null> {
+    try {
+      const res = await this.request<{ status: string; playlist: any }>(`/playlists.php?id=${encodeURIComponent(id)}`);
+      if (res && res.playlist) {
+        const p = res.playlist;
+        let trackIds: string[] = [];
+        if (Array.isArray(p.track_ids)) {
+          trackIds = p.track_ids;
+        } else if (typeof p.track_ids_json === 'string' && p.track_ids_json.trim()) {
+          try {
+            const parsed = JSON.parse(p.track_ids_json);
+            trackIds = Array.isArray(parsed) ? parsed : [];
+          } catch {
+            trackIds = [];
+          }
+        }
+
+        const rawTracks = Array.isArray(p.tracks) ? p.tracks : [];
+        const mappedTracks: Track[] = rawTracks.map((t: any) => ({
+          id: t.id,
+          title: t.title,
+          artist: t.artist_name || t.artist || 'Unknown Artist',
+          artistId: t.artist_id || 'art_unknown',
+          album: t.album_name || t.album || 'Single',
+          duration: Number(t.duration) || 180,
+          genre: t.genre || 'Pop',
+          coverUrl: t.cover_art_url || t.coverUrl || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600',
+          audioUrl: t.audio_url || t.audioUrl || '',
+          streams: Number(t.stream_count || t.streams || 0),
+          likes: Number(t.likes_count || t.likes || 0),
+          releaseDate: t.release_date || new Date().toISOString().split('T')[0],
+          lyrics: t.lyrics,
+          isrc: t.isrc || 'USFLM2026001',
+          upc: '012345678901',
+          label: 'Flontmie Music',
+          distributor: 'TuneCore Direct',
+          isExplicit: Boolean(Number(t.explicit)),
+          scale: t.scale,
+          bpm: Number(t.bpm) || 120,
+          moods: ['trending', 'party'] as any[],
+          moodTags: t.mood_tags || [t.genre || 'Pop']
+        }));
+
+        const pid = String(p.id || '');
+        let genreCat = p.genre_category || p.category;
+        if (!genreCat) {
+          if (pid.includes('love')) genreCat = 'love_songs';
+          else if (pid.includes('old')) genreCat = 'old_school';
+          else if (pid.includes('work')) genreCat = 'workout';
+          else if (pid.includes('focus') || pid.includes('chill')) genreCat = 'coding';
+          else if (pid.includes('road')) genreCat = 'road_trip';
+          else genreCat = 'all';
+        }
+
+        return {
+          playlist: {
+            id: pid,
+            title: p.title || 'Curated Collection',
+            description: p.description || '',
+            coverUrl: p.cover_art_url || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600',
+            curator: p.curator || 'Flontmie Editorial',
+            trackIds,
+            category: (p.category || 'trending') as any,
+            genreCategory: genreCat,
+            isPublic: Boolean(Number(p.is_public ?? 1)),
+            isCollaborative: Boolean(Number(p.is_collaborative ?? 0)),
+            followers: Number(p.followers) || 142000,
+            createdAt: p.created_at || new Date().toISOString().split('T')[0]
+          },
+          tracks: mappedTracks
+        };
+      }
+    } catch (e) {
+      console.warn('Backend single playlist fetch error:', e);
+    }
+    return null;
   }
 
   // --- AUTH ---
@@ -221,6 +334,85 @@ class ApiService {
       method: 'POST',
       body: JSON.stringify({ user_id: userId, role })
     });
+  }
+
+  // --- YOUTUBE MUSIC DISCOVERY API (ytmusicapi standard) ---
+  public async searchYouTubeMusic(query: string, filter?: 'songs' | 'artists' | 'albums' | 'playlists') {
+    const filterParam = filter ? `&filter=${filter}` : '';
+    return this.request<{
+      status: string;
+      query: string;
+      results: {
+        songs: any[];
+        artists: any[];
+        albums: any[];
+        playlists: any[];
+      };
+      total_count: number;
+    }>(`/youtube_music.php?action=search&q=${encodeURIComponent(query)}${filterParam}`);
+  }
+
+  public async getYouTubeMusicCharts() {
+    return this.request<{
+      status: string;
+      count: number;
+      charts: Array<{
+        id: string;
+        videoId?: string;
+        title: string;
+        artist: string;
+        cover_url: string;
+        shelf: string;
+        streams: number;
+      }>;
+    }>('/youtube_music.php?action=charts');
+  }
+
+  public async getYouTubeMusicMoods() {
+    return this.request<{
+      status: string;
+      count: number;
+      moods_and_genres: Array<{
+        name: string;
+        browseId: string;
+        color: string;
+      }>;
+    }>('/youtube_music.php?action=moods');
+  }
+
+  public async getYouTubeMusicLyrics(videoId: string) {
+    return this.request<{
+      status: string;
+      videoId: string;
+      lyrics: string;
+      source: string;
+    }>(`/youtube_music.php?action=lyrics&videoId=${encodeURIComponent(videoId)}`);
+  }
+
+  public async importYouTubeMusicTrack(trackData: {
+    title: string;
+    artist: string;
+    album?: string;
+    genre?: string;
+    duration?: number;
+    cover_url?: string;
+    audio_url?: string;
+    videoId?: string;
+    lyrics?: string;
+  }) {
+    return this.request<{ status: string; message: string; track: Track }>('/youtube_music.php?action=import', {
+      method: 'POST',
+      body: JSON.stringify(trackData)
+    });
+  }
+
+  // Fallback public music search
+  public async searchPublicMusic(query: string) {
+    return this.searchYouTubeMusic(query);
+  }
+
+  public async importPublicTrack(trackData: any) {
+    return this.importYouTubeMusicTrack(trackData);
   }
 }
 

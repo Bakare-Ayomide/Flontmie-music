@@ -636,7 +636,353 @@ try {
             'featured_artists' => 'Sarkodie',
             'producer' => 'Killbeatz',
             'composer' => 'Kofi Vance'
+        ],
+        [
+            'id' => 'track-afro-1',
+            'title' => 'Solar Wave (Lagos Nocturne)',
+            'artist_id' => 'art_burna_boy',
+            'artist_name' => 'Amara Osei',
+            'album_id' => 'alb_lagos_nights',
+            'album_name' => 'Lagos Nights & Golden Skies',
+            'duration' => 198,
+            'genre' => 'Afrobeats',
+            'cover_art_url' => 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=600',
+            'audio_url' => 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
+            'stream_count' => 1845000,
+            'likes_count' => 124000,
+            'release_date' => '2025-10-15',
+            'lyrics' => "Lagos nights with the bassline low
+Log drum rolling everywhere we go
+Sunset dripping like liquid gold
+Feel the rhythm through the heat.",
+            'isrc' => 'US-FLN-25-00201',
+            'explicit' => 0,
+            'scale' => 'F# Minor',
+            'bpm' => 114,
+            'mood_tags' => ['Party', 'Afrobeat', 'Groovy', 'Sunset'],
+            'featured_artists' => null,
+            'producer' => 'Kel-P Vibes',
+            'composer' => 'Amara Osei'
+        ],
+        [
+            'id' => 'track-afro-2',
+            'title' => 'Amapiano Thunder (Jozi Heat)',
+            'artist_id' => 'art_kofi_vance',
+            'artist_name' => 'Kabelo Zulu',
+            'album_id' => 'alb_lagos_nights',
+            'album_name' => 'Lagos Nights & Golden Skies',
+            'duration' => 216,
+            'genre' => 'Afrobeats',
+            'cover_art_url' => 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600',
+            'audio_url' => 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3',
+            'stream_count' => 960000,
+            'likes_count' => 74000,
+            'release_date' => '2025-11-01',
+            'lyrics' => "South African bass in the atmosphere
+Vibrate the speakers crystal clear
+Dancing till the break of day
+Jozi heat blowing all the doubts away.",
+            'isrc' => 'US-FLN-25-00202',
+            'explicit' => 0,
+            'scale' => 'G Minor',
+            'bpm' => 112,
+            'mood_tags' => ['Party', 'Afrobeat', 'Hype'],
+            'featured_artists' => null,
+            'producer' => 'Kabza Sounds',
+            'composer' => 'Kabelo Zulu'
+        ],
+        [
+            'id' => 'track-pop-1',
+            'title' => 'Golden Starlight Horizon',
+            'artist_id' => 'art_burna_boy',
+            'artist_name' => 'Elena Rostova',
+            'album_id' => 'alb_neon_odyssey',
+            'album_name' => 'Single Release',
+            'duration' => 184,
+            'genre' => 'Pop',
+            'cover_art_url' => 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600',
+            'audio_url' => 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3',
+            'stream_count' => 3120000,
+            'likes_count' => 240000,
+            'release_date' => '2025-08-14',
+            'lyrics' => "Underneath the golden light
+We set fire into the night
+Nothing holding back our stride
+Take the wheel and let it ride.",
+            'isrc' => 'US-FLN-25-00203',
+            'explicit' => 0,
+            'scale' => 'D Major',
+            'bpm' => 126,
+            'mood_tags' => ['Pop', 'Energy', 'Sunset'],
+            'featured_artists' => null,
+            'producer' => 'Max Martin Style',
+            'composer' => 'Elena Rostova'
+        ],
+        [
+            'id' => 'track-pop-2',
+            'title' => 'Midnight Heartbeat',
+            'artist_id' => 'art_burna_boy',
+            'artist_name' => 'Elena Rostova',
+            'album_id' => 'alb_neon_odyssey',
+            'album_name' => 'Single Release',
+            'duration' => 195,
+            'genre' => 'Pop',
+            'cover_art_url' => 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600',
+            'audio_url' => 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3',
+            'stream_count' => 2100000,
+            'likes_count' => 185000,
+            'release_date' => '2025-09-02',
+            'lyrics' => "Tick tock the rhythm on the glass
+Never let this moment pass
+Two hearts beating in synchrony
+This is how it was meant to be.",
+            'isrc' => 'US-FLN-25-00204',
+            'explicit' => 0,
+            'scale' => 'C Major',
+            'bpm' => 120,
+            'mood_tags' => ['Pop', 'Love', 'Night'],
+            'featured_artists' => null,
+            'producer' => 'Elena Rostova',
+            'composer' => 'Elena Rostova'
+        ],
+        [
+            'id' => 'track-rap-1',
+            'title' => 'Concrete Kingdom (Eastside Drill)',
+            'artist_id' => 'art_kofi_vance',
+            'artist_name' => 'Damian Cross',
+            'album_id' => 'alb_lagos_nights',
+            'album_name' => 'Eastside Chronicles',
+            'duration' => 172,
+            'genre' => 'Rap',
+            'cover_art_url' => 'https://images.unsplash.com/photo-1509198397868-475647b2a1e5?w=600',
+            'audio_url' => 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3',
+            'stream_count' => 4500000,
+            'likes_count' => 380000,
+            'release_date' => '2025-07-20',
+            'lyrics' => "Step in the zone, step in the heat
+Heavy 808 tearing through the street
+Concrete kingdom built with pride
+Nowhere for the fake to hide.",
+            'isrc' => 'US-FLN-25-00205',
+            'explicit' => 1,
+            'scale' => 'F Minor',
+            'bpm' => 142,
+            'mood_tags' => ['Workout', 'Hype', 'Rap'],
+            'featured_artists' => null,
+            'producer' => 'Drill King',
+            'composer' => 'Damian Cross'
+        ],
+        [
+            'id' => 'track-rap-2',
+            'title' => 'Rhyme Velocity & Neon Lights',
+            'artist_id' => 'art_kofi_vance',
+            'artist_name' => 'Damian Cross',
+            'album_id' => 'alb_lagos_nights',
+            'album_name' => 'Eastside Chronicles',
+            'duration' => 188,
+            'genre' => 'Rap',
+            'cover_art_url' => 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=600',
+            'audio_url' => 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3',
+            'stream_count' => 2800000,
+            'likes_count' => 210000,
+            'release_date' => '2025-08-30',
+            'lyrics' => "Lyrical precision cutting like a laser
+Fast lane velocity sharp as a razor
+Turning every beat into pure gold
+Greatest story that was ever told.",
+            'isrc' => 'US-FLN-25-00206',
+            'explicit' => 1,
+            'scale' => 'G# Minor',
+            'bpm' => 135,
+            'mood_tags' => ['Rap', 'Workout', 'Hype'],
+            'featured_artists' => null,
+            'producer' => 'Cross Beats',
+            'composer' => 'Damian Cross'
+        ],
+        [
+            'id' => 'track-old-1',
+            'title' => 'Vintage 1984 Funk Groove',
+            'artist_id' => 'art_burna_boy',
+            'artist_name' => 'Diana Sterling & The 80s Horns',
+            'album_id' => 'alb_neon_odyssey',
+            'album_name' => 'Retro Gold Vault',
+            'duration' => 230,
+            'genre' => 'Oldschool',
+            'cover_art_url' => 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600',
+            'audio_url' => 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-7.mp3',
+            'stream_count' => 1650000,
+            'likes_count' => 140000,
+            'release_date' => '2025-05-10',
+            'lyrics' => "Slap the bass, hit the brass
+Nothing beats vintage class
+Spin the vinyl round and round
+Universal funky sound.",
+            'isrc' => 'US-FLN-25-00207',
+            'explicit' => 0,
+            'scale' => 'E Minor',
+            'bpm' => 116,
+            'mood_tags' => ['Oldschool', 'Funk', 'Party'],
+            'featured_artists' => null,
+            'producer' => 'Funkmaster D',
+            'composer' => 'Diana Sterling'
+        ],
+        [
+            'id' => 'track-old-2',
+            'title' => 'Motown Soul Echoes',
+            'artist_id' => 'art_burna_boy',
+            'artist_name' => 'Diana Sterling & The 80s Horns',
+            'album_id' => 'alb_neon_odyssey',
+            'album_name' => 'Retro Gold Vault',
+            'duration' => 215,
+            'genre' => 'Oldschool',
+            'cover_art_url' => 'https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=600',
+            'audio_url' => 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3',
+            'stream_count' => 1420000,
+            'likes_count' => 110000,
+            'release_date' => '2025-06-15',
+            'lyrics' => "Harmonies that soothe the soul
+Rock and rhythm taking control
+Echoes from Detroit down to Memphis
+Timeless groove that is endless.",
+            'isrc' => 'US-FLN-25-00208',
+            'explicit' => 0,
+            'scale' => 'Bb Major',
+            'bpm' => 108,
+            'mood_tags' => ['Oldschool', 'Soul', 'Relax'],
+            'featured_artists' => null,
+            'producer' => 'Retro Sound Labs',
+            'composer' => 'Diana Sterling'
+        ],
+        [
+            'id' => 'track-rnb-1',
+            'title' => 'Silk & Honey (Slow Jam)',
+            'artist_id' => 'art_burna_boy',
+            'artist_name' => 'Marcus Vance',
+            'album_id' => 'alb_neon_odyssey',
+            'album_name' => 'Velvet Touch',
+            'duration' => 220,
+            'genre' => 'R&B',
+            'cover_art_url' => 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600',
+            'audio_url' => 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-9.mp3',
+            'stream_count' => 2400000,
+            'likes_count' => 195000,
+            'release_date' => '2025-09-12',
+            'lyrics' => "Candlelight reflecting in your eyes
+Underneath the midnight skies
+Silk and honey on your skin
+This is where our dreams begin.",
+            'isrc' => 'US-FLN-25-00209',
+            'explicit' => 0,
+            'scale' => 'Ab Major',
+            'bpm' => 78,
+            'mood_tags' => ['Romance', 'R&B', 'Relax'],
+            'featured_artists' => null,
+            'producer' => 'Soulful Studios',
+            'composer' => 'Marcus Vance'
+        ],
+        [
+            'id' => 'track-rnb-2',
+            'title' => 'Midnight Velvet Whispers',
+            'artist_id' => 'art_burna_boy',
+            'artist_name' => 'Marcus Vance',
+            'album_id' => 'alb_neon_odyssey',
+            'album_name' => 'Velvet Touch',
+            'duration' => 198,
+            'genre' => 'R&B',
+            'cover_art_url' => 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=600',
+            'audio_url' => 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-10.mp3',
+            'stream_count' => 1950000,
+            'likes_count' => 165000,
+            'release_date' => '2025-10-05',
+            'lyrics' => "Soft acoustic guitar in the rain
+Washing away every memory of pain
+Whispers lingering in the night
+Until the morning brings the light.",
+            'isrc' => 'US-FLN-25-00210',
+            'explicit' => 0,
+            'scale' => 'Db Major',
+            'bpm' => 82,
+            'mood_tags' => ['Romance', 'R&B', 'Late Night'],
+            'featured_artists' => null,
+            'producer' => 'Marcus Vance',
+            'composer' => 'Marcus Vance'
+        ],
+        [
+            'id' => 'track-synth-1',
+            'title' => 'Midnight Grid Runner',
+            'artist_id' => 'art_aurora_synth',
+            'artist_name' => 'Nova Waves',
+            'album_id' => 'alb_neon_odyssey',
+            'album_name' => 'Cyber Horizons',
+            'duration' => 214,
+            'genre' => 'Synthwave',
+            'cover_art_url' => 'https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=600',
+            'audio_url' => 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-11.mp3',
+            'stream_count' => 1780000,
+            'likes_count' => 145000,
+            'release_date' => '2025-08-18',
+            'lyrics' => "Outrun the sunset into the grid
+Dreaming the dreams that the machines did
+Analog filters sweep through the air
+Chrome aesthetic everywhere.",
+            'isrc' => 'US-FLN-25-00211',
+            'explicit' => 0,
+            'scale' => 'A Minor',
+            'bpm' => 124,
+            'mood_tags' => ['Synthwave', 'Focus', 'Driving'],
+            'featured_artists' => null,
+            'producer' => 'Nova Waves',
+            'composer' => 'Nova Waves'
+        ],
+        [
+            'id' => 'track-lofi-1',
+            'title' => 'Tea Leaves & Heavy Rain',
+            'artist_id' => 'art_chilled_cowboy',
+            'artist_name' => 'Kaelen Cole',
+            'album_id' => 'alb_midnight_rain',
+            'album_name' => 'Coffee & Rain',
+            'duration' => 168,
+            'genre' => 'Lo-Fi',
+            'cover_art_url' => 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600',
+            'audio_url' => 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-12.mp3',
+            'stream_count' => 3800000,
+            'likes_count' => 310000,
+            'release_date' => '2025-09-10',
+            'lyrics' => "[Warm lo-fi instrumental with gentle vinyl hum and raindrop acoustics]",
+            'isrc' => 'US-FLN-25-00212',
+            'explicit' => 0,
+            'scale' => 'G Major',
+            'bpm' => 80,
+            'mood_tags' => ['Study', 'Relax', 'Rain', 'Morning'],
+            'featured_artists' => null,
+            'producer' => 'Kaelen Cole',
+            'composer' => 'Kaelen Cole'
+        ],
+        [
+            'id' => 'track-amb-1',
+            'title' => 'Interstellar Drift',
+            'artist_id' => 'art_chilled_cowboy',
+            'artist_name' => 'Lyra Zenith',
+            'album_id' => 'alb_midnight_rain',
+            'album_name' => 'Cosmic Drift',
+            'duration' => 252,
+            'genre' => 'Ambient',
+            'cover_art_url' => 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600',
+            'audio_url' => 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-13.mp3',
+            'stream_count' => 1250000,
+            'likes_count' => 92000,
+            'release_date' => '2025-07-04',
+            'lyrics' => "[Deep cosmic modular synthesis with shimmering binaural harmonics]",
+            'isrc' => 'US-FLN-25-00213',
+            'explicit' => 0,
+            'scale' => 'F Major',
+            'bpm' => 65,
+            'mood_tags' => ['Ambient', 'Focus', 'Sleep'],
+            'featured_artists' => null,
+            'producer' => 'Lyra Zenith',
+            'composer' => 'Lyra Zenith'
         ]
+
     ];
 
     $trkStmt = $pdo->prepare("
@@ -706,7 +1052,71 @@ try {
             'cover_art_url' => 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600',
             'is_public' => 1,
             'tracks' => ['trk_lofi_003', 'trk_synth_002']
-        ]
+        ],
+        [
+            'id' => 'pl-love-1',
+            'user_id' => 'usr_admin_001',
+            'title' => 'Late Night Romance & Velvet R&B',
+            'description' => 'Sensual slow jams, warm neo-soul chords, and candlelit melodies.',
+            'cover_art_url' => 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600',
+            'is_public' => 1,
+            'tracks' => ['track-rnb-1', 'track-rnb-2', 'track-pop-2']
+        ],
+        [
+            'id' => 'pl-love-2',
+            'user_id' => 'usr_admin_001',
+            'title' => 'Acoustic Love Letters & Sunsets',
+            'description' => 'Tender acoustic love confessions and gentle golden hour ballads.',
+            'cover_art_url' => 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=600',
+            'is_public' => 1,
+            'tracks' => ['track-rnb-2', 'track-afro-1', 'track-lofi-1']
+        ],
+        [
+            'id' => 'pl-old-1',
+            'user_id' => 'usr_admin_001',
+            'title' => 'Golden Age Funk, Disco & Soul',
+            'description' => 'Original vinyl recordings, slap basslines, and 70s-80s studio royalty.',
+            'cover_art_url' => 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600',
+            'is_public' => 1,
+            'tracks' => ['track-old-1', 'track-old-2']
+        ],
+        [
+            'id' => 'pl-old-2',
+            'user_id' => 'usr_admin_001',
+            'title' => '90s Boom Bap & Classic Rap Vault',
+            'description' => 'Raw SP-1200 drums, jazz samples, and golden age poetic flows.',
+            'cover_art_url' => 'https://images.unsplash.com/photo-1509198397868-475647b2a1e5?w=600',
+            'is_public' => 1,
+            'tracks' => ['track-rap-2', 'track-old-1']
+        ],
+        [
+            'id' => 'pl-work-1',
+            'user_id' => 'usr_admin_001',
+            'title' => 'High-Voltage Cardio Beast Mode',
+            'description' => 'Unrelenting 135+ BPM drill rap, electronic drops, and personal record breakers.',
+            'cover_art_url' => 'https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?w=600',
+            'is_public' => 1,
+            'tracks' => ['track-rap-1', 'track-synth-1', 'track-afro-2']
+        ],
+        [
+            'id' => 'pl-focus-1',
+            'user_id' => 'usr_admin_001',
+            'title' => 'Deep Terminal: 100% Brainwave Flow',
+            'description' => 'Instrumental binaural ambient and analog modular loops with zero lyrical distraction.',
+            'cover_art_url' => 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600',
+            'is_public' => 1,
+            'tracks' => ['track-amb-1', 'track-lofi-1']
+        ],
+        [
+            'id' => 'pl-road-1',
+            'user_id' => 'usr_admin_001',
+            'title' => 'Open Highway: Sunset Coast Drive',
+            'description' => 'Windows down, warm wind, melodic pop anthems, and retrowave horizons.',
+            'cover_art_url' => 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600',
+            'is_public' => 1,
+            'tracks' => ['track-pop-1', 'track-synth-1', 'track-afro-1']
+        ],
+
     ];
 
     $plyStmt = $pdo->prepare("

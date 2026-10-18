@@ -363,7 +363,7 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
               </div>
               <h4 className="text-xs md:text-sm font-semibold truncate text-white group-hover:text-red-400">{track.title}</h4>
               <p className="text-xs text-neutral-400 truncate">{track.artist}</p>
-              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-neutral-500 font-mono">{track.streams.toLocaleString()} streams</div>
+              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-neutral-500 font-mono">{(Number(track.streams) || 0).toLocaleString()} streams</div>
             </div>
           ))}
         </CarouselShelf>
@@ -388,7 +388,7 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
               </div>
               <h4 className="text-xs md:text-sm font-semibold truncate text-white group-hover:text-red-400">{track.title}</h4>
               <p className="text-xs text-neutral-400 truncate">{track.artist}</p>
-              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-neutral-500 font-mono">{track.streams.toLocaleString()} streams</div>
+              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-neutral-500 font-mono">{(Number(track.streams) || 0).toLocaleString()} streams</div>
             </div>
           ))}
         </CarouselShelf>
@@ -413,7 +413,7 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
               </div>
               <h4 className="text-xs md:text-sm font-semibold truncate text-white group-hover:text-red-400">{track.title}</h4>
               <p className="text-xs text-neutral-400 truncate">{track.artist}</p>
-              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-neutral-500 font-mono">{track.streams.toLocaleString()} streams</div>
+              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-neutral-500 font-mono">{(Number(track.streams) || 0).toLocaleString()} streams</div>
             </div>
           ))}
         </CarouselShelf>
@@ -438,7 +438,7 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
               </div>
               <h4 className="text-xs md:text-sm font-semibold truncate text-white group-hover:text-red-400">{track.title}</h4>
               <p className="text-xs text-neutral-400 truncate">{track.artist}</p>
-              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-neutral-500 font-mono">{track.streams.toLocaleString()} streams</div>
+              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-neutral-500 font-mono">{(Number(track.streams) || 0).toLocaleString()} streams</div>
             </div>
           ))}
         </CarouselShelf>
@@ -467,7 +467,7 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
                 </div>
               </div>
               <p className="text-[11px] text-neutral-400 line-clamp-1">{pl.description}</p>
-              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-rose-300 font-mono">{pl.followers.toLocaleString()} saves</div>
+              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-rose-300 font-mono">{(Number(pl.followers) || 0).toLocaleString()} saves</div>
             </div>
           ))}
         </CarouselShelf>
@@ -493,7 +493,7 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
               </div>
               <h4 className="text-xs md:text-sm font-semibold truncate text-white group-hover:text-red-400">{pl.title}</h4>
               <p className="text-[11px] text-neutral-400 line-clamp-1">{pl.description}</p>
-              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-neutral-500 font-mono">{pl.followers.toLocaleString()} saves</div>
+              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-neutral-500 font-mono">{(Number(pl.followers) || 0).toLocaleString()} saves</div>
             </div>
           ))}
         </CarouselShelf>
@@ -519,7 +519,7 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
               </div>
               <h4 className="text-xs md:text-sm font-semibold truncate text-white group-hover:text-red-400">{pl.title}</h4>
               <p className="text-[11px] text-neutral-400 line-clamp-1">{pl.description}</p>
-              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-neutral-500 font-mono">{pl.followers.toLocaleString()} saves</div>
+              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-neutral-500 font-mono">{(Number(pl.followers) || 0).toLocaleString()} saves</div>
             </div>
           ))}
         </CarouselShelf>
@@ -544,7 +544,7 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
               </div>
               <h4 className="text-xs md:text-sm font-semibold truncate text-white group-hover:text-red-400">{track.title}</h4>
               <p className="text-xs text-neutral-400 truncate">{track.artist}</p>
-              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-neutral-500 font-mono">{track.streams.toLocaleString()} streams</div>
+              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-neutral-500 font-mono">{(Number(track.streams) || 0).toLocaleString()} streams</div>
             </div>
           ))}
         </CarouselShelf>
@@ -569,7 +569,7 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
               </div>
               <h4 className="text-xs md:text-sm font-semibold truncate text-white group-hover:text-red-400">{track.title}</h4>
               <p className="text-xs text-neutral-400 truncate">{track.artist}</p>
-              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-neutral-500 font-mono">{track.streams.toLocaleString()} streams</div>
+              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-neutral-500 font-mono">{(Number(track.streams) || 0).toLocaleString()} streams</div>
             </div>
           ))}
         </CarouselShelf>

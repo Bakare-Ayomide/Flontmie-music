@@ -5,12 +5,12 @@ import {
   Shuffle, 
   Share2, 
   Heart, 
-  MoreVertical, 
   Clock, 
   Plus, 
   Trash2, 
   Users, 
-  Music
+  Music,
+  ArrowLeft
 } from 'lucide-react';
 
 interface PlaylistViewProps {
@@ -27,14 +27,15 @@ interface PlaylistViewProps {
   onOpenAddTrackModal: () => void;
   onOpenShareModal: () => void;
   onDeletePlaylist?: (id: string) => void;
+  onBack?: () => void;
 }
 
 export const PlaylistView: React.FC<PlaylistViewProps> = ({
   playlist,
-  allTracks,
+  allTracks = [],
   currentTrack,
   isPlaying,
-  likedTrackIds,
+  likedTrackIds = [],
   onPlayTrack,
   onPlayAll,
   onShuffleAll,
@@ -43,26 +44,60 @@ export const PlaylistView: React.FC<PlaylistViewProps> = ({
   onOpenAddTrackModal,
   onOpenShareModal,
   onDeletePlaylist,
+  onBack,
 }) => {
-  // Resolve tracks in this playlist
-  const tracks = playlist.trackIds
-    .map((id) => allTracks.find((t) => t.id === id))
+  if (!playlist) {
+    return (
+      <div className="py-20 text-center space-y-4">
+        <p className="text-neutral-400">Playlist not found.</p>
+        {onBack && (
+          <button
+            onClick={onBack}
+            className="px-4 py-2 bg-white/10 text-white rounded-xl text-xs hover:bg-white/20 transition-colors"
+          >
+            Go Back
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  // Resolve tracks in this playlist with defensive guards against undefined/null
+  const trackIds: string[] = Array.isArray(playlist.trackIds) ? playlist.trackIds : [];
+  const tracks: Track[] = trackIds
+    .map((id) => allTracks.find((t) => t?.id === id))
     .filter((t): t is Track => Boolean(t));
 
-  const totalDuration = tracks.reduce((acc, t) => acc + t.duration, 0);
+  const totalDuration = tracks.reduce((acc, t) => acc + (Number(t?.duration) || 0), 0);
   const totalMinutes = Math.floor(totalDuration / 60);
+  const followersCount = Number(playlist.followers) || 0;
 
   return (
     <div className="space-y-6 pb-20 animate-in fade-in duration-200">
+      {/* Back Navigation Button */}
+      {onBack && (
+        <button
+          onClick={onBack}
+          className="inline-flex items-center gap-2 text-xs font-semibold text-neutral-400 hover:text-white transition-colors py-1 px-2.5 rounded-lg hover:bg-white/[0.06]"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          <span>Back</span>
+        </button>
+      )}
+
       {/* Playlist Hero Banner */}
       <div className="flex flex-col md:flex-row items-start md:items-end gap-6 p-6 md:p-8 bg-gradient-to-b from-neutral-800/50 to-transparent rounded-2xl border border-white/[0.06]">
         <div className="w-44 h-44 md:w-56 md:h-56 rounded-xl overflow-hidden shadow-2xl shrink-0 bg-neutral-800 border border-white/10 relative group">
           {playlist.coverUrl ? (
             <img
               src={playlist.coverUrl}
-              alt={playlist.title}
+              alt={playlist.title || 'Playlist'}
               referrerPolicy="no-referrer"
               className="w-full h-full object-cover"
+              onError={(e) => {
+                // Fallback if image fails to load
+                (e.target as HTMLElement).style.display = 'none';
+              }}
             />
           ) : (
             <div className="w-full h-full flex items-center justify-center bg-neutral-900 text-neutral-600">
@@ -75,29 +110,29 @@ export const PlaylistView: React.FC<PlaylistViewProps> = ({
           <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-red-400">
             <span>{playlist.isCollaborative ? 'Collaborative Playlist' : 'Curated Playlist'}</span>
             <span aria-hidden="true">·</span>
-            <span>{playlist.category}</span>
+            <span className="capitalize">{playlist.category || 'Flontmie Music'}</span>
           </div>
 
-          <h1 className="text-2xl md:text-4xl font-extrabold tracking-tight text-white">
-            {playlist.title}
+          <h1 className="text-2xl md:text-4xl font-extrabold tracking-tight text-white truncate">
+            {playlist.title || 'Untitled Playlist'}
           </h1>
 
           <p className="text-sm text-neutral-300 max-w-2xl leading-relaxed">
-            {playlist.description}
+            {playlist.description || 'Curated music collection on Flontmie.'}
           </p>
 
           {/* Clean metadata line with typographic separators (anti-slop rule) */}
           <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-400 pt-1">
-            <span className="font-semibold text-white">{playlist.curator}</span>
+            <span className="font-semibold text-white">{playlist.curator || 'Flontmie Editorial'}</span>
             <span aria-hidden="true">·</span>
-            <span className="font-mono tabular-nums">{playlist.followers.toLocaleString()} followers</span>
+            <span className="font-mono tabular-nums">{followersCount.toLocaleString()} followers</span>
             <span aria-hidden="true">·</span>
             <span className="font-mono tabular-nums">{tracks.length} songs</span>
             <span aria-hidden="true">·</span>
             <span className="font-mono tabular-nums">{totalMinutes} minutes</span>
           </div>
 
-          {playlist.isCollaborative && playlist.collaborators && (
+          {playlist.isCollaborative && Array.isArray(playlist.collaborators) && playlist.collaborators.length > 0 && (
             <div className="flex items-center gap-2 pt-1 text-xs text-neutral-400">
               <Users className="w-3.5 h-3.5 text-neutral-400" />
               <span>Collaborators: {playlist.collaborators.join(', ')}</span>
@@ -167,18 +202,30 @@ export const PlaylistView: React.FC<PlaylistViewProps> = ({
         </div>
 
         {tracks.length === 0 ? (
-          <div className="py-16 text-center text-neutral-500 text-sm">
+          <div className="py-16 text-center text-neutral-500 text-sm space-y-2">
             <p className="font-semibold text-neutral-300">No tracks in this playlist yet</p>
-            <p className="text-xs text-neutral-500 mt-1">Click "Add Tracks" above to curate this collection.</p>
+            <p className="text-xs text-neutral-500">Click "Add Tracks" above to curate music into this collection.</p>
+            <button
+              onClick={onOpenAddTrackModal}
+              className="mt-2 inline-flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/15 text-white rounded-lg text-xs font-medium transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Browse and Add Tracks</span>
+            </button>
           </div>
         ) : (
           tracks.map((track, index) => {
+            if (!track) return null;
             const isCurrent = currentTrack?.id === track.id;
             const isLiked = likedTrackIds.includes(track.id);
+            const streamCount = Number(track.streams) || 0;
+            const trackDuration = Number(track.duration) || 180;
+            const durMin = Math.floor(trackDuration / 60);
+            const durSec = String(Math.floor(trackDuration % 60)).padStart(2, '0');
 
             return (
               <div
-                key={track.id}
+                key={track.id || index}
                 className={`grid grid-cols-12 gap-3 px-4 py-2.5 items-center text-xs group transition-colors border-b border-white/[0.03] last:border-b-0 ${
                   isCurrent ? 'bg-white/10' : 'hover:bg-white/[0.04]'
                 }`}
@@ -209,15 +256,15 @@ export const PlaylistView: React.FC<PlaylistViewProps> = ({
                 {/* Title & Artist */}
                 <div className="col-span-6 md:col-span-5 flex items-center gap-3 min-w-0">
                   <img
-                    src={track.coverUrl}
-                    alt={track.title}
+                    src={track.coverUrl || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600'}
+                    alt={track.title || 'Track'}
                     referrerPolicy="no-referrer"
-                    className="w-10 h-10 rounded object-cover shrink-0"
+                    className="w-10 h-10 rounded object-cover shrink-0 bg-neutral-800"
                   />
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5">
                       <span className={`font-semibold truncate block ${isCurrent ? 'text-red-400' : 'text-white'}`}>
-                        {track.title}
+                        {track.title || 'Untitled Track'}
                       </span>
                       {track.isExplicit && (
                         <span className="text-[9px] font-bold px-1 py-0.2 bg-white/20 text-neutral-300 rounded shrink-0">
@@ -226,19 +273,19 @@ export const PlaylistView: React.FC<PlaylistViewProps> = ({
                       )}
                     </div>
                     <span className="text-neutral-400 hover:text-white truncate block cursor-pointer">
-                      {track.artist}
+                      {track.artist || 'Unknown Artist'}
                     </span>
                   </div>
                 </div>
 
                 {/* Album */}
                 <div className="hidden md:block col-span-3 text-neutral-400 truncate">
-                  {track.album}
+                  {track.album || 'Single'}
                 </div>
 
                 {/* Stream count */}
                 <div className="col-span-3 md:col-span-2 text-right font-mono tabular-nums text-neutral-400">
-                  {track.streams.toLocaleString()}
+                  {streamCount.toLocaleString()}
                 </div>
 
                 {/* Duration & quick actions */}
@@ -261,7 +308,7 @@ export const PlaylistView: React.FC<PlaylistViewProps> = ({
                   </button>
 
                   <span className="font-mono tabular-nums text-neutral-400">
-                    {Math.floor(track.duration / 60)}:{String(Math.floor(track.duration % 60)).padStart(2, '0')}
+                    {durMin}:{durSec}
                   </span>
                 </div>
               </div>

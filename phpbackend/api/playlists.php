@@ -42,6 +42,33 @@ if ($method === 'GET' && !empty($id)) {
         }
     }
 
+    $playlist['track_ids'] = $trackIds;
+    $playlist['track_count'] = count($tracks);
+    $playlist['followers'] = !empty($playlist['followers']) ? (int)$playlist['followers'] : 142000;
+    $playlist['curator'] = $playlist['curator'] ?? 'Flontmie Editorial';
+
+    if (empty($playlist['category'])) {
+        if (strpos($playlist['id'], 'love') !== false) {
+            $playlist['category'] = 'romance';
+            $playlist['genre_category'] = 'love_songs';
+        } elseif (strpos($playlist['id'], 'old') !== false) {
+            $playlist['category'] = 'oldschool';
+            $playlist['genre_category'] = 'old_school';
+        } elseif (strpos($playlist['id'], 'work') !== false) {
+            $playlist['category'] = 'workout';
+            $playlist['genre_category'] = 'workout';
+        } elseif (strpos($playlist['id'], 'focus') !== false || strpos($playlist['id'], 'chill') !== false) {
+            $playlist['category'] = 'focus';
+            $playlist['genre_category'] = 'coding';
+        } elseif (strpos($playlist['id'], 'road') !== false) {
+            $playlist['category'] = 'energize';
+            $playlist['genre_category'] = 'road_trip';
+        } else {
+            $playlist['category'] = 'trending';
+            $playlist['genre_category'] = 'all';
+        }
+    }
+
     $playlist['tracks'] = $tracks;
     json_response(['status' => 'success', 'playlist' => $playlist]);
 }
@@ -57,7 +84,35 @@ if ($method === 'GET') {
 
     foreach ($playlists as &$p) {
         $trackIds = !empty($p['track_ids_json']) ? json_decode($p['track_ids_json'], true) : [];
+        if (!is_array($trackIds)) {
+            $trackIds = [];
+        }
+        $p['track_ids'] = $trackIds;
         $p['track_count'] = count($trackIds);
+
+        if (empty($p['category'])) {
+            if (strpos($p['id'], 'love') !== false) {
+                $p['category'] = 'romance';
+                $p['genre_category'] = 'love_songs';
+            } elseif (strpos($p['id'], 'old') !== false) {
+                $p['category'] = 'oldschool';
+                $p['genre_category'] = 'old_school';
+            } elseif (strpos($p['id'], 'work') !== false) {
+                $p['category'] = 'workout';
+                $p['genre_category'] = 'workout';
+            } elseif (strpos($p['id'], 'focus') !== false || strpos($p['id'], 'chill') !== false) {
+                $p['category'] = 'focus';
+                $p['genre_category'] = 'coding';
+            } elseif (strpos($p['id'], 'road') !== false) {
+                $p['category'] = 'energize';
+                $p['genre_category'] = 'road_trip';
+            } else {
+                $p['category'] = 'trending';
+                $p['genre_category'] = 'all';
+            }
+        }
+        $p['followers'] = !empty($p['followers']) ? (int)$p['followers'] : 142000;
+        $p['curator'] = $p['curator'] ?? 'Flontmie Editorial';
     }
 
     json_response(['status' => 'success', 'count' => count($playlists), 'playlists' => $playlists]);

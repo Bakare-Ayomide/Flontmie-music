@@ -52,7 +52,7 @@ export const AddToPlaylistModal: React.FC<AddToPlaylistModalProps> = ({
 
         <div className="max-h-60 overflow-y-auto space-y-1">
           {playlists.map((pl) => {
-            const hasTrack = pl.trackIds.includes(track.id);
+            const hasTrack = Array.isArray(pl.trackIds) && pl.trackIds.includes(track.id);
             return (
               <button
                 key={pl.id}

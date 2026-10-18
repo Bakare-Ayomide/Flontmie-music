@@ -154,9 +154,9 @@ export const PublicArtistPage: React.FC<PublicArtistPageProps> = ({
             </h1>
 
             <div className="flex flex-wrap items-center gap-4 text-xs text-neutral-300 font-mono">
-              <span>{artist.monthlyListeners.toLocaleString()} monthly listeners</span>
+              <span>{(Number(artist.monthlyListeners) || 0).toLocaleString()} monthly listeners</span>
               <span aria-hidden="true" className="text-neutral-500">·</span>
-              <span>{followersCount.toLocaleString()} followers</span>
+              <span>{(Number(followersCount) || 0).toLocaleString()} followers</span>
               <span aria-hidden="true" className="text-neutral-500">·</span>
               <span>{artist.label}</span>
             </div>
@@ -261,7 +261,7 @@ export const PublicArtistPage: React.FC<PublicArtistPageProps> = ({
 
                   <div className="flex items-center gap-4 shrink-0">
                     <span className="hidden sm:inline text-xs font-mono tabular-nums text-neutral-400">
-                      {track.streams.toLocaleString()}
+                      {(Number(track.streams) || 0).toLocaleString()}
                     </span>
 
                     <button
@@ -339,7 +339,7 @@ export const PublicArtistPage: React.FC<PublicArtistPageProps> = ({
             <div className="pt-3 border-t border-white/[0.06] space-y-2 text-xs">
               <div className="flex justify-between">
                 <span className="text-neutral-400">Total Catalog Streams</span>
-                <span className="font-mono text-white font-semibold">{artist.totalStreams.toLocaleString()}</span>
+                <span className="font-mono text-white font-semibold">{(Number(artist.totalStreams) || 0).toLocaleString()}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-neutral-400">Record Label</span>

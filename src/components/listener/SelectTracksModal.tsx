@@ -53,7 +53,7 @@ export const SelectTracksModal: React.FC<SelectTracksModalProps> = ({
 
         <div className="max-h-72 overflow-y-auto space-y-1">
           {filtered.map((track) => {
-            const isAdded = playlist.trackIds.includes(track.id);
+            const isAdded = Array.isArray(playlist.trackIds) && playlist.trackIds.includes(track.id);
 
             return (
               <div

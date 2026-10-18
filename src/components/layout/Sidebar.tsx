@@ -234,7 +234,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-neutral-200">{playlist.title}</p>
                     <p className="truncate text-[11px] text-neutral-500">
-                      {playlist.isCollaborative ? 'Collab' : 'Curated'} · {playlist.trackIds.length} tracks
+                      {playlist.isCollaborative ? 'Collab' : 'Curated'} · {Array.isArray(playlist.trackIds) ? playlist.trackIds.length : 0} tracks
                     </p>
                   </div>
                 )}

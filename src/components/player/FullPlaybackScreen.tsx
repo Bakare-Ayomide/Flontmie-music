@@ -363,7 +363,7 @@ export const FullPlaybackScreen: React.FC<FullPlaybackScreenProps> = ({
               {/* Streaming & Metadata Badges */}
               <div className="flex flex-wrap items-center justify-center lg:justify-start gap-2 pt-1">
                 <span className="px-2.5 py-1 rounded-lg bg-white/[0.05] border border-white/10 text-[11px] font-mono text-neutral-300">
-                  {currentTrack.streams.toLocaleString()} Streams
+                  {(Number(currentTrack.streams) || 0).toLocaleString()} Streams
                 </span>
                 <span className="px-2.5 py-1 rounded-lg bg-white/[0.05] border border-white/10 text-[11px] font-mono text-neutral-300">
                   {currentTrack.bpm} BPM

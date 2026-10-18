@@ -48,7 +48,8 @@ import { FullPlaybackScreen } from './components/player/FullPlaybackScreen';
 import { PublicArtistPage } from './components/artist/PublicArtistPage';
 import { AuthModal, AuthUser } from './components/auth/AuthModal';
 import { ProfilePage } from './components/profile/ProfilePage';
-import { Heart } from 'lucide-react';
+import { Heart, Compass, Sparkles, Flame, Disc3, ArrowLeft, Music, Layers, Play, Check } from 'lucide-react';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
 
 export default function App() {
   // Navigation & Persona State
@@ -117,11 +118,103 @@ export default function App() {
   ]);
   const [reactions, setReactions] = useState<{ id: string; emoji: string; x: number }[]>([]);
 
+  // Client-side URL synchronization & Routing
+  const navigateTab = useCallback((tab: string) => {
+    setCurrentTab(tab);
+    setSelectedPlaylistId(null);
+    setSelectedArtistId(null);
+    try {
+      if (tab === 'home') {
+        window.history.pushState(null, '', '/');
+      } else {
+        window.history.pushState(null, '', `/${tab}`);
+      }
+    } catch {}
+  }, []);
+
+  const navigatePlaylist = useCallback((id: string) => {
+    setSelectedPlaylistId(id);
+    setSelectedArtistId(null);
+    setCurrentPersona('listener');
+    try {
+      window.history.pushState(null, '', `/playlist/${id}`);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      try {
+        const path = window.location.pathname.toLowerCase();
+        const hash = window.location.hash.toLowerCase();
+        const search = new URLSearchParams(window.location.search);
+        const plParam = search.get('playlist');
+
+        if (plParam) {
+          setSelectedPlaylistId(plParam);
+          setSelectedArtistId(null);
+          setCurrentPersona('listener');
+          return;
+        }
+
+        if (path.startsWith('/playlist/') || hash.startsWith('#playlist/')) {
+          const seg = path.startsWith('/playlist/')
+            ? path.replace('/playlist/', '').split('/')[0]
+            : hash.replace('#playlist/', '').split('/')[0];
+          if (seg) {
+            setSelectedPlaylistId(seg);
+            setSelectedArtistId(null);
+            setCurrentPersona('listener');
+            return;
+          }
+        }
+
+        if (path === '/explore' || hash === '#explore') {
+          setCurrentTab('explore');
+          setSelectedPlaylistId(null);
+          setSelectedArtistId(null);
+          setCurrentPersona('listener');
+        } else if (path === '/library' || hash === '#library') {
+          setCurrentTab('library');
+          setSelectedPlaylistId(null);
+          setSelectedArtistId(null);
+          setCurrentPersona('listener');
+        } else if (path === '/liked' || hash === '#liked') {
+          setCurrentTab('liked');
+          setSelectedPlaylistId(null);
+          setSelectedArtistId(null);
+          setCurrentPersona('listener');
+        } else if (path === '/profile' || hash === '#profile') {
+          setCurrentTab('profile');
+          setSelectedPlaylistId(null);
+          setSelectedArtistId(null);
+          setCurrentPersona('listener');
+        } else if (path === '/' || path === '') {
+          setCurrentTab('home');
+          setSelectedPlaylistId(null);
+          setSelectedArtistId(null);
+        }
+      } catch (err) {
+        console.warn('URL parse error:', err);
+      }
+    };
+
+    handlePopState();
+    window.addEventListener('popstate', handlePopState);
+    window.addEventListener('hashchange', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+      window.removeEventListener('hashchange', handlePopState);
+    };
+  }, []);
+
   // Load Live Catalog from MySQL Backend
   useEffect(() => {
     api.getTracks().then((backendTracks) => {
       if (backendTracks && backendTracks.length > 0) {
-        setTracks(backendTracks);
+        setTracks((prev) => {
+          const backendIds = new Set(backendTracks.map((t) => t.id));
+          return [...backendTracks, ...prev.filter((t) => !backendIds.has(t.id))];
+        });
       }
     }).catch(() => {});
 
@@ -560,18 +653,10 @@ export default function App() {
         {/* Desktop Sidebar (hidden on mobile) */}
         <Sidebar
           currentTab={currentTab}
-          onSelectTab={(tab) => {
-            setCurrentTab(tab);
-            setSelectedPlaylistId(null);
-            setSelectedArtistId(null);
-          }}
+          onSelectTab={navigateTab}
           playlists={playlists}
           selectedPlaylistId={selectedPlaylistId}
-          onSelectPlaylist={(id) => {
-            setSelectedPlaylistId(id);
-            setSelectedArtistId(null);
-            setCurrentPersona('listener');
-          }}
+          onSelectPlaylist={navigatePlaylist}
           onCreatePlaylist={() => setIsCreatePlaylistOpen(true)}
           currentPersona={currentPersona}
           onSelectPersona={(p) => {
@@ -585,6 +670,7 @@ export default function App() {
 
         {/* Main Workspace Viewport */}
         <main className="flex-1 min-w-0 overflow-y-auto px-3 sm:px-6 md:px-8 py-5 h-[calc(100vh-57px-72px)] pb-24 md:pb-8">
+          <ErrorBoundary fallbackTitle="Unable to load this view" onReset={() => navigateTab('home')}>
           {/* Persona View 1: Consumer Streaming App (Flontmie) */}
           {currentPersona === 'listener' && (
             <>
@@ -620,56 +706,160 @@ export default function App() {
                   onOpenAddTrackModal={() => setIsSelectTracksOpen(true)}
                   onOpenShareModal={() => setIsShareModalOpen(true)}
                   onDeletePlaylist={handleDeletePlaylist}
+                  onBack={() => {
+                    setSelectedPlaylistId(null);
+                    if (currentTab === 'explore') {
+                      window.history.pushState(null, '', '/explore');
+                    } else if (currentTab === 'library') {
+                      window.history.pushState(null, '', '/library');
+                    } else {
+                      window.history.pushState(null, '', '/');
+                    }
+                  }}
                 />
-              ) : currentTab === 'explore' ? (
-                <div className="space-y-6 pb-20">
-                  <div className="border-b border-white/[0.08] pb-4">
-                    <h1 className="text-xl md:text-2xl font-bold text-white">Explore Flontmie Charts</h1>
-                    <p className="text-xs text-neutral-400 mt-1">Trending music across genres and social curations</p>
+              ) : selectedPlaylistId ? (
+                <div className="py-20 text-center space-y-4">
+                  <div className="w-14 h-14 rounded-2xl bg-neutral-900 border border-white/10 flex items-center justify-center text-neutral-400 mx-auto">
+                    <Music className="w-6 h-6" />
                   </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="p-4 sm:p-5 rounded-2xl bg-neutral-900/40 border border-white/[0.08] space-y-3">
-                      <h3 className="text-xs font-bold text-red-400 uppercase tracking-wider">Top 50 Flontmie Streams</h3>
-                      <div className="space-y-2">
-                        {tracks.slice(0, 5).map((t, i) => (
-                          <div
-                            key={t.id}
-                            onClick={() => handlePlayTrack(t)}
-                            className="flex items-center justify-between p-2 rounded-xl hover:bg-white/[0.04] cursor-pointer text-xs transition-colors"
-                          >
-                            <div className="flex items-center gap-3 min-w-0">
-                              <span className="font-mono text-neutral-500 w-4 shrink-0">{i + 1}</span>
-                              <img src={t.coverUrl} alt={t.title} referrerPolicy="no-referrer" className="w-8 h-8 rounded-lg object-cover shrink-0" />
-                              <div className="min-w-0">
-                                <p className="font-semibold text-white truncate">{t.title}</p>
-                                <p className="text-neutral-400 truncate">{t.artist}</p>
+                  <div>
+                    <h2 className="text-lg font-bold text-white">Playlist Not Found</h2>
+                    <p className="text-xs text-neutral-400 mt-1">This collection may have been removed or the link is invalid.</p>
+                  </div>
+                  <button
+                    onClick={() => navigateTab('home')}
+                    className="px-5 py-2.5 bg-white text-black font-semibold text-xs rounded-full hover:bg-neutral-200 transition-colors"
+                  >
+                    Return to Music Feed
+                  </button>
+                </div>
+              ) : currentTab === 'explore' ? (
+                <div className="space-y-8 pb-24">
+                  {/* Explore Header */}
+                  <div className="border-b border-white/[0.08] pb-5">
+                    <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-red-500 mb-1">
+                      <Compass className="w-4 h-4" />
+                      <span>Flontmie Charts & Curations</span>
+                    </div>
+                    <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">Explore</h1>
+                    <p className="text-xs sm:text-sm text-neutral-400 mt-1">
+                      Trending music, genre spotlights, certified rankings, and editorial selections
+                    </p>
+                  </div>
+
+                  {/* Explore Genre Highlights Grid */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    {[
+                      { name: 'Afrobeats', desc: 'Lagos & Jozi rhythms', color: 'from-amber-600/30 to-red-600/20', border: 'border-amber-500/30' },
+                      { name: 'Hip-Hop & Rap', desc: 'Velocity & heavy 808s', color: 'from-purple-600/30 to-blue-600/20', border: 'border-purple-500/30' },
+                      { name: 'Pop & Anthems', desc: 'Chart-topping melodies', color: 'from-pink-600/30 to-rose-600/20', border: 'border-pink-500/30' },
+                      { name: 'Lo-Fi & Chill', desc: 'Rain & deep focus loops', color: 'from-emerald-600/30 to-teal-600/20', border: 'border-emerald-500/30' }
+                    ].map((g) => (
+                      <div
+                        key={g.name}
+                        onClick={() => {
+                          const matching = tracks.find((t) => t.genre.toLowerCase().includes(g.name.toLowerCase().split(' ')[0]));
+                          if (matching) handlePlayTrack(matching);
+                        }}
+                        className={`p-4 rounded-2xl bg-gradient-to-br ${g.color} border ${g.border} hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer group`}
+                      >
+                        <h3 className="text-sm font-bold text-white group-hover:text-red-400 transition-colors">{g.name}</h3>
+                        <p className="text-[11px] text-neutral-300 mt-1">{g.desc}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Top Charts & Editorial Playlists 2-Column Section */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {/* Top Streamed Tracks */}
+                    <div className="p-4 sm:p-6 rounded-2xl bg-neutral-900/40 border border-white/[0.08] space-y-4">
+                      <div className="flex items-center justify-between border-b border-white/[0.06] pb-3">
+                        <div className="flex items-center gap-2">
+                          <Flame className="w-4 h-4 text-red-500" />
+                          <h3 className="text-xs sm:text-sm font-bold text-white uppercase tracking-wider">Top Streamed Tracks</h3>
+                        </div>
+                        <span className="text-[11px] text-neutral-500 font-mono">Live MySQL Catalog</span>
+                      </div>
+                      <div className="space-y-1.5">
+                        {tracks
+                          .slice()
+                          .sort((a, b) => (Number(b.streams) || 0) - (Number(a.streams) || 0))
+                          .slice(0, 8)
+                          .map((t, i) => (
+                            <div
+                              key={t.id || i}
+                              onClick={() => handlePlayTrack(t)}
+                              className="flex items-center justify-between p-2 sm:p-2.5 rounded-xl hover:bg-white/[0.06] cursor-pointer text-xs transition-colors group"
+                            >
+                              <div className="flex items-center gap-3 min-w-0">
+                                <span className={`font-mono w-5 text-center shrink-0 font-bold ${i < 3 ? 'text-red-400' : 'text-neutral-500'}`}>
+                                  {i + 1}
+                                </span>
+                                <img
+                                  src={t.coverUrl || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600'}
+                                  alt={t.title}
+                                  referrerPolicy="no-referrer"
+                                  className="w-9 h-9 rounded-lg object-cover shrink-0 bg-neutral-800"
+                                />
+                                <div className="min-w-0">
+                                  <p className="font-semibold text-white truncate group-hover:text-red-400 transition-colors">
+                                    {t.title || 'Untitled'}
+                                  </p>
+                                  <p className="text-[11px] text-neutral-400 truncate">{t.artist || 'Unknown'}</p>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-3 shrink-0 ml-2">
+                                <span className="font-mono tabular-nums text-neutral-400 text-[11px]">
+                                  {(Number(t.streams) || 0).toLocaleString()}
+                                </span>
+                                <Play className="w-3.5 h-3.5 text-neutral-400 opacity-0 group-hover:opacity-100 fill-current hover:text-white transition-opacity" />
                               </div>
                             </div>
-                            <span className="font-mono tabular-nums text-neutral-400 shrink-0 ml-2">{t.streams.toLocaleString()}</span>
-                          </div>
-                        ))}
+                          ))}
                       </div>
                     </div>
 
-                    <div className="p-4 sm:p-5 rounded-2xl bg-neutral-900/40 border border-white/[0.08] space-y-3">
-                      <h3 className="text-xs font-bold text-blue-400 uppercase tracking-wider">Featured Curators</h3>
+                    {/* Featured Curated Playlists */}
+                    <div className="p-4 sm:p-6 rounded-2xl bg-neutral-900/40 border border-white/[0.08] space-y-4">
+                      <div className="flex items-center justify-between border-b border-white/[0.06] pb-3">
+                        <div className="flex items-center gap-2">
+                          <Disc3 className="w-4 h-4 text-blue-400" />
+                          <h3 className="text-xs sm:text-sm font-bold text-white uppercase tracking-wider">Curated Playlists & Mixes</h3>
+                        </div>
+                        <span className="text-[11px] text-neutral-500 font-mono">{playlists.length} Collections</span>
+                      </div>
                       <div className="space-y-2">
-                        {playlists.map((pl) => (
-                          <div
-                            key={pl.id}
-                            onClick={() => setSelectedPlaylistId(pl.id)}
-                            className="flex items-center justify-between p-2 rounded-xl hover:bg-white/[0.04] cursor-pointer text-xs transition-colors"
-                          >
-                            <div className="flex items-center gap-3 min-w-0">
-                              <img src={pl.coverUrl} alt={pl.title} referrerPolicy="no-referrer" className="w-8 h-8 rounded-lg object-cover shrink-0" />
-                              <div className="min-w-0">
-                                <p className="font-semibold text-white truncate">{pl.title}</p>
-                                <p className="text-neutral-400 truncate">{pl.curator}</p>
+                        {playlists.map((pl) => {
+                          const trackCount = Array.isArray(pl.trackIds) ? pl.trackIds.length : 0;
+                          const followers = Number(pl.followers) || 1200;
+                          return (
+                            <div
+                              key={pl.id}
+                              onClick={() => navigatePlaylist(pl.id)}
+                              className="flex items-center justify-between p-2.5 rounded-xl hover:bg-white/[0.06] cursor-pointer text-xs transition-colors group"
+                            >
+                              <div className="flex items-center gap-3 min-w-0">
+                                <img
+                                  src={pl.coverUrl || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600'}
+                                  alt={pl.title}
+                                  referrerPolicy="no-referrer"
+                                  className="w-10 h-10 rounded-lg object-cover shrink-0 bg-neutral-800"
+                                />
+                                <div className="min-w-0">
+                                  <p className="font-semibold text-white truncate group-hover:text-blue-400 transition-colors">
+                                    {pl.title || 'Curated Playlist'}
+                                  </p>
+                                  <p className="text-[11px] text-neutral-400 truncate">
+                                    {pl.curator || 'Flontmie Editorial'} · {trackCount} songs
+                                  </p>
+                                </div>
                               </div>
+                              <span className="text-neutral-400 font-mono text-[11px] shrink-0 ml-2">
+                                {followers.toLocaleString()} saves
+                              </span>
                             </div>
-                            <span className="text-neutral-400 font-mono shrink-0 ml-2">{pl.followers.toLocaleString()} saves</span>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   </div>
@@ -684,7 +874,7 @@ export default function App() {
                     {playlists.map((pl) => (
                       <div
                         key={pl.id}
-                        onClick={() => setSelectedPlaylistId(pl.id)}
+                        onClick={() => navigatePlaylist(pl.id)}
                         className="p-3 rounded-2xl bg-neutral-900/30 border border-white/[0.06] hover:border-white/20 transition-all cursor-pointer group"
                       >
                         <div className="aspect-square rounded-xl overflow-hidden bg-neutral-800 mb-2">
@@ -771,7 +961,7 @@ export default function App() {
                   artistProfiles={artistProfiles}
                   onPlayTrack={handlePlayTrack}
                   onToggleLike={handleToggleLike}
-                  onSelectPlaylist={(id) => setSelectedPlaylistId(id)}
+                  onSelectPlaylist={navigatePlaylist}
                   onAddToQueue={handleAddToQueue}
                   onOpenCreatePlaylist={() => setIsCreatePlaylistOpen(true)}
                   onToggleFollowAccount={handleToggleFollowAccount}
@@ -824,19 +1014,19 @@ export default function App() {
               permissions={adminPermissions}
               onUpdatePermission={handleUpdatePermission}
               labelArtists={labelArtists}
+              onTrackImported={(newTrack) => {
+                setTracks((prev) => [newTrack, ...prev]);
+              }}
             />
           )}
+          </ErrorBoundary>
         </main>
       </div>
 
       {/* MOBILE DOCK: Bottom floating touch dock (rendered exclusively on mobile) */}
       <MobileDock
         currentTab={currentTab}
-        onSelectTab={(tab) => {
-          setCurrentTab(tab);
-          setSelectedPlaylistId(null);
-          setSelectedArtistId(null);
-        }}
+        onSelectTab={navigateTab}
         currentPersona={currentPersona}
         onSelectPersona={(p) => {
           setCurrentPersona(p);

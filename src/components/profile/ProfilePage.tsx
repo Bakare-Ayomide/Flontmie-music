@@ -335,7 +335,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
                       <img src={p.coverUrl} alt={p.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
                     </div>
                     <p className="text-xs font-bold text-white truncate">{p.title}</p>
-                    <p className="text-[10px] text-neutral-400">{p.tracksCount} tracks</p>
+                    <p className="text-[10px] text-neutral-400">{p.trackIds?.length || 0} tracks</p>
                   </div>
                 ))}
               </div>
