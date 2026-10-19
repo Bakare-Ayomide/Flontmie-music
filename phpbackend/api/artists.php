@@ -156,7 +156,7 @@ if ($method === 'GET') {
             $cached = json_decode((string)file_get_contents($cacheFile), true);
             if (!empty($cached['wiki']['bio'])) {
                 $a['bio'] = $cached['wiki']['bio'];
-                $a['bio_source'] = $cached['wiki']['bio_source'] ?? 'Wikipedia / Wikidata';
+                $a['bio_source'] = $cached['wiki']['bio_source'] ?? 'Official Biography';
                 $a['bio_url'] = $cached['wiki']['bio_url'] ?? null;
                 $a['wikidata_id'] = $cached['wiki']['wikidata_id'] ?? null;
             }

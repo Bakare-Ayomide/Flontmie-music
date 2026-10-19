@@ -14,7 +14,7 @@ import {
   Star,
   Search,
   Download,
-  Youtube,
+  Flame,
   Loader2,
   RefreshCw,
   Lock,
@@ -300,7 +300,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const handleUpdateTrack = async (trackId: string, updates: any) => {
     try {
       const res = await api.updateAdminTrack({ track_id: trackId, ...updates });
-      showNotice(res.message || 'Catalog track updated.');
+      showNotice(res.message || 'Track updated.');
       if (updates.featured_on_home !== undefined) {
         onToggleTrackFeatured(trackId);
       }
@@ -621,7 +621,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         license_status: ytLicenseDefault,
         tracks: collectionPreview.tracks,
       });
-      showNotice(res.message || 'Collection imported to MySQL & local server storage.');
+      showNotice(res.message || 'Collection imported to local storage.');
       setCollectionPreview(null);
       fetchAdminData();
     } catch (err: any) {
@@ -728,8 +728,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const navItems: { id: AdminSection; label: string; icon: React.ReactNode; badge?: number }[] = [
     { id: 'overview', label: 'Overview', icon: <Activity className="w-4 h-4" /> },
-    { id: 'ytmusic_import', label: 'YT Music Import & Sync', icon: <Download className="w-4 h-4" />, badge: dbImportJobs.length },
-    { id: 'catalog', label: 'Music Catalog', icon: <Music className="w-4 h-4" />, badge: stats?.total_tracks ?? dbTracks.length },
+    { id: 'ytmusic_import', label: 'Ingestion & Discovery', icon: <Download className="w-4 h-4" />, badge: dbImportJobs.length },
+    { id: 'catalog', label: 'Music Releases', icon: <Music className="w-4 h-4" />, badge: stats?.total_tracks ?? dbTracks.length },
     { id: 'users', label: 'Users', icon: <Users className="w-4 h-4" />, badge: stats?.total_users },
     { id: 'artists_claims', label: 'Artists & Claims', icon: <CheckCircle2 className="w-4 h-4" />, badge: stats?.pending_claims },
     { id: 'distributors_labels', label: 'Distributors & Labels', icon: <Network className="w-4 h-4" /> },
@@ -763,7 +763,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               Flontmie Master Administrator Dashboard
             </h1>
             <p className="text-xs text-neutral-400 mt-0.5">
-              Server-enforced RBAC governance connected to live cPanel PHP APIs & MySQL database
+              Role-based governance connected to live backend APIs and secure database
             </p>
           </div>
         </div>
@@ -774,7 +774,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             className="px-3 py-1.5 rounded-xl bg-white/[0.06] hover:bg-white/10 border border-white/10 text-xs font-semibold text-neutral-200 flex items-center gap-1.5 transition-colors cursor-pointer"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-amber-400' : ''}`} />
-            <span>Sync MySQL</span>
+            <span>Sync Data</span>
           </button>
 
           {onExitAdmin && (
@@ -863,7 +863,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               { label: 'Verified Artists', val: stats?.total_artists ?? dbArtists.length, sub: `${stats?.pending_claims ?? 0} pending claims` },
               { label: 'Distributors & Labels', val: (stats?.total_distributors ?? dbDistributors.length) + (stats?.total_labels ?? dbLabels.length), sub: `${stats?.total_distributors ?? 4} distributors` },
               { label: 'Songs & Albums', val: `${stats?.total_tracks ?? dbTracks.length} / ${stats?.total_albums ?? dbAlbums.length}`, sub: `${stats?.total_playlists ?? dbPlaylists.length} playlists` },
-              { label: 'Total Streams', val: ((Number(stats?.total_streams) || 0) / 1000000).toFixed(1) + 'M', sub: 'Real-time MySQL count' },
+              { label: 'Total Streams', val: ((Number(stats?.total_streams) || 0) / 1000000).toFixed(1) + 'M', sub: 'Verified stream count' },
             ].map((card, i) => (
               <div key={i} className="p-4 rounded-2xl bg-neutral-900/50 border border-white/[0.07] space-y-1">
                 <p className="text-[11px] font-medium text-neutral-400">{card.label}</p>
@@ -935,7 +935,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 <div className="p-3.5 rounded-xl bg-white/[0.02] border border-white/[0.05] flex items-center justify-between">
                   <div>
                     <p className="font-semibold text-white">Active Authenticated Sessions</p>
-                    <p className="text-[11px] text-neutral-400">{stats?.active_sessions ?? dbSessions.length} active sessions tracked in MySQL</p>
+                    <p className="text-[11px] text-neutral-400">{stats?.active_sessions ?? dbSessions.length} active sessions tracked in database</p>
                   </div>
                   <button
                     onClick={() => setActiveSection('security')}
@@ -1077,7 +1077,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           <form onSubmit={handleCreateUser} className="p-5 rounded-2xl bg-neutral-900/40 border border-white/[0.08] space-y-4">
             <h3 className="text-sm font-bold text-white flex items-center gap-2">
               <UserPlus className="w-4 h-4 text-amber-400" />
-              <span>Provision New Account in MySQL</span>
+              <span>Provision New Account</span>
             </h3>
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
               <input
@@ -1248,7 +1248,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           {editingTrack && (
             <div className="p-5 rounded-2xl bg-neutral-900 border border-amber-500/40 space-y-4">
               <div className="flex items-center justify-between">
-                <h4 className="text-sm font-bold text-white">Edit Catalog Song: {editingTrack.title}</h4>
+                <h4 className="text-sm font-bold text-white">Edit Song: {editingTrack.title}</h4>
                 <button onClick={() => setEditingTrack(null)} className="text-neutral-400 hover:text-white">
                   <X className="w-4 h-4" />
                 </button>
@@ -1305,13 +1305,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           <div className="border border-white/[0.08] rounded-2xl overflow-hidden bg-neutral-900/30">
             <div className="p-4 border-b border-white/[0.06] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-3">
-                <h3 className="text-sm font-bold text-white">Songs Catalog ({dbTracks.length || tracks.length})</h3>
+                <h3 className="text-sm font-bold text-white">Songs Library ({dbTracks.length || tracks.length})</h3>
                 <button
                   onClick={() => setActiveSection('ytmusic_import')}
                   className="px-3 py-1 rounded-lg bg-red-600/20 border border-red-500/40 text-red-300 text-xs font-semibold hover:bg-red-600/30 cursor-pointer flex items-center gap-1.5"
                 >
                   <Download className="w-3.5 h-3.5" />
-                  <span>Open YT Music Import & Sync Hub</span>
+                  <span>Open Ingestion & Sync Hub</span>
                 </button>
               </div>
 
@@ -1596,16 +1596,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
               <div>
                 <div className="flex items-center gap-2">
-                  <Youtube className="w-5 h-5 text-red-500" />
+                  <Flame className="w-5 h-5 text-red-500" />
                   <h3 className="text-base font-extrabold text-white">
-                    Admin-Only YouTube Music Discovery & Audio Import Engine
+                    Music Discovery & Media Ingestion Engine
                   </h3>
                   <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold">
                     Admin Protected
                   </span>
                 </div>
                 <p className="text-xs text-neutral-400 mt-0.5">
-                  Search songs, albums, artists, and playlists with metadata filters. Audio streams & artwork are downloaded into Flontmie server storage and linked in MySQL.
+                  Search songs, albums, artists, and playlists with metadata filters. Audio streams & artwork are ingested into server storage and linked in the system.
                 </p>
               </div>
 
@@ -1815,7 +1815,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             <p className="text-neutral-400 truncate text-[11px]">{item.artist}</p>
                             <div className="flex items-center gap-1.5 mt-0.5">
                               {alreadyInCatalog ? (
-                                <span className="text-[10px] font-mono text-emerald-400">✓ In MySQL Catalog</span>
+                                <span className="text-[10px] font-mono text-emerald-400">✓ In System</span>
                               ) : (
                                 <span className="text-[10px] font-mono text-neutral-500">
                                   {item.album || 'Single'}
@@ -1834,7 +1834,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                 ? 'bg-white/10 hover:bg-white/20 text-neutral-200'
                                 : 'bg-white hover:bg-neutral-200 text-black'
                             }`}
-                            title={alreadyInCatalog ? 'Force Re-Sync Audio & Metadata' : 'Download Audio & Import to MySQL'}
+                            title={alreadyInCatalog ? 'Force Re-Sync Audio & Metadata' : 'Download Audio & Ingest'}
                           >
                             {importingId === vid ? (
                               <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -1983,7 +1983,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               {isLoadingCollection ? (
                 <div className="py-8 text-center text-xs text-neutral-400 flex items-center justify-center gap-2">
                   <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
-                  <span>Fetching collection tracklist from YouTube Music...</span>
+                  <span>Fetching collection tracklist...</span>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-64 overflow-y-auto pr-1">
@@ -2134,7 +2134,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <div className="space-y-3 text-xs">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <div>
-                    <label className="block text-neutral-400 mb-1">Sync With Catalog Track (Optional)</label>
+                    <label className="block text-neutral-400 mb-1">Sync With Existing Track (Optional)</label>
                     <select
                       value={uploadTargetTrackId}
                       onChange={(e) => setUploadTargetTrackId(e.target.value)}
@@ -2405,7 +2405,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           {/* Role Permissions Matrix */}
           <div className="border border-white/[0.08] rounded-2xl overflow-hidden bg-neutral-900/30">
             <div className="p-4 border-b border-white/[0.06]">
-              <h3 className="text-sm font-bold text-white">Role Upload & Catalog Permissions Matrix</h3>
+              <h3 className="text-sm font-bold text-white">Role Upload & Permissions Matrix</h3>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs text-left">
@@ -2579,7 +2579,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             <div className="p-5 rounded-2xl bg-neutral-900/40 border border-white/[0.08] space-y-4">
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
                 <TrendingUp className="w-4 h-4 text-emerald-400" />
-                <span>Streams & Catalog Volume by Genre</span>
+                <span>Streams & Release Volume by Genre</span>
               </h3>
               <div className="space-y-3 text-xs">
                 {(dbAnalytics?.genre_stats || []).map((g: any) => (
@@ -2719,7 +2719,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         <form onSubmit={handleSaveSettings} className="p-6 rounded-2xl bg-neutral-900/40 border border-white/[0.08] space-y-5 max-w-3xl">
           <div>
             <h3 className="text-base font-bold text-white">Platform Configuration & System Rules</h3>
-            <p className="text-xs text-neutral-400">All settings are persisted in the MySQL `system_settings` table and enforced on the PHP backend.</p>
+            <p className="text-xs text-neutral-400">All settings are persisted in system storage and enforced on the backend.</p>
           </div>
 
           <div className="space-y-3 text-xs">
@@ -2738,7 +2738,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               { key: 'allow_public_registration', label: 'Allow Public Account Registration' },
               { key: 'require_email_verification', label: 'Require Email Verification for New Accounts' },
               { key: 'allow_artist_claims', label: 'Allow Artist Profile Verification Claims' },
-              { key: 'youtube_music_discovery_enabled', label: 'Enable Real-Time YouTube Music Discovery & Playback' },
+              { key: 'youtube_music_discovery_enabled', label: 'Enable Real-Time Music Discovery & Playback' },
               { key: 'social_jam_sessions_enabled', label: 'Enable Live Social Jam Listening Rooms' },
               { key: 'direct_distributor_ingestion', label: 'Allow Partner Distributor Direct Ingestion' },
             ].map((toggle) => (

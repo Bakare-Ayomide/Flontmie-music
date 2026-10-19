@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Search, Users, ChevronDown, Check, ShieldCheck, Sparkles, PanelLeftOpen, PanelLeftClose, LogIn } from 'lucide-react';
 import { MoodCategory, Persona } from '../../types/music';
 import { AuthUser } from '../auth/AuthModal';
+import { api } from '../../services/api';
 
 interface NavbarProps {
   currentPersona: Persona;
@@ -77,9 +78,75 @@ export const Navbar: React.FC<NavbarProps> = ({
     },
   };
 
+  const [suggestions, setSuggestions] = useState<Array<{
+    text: string;
+    type: 'query' | 'song' | 'artist' | 'album';
+    artist?: string;
+    track_id?: string;
+    videoId?: string;
+    cover_url?: string;
+  }>>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
+  const searchContainerRef = React.useRef<HTMLDivElement>(null);
+
+  // Debounced search suggestions while typing
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (!q || q.length < 2) {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+
+    let isMounted = true;
+    const timer = setTimeout(() => {
+      setIsLoadingSuggestions(true);
+      api.getSearchSuggestions(q)
+        .then((items: any) => {
+          if (isMounted) {
+            setSuggestions(items || []);
+            if (items && items.length > 0) {
+              setShowSuggestions(true);
+            }
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (isMounted) setIsLoadingSuggestions(false);
+        });
+    }, 180);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timer);
+    };
+  }, [searchQuery]);
+
+  // Click outside to dismiss suggestions
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleSubmitSearch = (term?: string) => {
+    const q = (term !== undefined ? term : searchQuery).trim();
+    if (!q) return;
+    setShowSuggestions(false);
+    onSearchChange(q);
+    try {
+      window.dispatchEvent(new CustomEvent('flontmie:submit_search', { detail: q }));
+    } catch {}
+  };
+
   return (
     <header className="sticky top-0 z-40 bg-[#030303]/95 backdrop-blur-md border-b border-white/[0.08] px-3 md:px-6 py-2 flex items-center justify-between gap-2 md:gap-4 h-[57px]">
-      {/* Zone 1: Desktop sidebar toggle (FLONTMIE brand removed to maximize search space) */}
+      {/* Zone 1: Desktop sidebar toggle */}
       <button
         onClick={onToggleSidebar}
         className="hidden md:flex w-8 h-8 rounded-lg text-neutral-400 hover:text-white hover:bg-white/[0.08] items-center justify-center transition-colors shrink-0"
@@ -88,28 +155,102 @@ export const Navbar: React.FC<NavbarProps> = ({
         {isSidebarCollapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
       </button>
 
-      {/* Zone 2: Search input and quick category filter buttons */}
-      <div className="flex-1 max-w-2xl flex items-center gap-2 min-w-0">
+      {/* Zone 2: Search input and live discovery suggestions */}
+      <div className="flex-1 max-w-2xl flex items-center gap-2 min-w-0" ref={searchContainerRef}>
         {currentPersona === 'listener' ? (
-          <div className="w-full flex items-center gap-2">
+          <div className="w-full flex items-center gap-2 relative">
             <div className="relative flex-1 min-w-0">
-              <Search className="w-3.5 h-3.5 text-neutral-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              {/* Clickable Search Icon Button */}
+              <button
+                type="button"
+                onClick={() => handleSubmitSearch(searchQuery)}
+                className="w-7 h-7 flex items-center justify-center rounded-full text-neutral-400 hover:text-white hover:bg-white/10 absolute left-1 top-1/2 -translate-y-1/2 transition-colors cursor-pointer"
+                title="Submit Search"
+                aria-label="Submit search"
+              >
+                <Search className="w-3.5 h-3.5" />
+              </button>
+
               <input
                 type="text"
-                placeholder="Search tracks, artists, genres, playlists..."
+                placeholder="Search songs, artists, albums, playlists..."
                 value={searchQuery}
-                onChange={(e) => onSearchChange(e.target.value)}
-                className="w-full pl-8 pr-3 py-1.5 text-xs md:text-sm bg-neutral-900/90 text-white placeholder-neutral-500 rounded-full border border-white/10 focus:outline-none focus:border-red-500/60 focus:ring-1 focus:ring-red-500/40 transition-colors"
+                onChange={(e) => {
+                  onSearchChange(e.target.value);
+                  if (e.target.value.trim().length >= 2) {
+                    setShowSuggestions(true);
+                  }
+                }}
+                onFocus={() => {
+                  if (suggestions.length > 0) {
+                    setShowSuggestions(true);
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleSubmitSearch(searchQuery);
+                  } else if (e.key === 'Escape') {
+                    setShowSuggestions(false);
+                  }
+                }}
+                className="w-full pl-9 pr-14 py-1.5 text-xs md:text-sm bg-neutral-900/90 text-white placeholder-neutral-500 rounded-full border border-white/10 focus:outline-none focus:border-red-500/60 focus:ring-1 focus:ring-red-500/40 transition-colors"
               />
+
               {searchQuery && (
                 <button
-                  onClick={() => onSearchChange('')}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-neutral-400 hover:text-white"
+                  type="button"
+                  onClick={() => {
+                    onSearchChange('');
+                    setShowSuggestions(false);
+                  }}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[11px] px-1.5 py-0.5 rounded text-neutral-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
                 >
                   Clear
                 </button>
               )}
             </div>
+
+            {/* Live Search Suggestions Dropdown while typing */}
+            {showSuggestions && suggestions.length > 0 && (
+              <div className="absolute top-full left-0 right-0 mt-2 bg-[#121216] border border-white/15 rounded-2xl shadow-2xl overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-100 max-h-96 overflow-y-auto divide-y divide-white/[0.05]">
+                <div className="p-2 space-y-1">
+                  {suggestions.map((item, idx) => (
+                    <button
+                      key={`${item.text}-${idx}`}
+                      type="button"
+                      onClick={() => handleSubmitSearch(item.text)}
+                      className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-left text-xs text-neutral-200 hover:bg-white/[0.08] hover:text-white transition-colors cursor-pointer group"
+                    >
+                      {item.cover_url ? (
+                        <img
+                          src={item.cover_url}
+                          alt=""
+                          className="w-7 h-7 rounded-lg object-cover shrink-0 bg-neutral-800"
+                        />
+                      ) : (
+                        <div className="w-7 h-7 rounded-lg bg-white/[0.06] flex items-center justify-center shrink-0 text-neutral-400 group-hover:text-red-400">
+                          <Search className="w-3.5 h-3.5" />
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="font-semibold truncate text-white group-hover:text-red-400 transition-colors">
+                          {item.text}
+                        </p>
+                        {item.artist && (
+                          <p className="text-[11px] text-neutral-400 truncate">
+                            {item.artist}
+                          </p>
+                        )}
+                      </div>
+                      <span className="text-[10px] text-neutral-500 uppercase font-mono shrink-0">
+                        {item.type}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Quick Filter Buttons (Desktop) */}
             <div className="hidden xl:flex items-center gap-1 shrink-0">
@@ -136,6 +277,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
         )}
       </div>
+
 
       {/* Zone 3: Primary Actions (No share icon, no wave icon) + Persona Switcher */}
       <div className="flex items-center gap-1.5 md:gap-2.5 shrink-0">

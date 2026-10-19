@@ -125,7 +125,7 @@ export const LyricsDrawer: React.FC<LyricsDrawerProps> = ({
         {isLoadingLyrics ? (
           <div className="text-center py-20 text-neutral-400 space-y-2">
             <Loader2 className="w-7 h-7 animate-spin text-red-500 mx-auto" />
-            <p className="text-xs font-medium">Fetching verified lyrics from YouTube Music...</p>
+            <p className="text-xs font-medium">Fetching verified lyrics...</p>
           </div>
         ) : lyrics.length > 0 ? (
           lyrics.map((line, idx) => {
@@ -158,7 +158,7 @@ export const LyricsDrawer: React.FC<LyricsDrawerProps> = ({
           <div className="text-center py-20 text-neutral-500 text-sm">
             <Mic2 className="w-8 h-8 mx-auto mb-3 opacity-40" />
             <p className="font-semibold text-neutral-300">Instrumental or Lyrics Pending</p>
-            <p className="text-xs text-neutral-500 mt-1">Synchronized lyrics will appear as soon as provided by the artist or label.</p>
+            <p className="text-xs text-neutral-500 mt-1">Timed lyrics will appear as soon as provided by the artist or label.</p>
           </div>
         )}
       </div>

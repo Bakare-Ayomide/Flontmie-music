@@ -63,7 +63,7 @@ export const JamSessionModal: React.FC<JamSessionModalProps> = ({
             </div>
             <div>
               <h3 className="text-base font-bold text-white">Social Jam Session</h3>
-              <p className="text-xs text-neutral-400">Synchronized group listening in real time</p>
+              <p className="text-xs text-neutral-400">Shared group listening in real time</p>
             </div>
           </div>
           <button

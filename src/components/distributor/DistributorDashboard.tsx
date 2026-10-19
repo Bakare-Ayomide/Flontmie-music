@@ -420,7 +420,7 @@ export const DistributorDashboard: React.FC<DistributorDashboardProps> = ({
         </div>
 
         <div className="p-5 rounded-xl bg-neutral-900/40 border border-white/[0.06] space-y-2">
-          <span className="text-xs font-medium text-neutral-400">Catalog on Flontmie</span>
+          <span className="text-xs font-medium text-neutral-400">Releases on Flontmie</span>
           <p className="text-2xl font-bold font-mono tabular-nums text-white">
             {tracks.length} Tracks
           </p>
@@ -712,7 +712,7 @@ export const DistributorDashboard: React.FC<DistributorDashboardProps> = ({
             <div className="p-4 border-b border-white/[0.06] flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-bold text-white">Music Distributed Directly onto Flontmie</h3>
-                <p className="text-xs text-neutral-400">Catalog ingested from TuneCore, CD Baby, and Ditto</p>
+                <p className="text-xs text-neutral-400">Releases ingested from TuneCore, CD Baby, and Ditto</p>
               </div>
               <span className="text-xs text-emerald-400 font-mono">Platform Stream Ready</span>
             </div>
@@ -1180,7 +1180,7 @@ export const DistributorDashboard: React.FC<DistributorDashboardProps> = ({
                     >
                       <option value="Single">Single (1 Track)</option>
                       <option value="EP">EP (3–6 Tracks)</option>
-                      <option value="Album">Full Length Album (7+ Tracks)</option>
+                      <option value="Album">Album (7+ Tracks)</option>
                     </select>
                   </div>
                 </div>

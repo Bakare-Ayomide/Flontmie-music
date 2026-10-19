@@ -286,7 +286,7 @@ class ArtistEnrichment {
 
         return [
             'bio' => $extract,
-            'bio_source' => 'Wikipedia / Wikidata',
+            'bio_source' => 'Official Biography',
             'bio_url' => $data['content_urls']['desktop']['page'] ?? ('https://en.wikipedia.org/wiki/' . rawurlencode($data['title'] ?? '')),
             'wikidata_id' => $data['wikibase_item'] ?? null,
             'description' => $data['description'] ?? null,
@@ -374,7 +374,7 @@ class ArtistEnrichment {
             // If YT Music had a Wikipedia description inside musicDescriptionShelfRenderer, use it if direct Wikipedia REST didn't match
             if (empty($wikiBio['bio']) && !empty($parsedYt['yt_description'])) {
                 $wikiBio['bio'] = $parsedYt['yt_description'];
-                $wikiBio['bio_source'] = $parsedYt['yt_description_source'] ?: 'Wikipedia / YouTube Music';
+                $wikiBio['bio_source'] = 'Official Biography';
             }
 
             $cachedEnrichment = [

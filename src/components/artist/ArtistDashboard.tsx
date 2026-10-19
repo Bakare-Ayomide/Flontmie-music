@@ -239,7 +239,7 @@ export const ArtistDashboard: React.FC<ArtistDashboardProps> = ({
           <div className="border border-white/[0.08] rounded-xl overflow-hidden bg-neutral-900/30">
             <div className="p-4 border-b border-white/[0.06] flex items-center justify-between">
               <div>
-                <h3 className="text-sm font-bold text-white">Catalog Performance</h3>
+                <h3 className="text-sm font-bold text-white">Music Performance</h3>
                 <p className="text-xs text-neutral-400">Individual track conversion & save rates</p>
               </div>
               <span className="text-xs text-neutral-500 font-mono">Updated 10m ago</span>
@@ -484,7 +484,7 @@ export const ArtistDashboard: React.FC<ArtistDashboardProps> = ({
                   <div className="flex items-center gap-4 text-neutral-400">
                     <span>Label: <strong className="text-neutral-300">{t.label}</strong></span>
                     <span aria-hidden="true">·</span>
-                    <span className="font-mono">{t.bpm} BPM</span>
+                    <span className="font-mono">Tempo: {t.bpm}</span>
                   </div>
                 </div>
               ))}
@@ -516,7 +516,7 @@ export const ArtistDashboard: React.FC<ArtistDashboardProps> = ({
                   <Check className="w-6 h-6" />
                 </div>
                 <h4 className="text-base font-bold text-white">Track Registered & Live!</h4>
-                <p className="text-xs text-neutral-400">Added to Flontmie streaming catalog and published directly.</p>
+                <p className="text-xs text-neutral-400">Added to Flontmie streaming and published directly.</p>
               </div>
             ) : (
               <form onSubmit={handleCreateRelease} className="space-y-4 text-xs">
@@ -552,7 +552,7 @@ export const ArtistDashboard: React.FC<ArtistDashboardProps> = ({
                   </div>
 
                   <div className="space-y-1">
-                    <label className="font-medium text-neutral-300">BPM (Tempo)</label>
+                    <label className="font-medium text-neutral-300">Tempo (Pace)</label>
                     <input
                       type="number"
                       value={newBpm}

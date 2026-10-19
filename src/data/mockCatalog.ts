@@ -514,10 +514,10 @@ export const INITIAL_TRACKS: Track[] = [
 export const INITIAL_PLAYLISTS: Playlist[] = [
   {
     id: 'ply_top_hits',
-    title: 'YouTube Music Top 100 Global Charts',
-    description: 'The hottest and most played songs in the world right now from the official YouTube Music charts.',
+    title: 'Top 100 Global Charts',
+    description: 'The hottest and most played songs in the world right now from the official charts.',
     coverUrl: 'https://i.ytimg.com/vi/c2gK9tq57iQ/maxresdefault.jpg',
-    curator: 'YouTube Music & Flontmie Editorial',
+    curator: 'Flontmie Editorial',
     isPublic: true,
     isCollaborative: false,
     trackIds: ['trk_yt_c2gK9tq57iQ', 'trk_yt_4NRXx6U8ABQ', 'trk_yt_eVli-tstM5E', 'trk_yt_H58vbez_m4E', 'trk_yt_mSDfxde8fSg'],
@@ -543,7 +543,7 @@ export const INITIAL_PLAYLISTS: Playlist[] = [
   {
     id: 'ply_rap_caviar',
     title: 'Hip-Hop & Rap Caviar Heavyweights',
-    description: 'Kendrick Lamar, Gunna, Drake, and the hardest-hitting rap anthems on YouTube Music.',
+    description: 'Kendrick Lamar, Gunna, Drake, and the hardest-hitting rap anthems across the globe.',
     coverUrl: 'https://i.ytimg.com/vi/H58vbez_m4E/maxresdefault.jpg',
     curator: 'Heavyweight Rap Curators',
     isPublic: true,
@@ -798,7 +798,7 @@ export const DISTRIBUTOR_INGESTIONS: DistributorIngestionItem[] = [
 export const DISTRIBUTOR_ACCESS_GRANTS: DistributorAccessGrant[] = [
   {
     id: 'grant-1',
-    distributorName: 'TuneCore Direct & YouTube Music Hub',
+    distributorName: 'TuneCore Direct',
     contactEmail: 'ingestions@flontmie.com',
     status: 'active',
     grantedAt: '2026-01-01',

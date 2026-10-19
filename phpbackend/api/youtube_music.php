@@ -17,16 +17,26 @@ require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth_helper.php';
 require_once __DIR__ . '/../media_engine.php';
 
-// Strict Admin-Only Access Control: Only authenticated administrators can search, import, or synchronize from YT Music
-$adminUser = Auth::requireRole(['admin']);
 $method = $_SERVER['REQUEST_METHOD'];
 $action = $_GET['action'] ?? 'search';
 $input = get_json_input();
 $pdo = Database::getConnection();
 
-if ($method === 'POST') {
-    Auth::verifyCsrf($adminUser, $input);
+// Public discovery actions (accessible to all listeners, visitors, and admins)
+$publicActions = ['search', 'suggestions', 'charts', 'moods', 'lyrics', 'artist', 'album', 'playlist'];
+$adminUser = null;
+
+if (!in_array($action, $publicActions, true)) {
+    // Administrative ingestion / storage / sync operations require Admin role
+    $adminUser = Auth::requireRole(['admin']);
+    if ($method === 'POST') {
+        Auth::verifyCsrf($adminUser, $input);
+    }
+} else {
+    // For public discovery actions, optionally detect logged-in user for audit logging
+    $adminUser = Auth::getCurrentUser();
 }
+
 
 function call_ytmusic($endpoint, $payload = [], $country = 'US') {
     $url = "https://music.youtube.com/youtubei/v1/{$endpoint}?prettyPrint=false";
@@ -267,7 +277,7 @@ if ($action === 'search') {
                         'release_year' => $inferredYear,
                         'release_date' => "{$inferredYear}-" . date('m-d'),
                         'cover_url' => $thumbUrl ?: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600',
-                        'plays' => $col2Text ?: 'YouTube Music Catalog',
+                        'plays' => $col2Text ?: 'Popular',
                         'already_imported' => !empty($existingTrackId),
                         'catalog_track_id' => $existingTrackId
                     ];
@@ -280,7 +290,7 @@ if ($action === 'search') {
     try {
         $stmtLog = $pdo->prepare("INSERT INTO search_logs (user_id, query, results_count, ip_address) VALUES (?, ?, ?, ?)");
         $stmtLog->execute([
-            $adminUser['id'],
+            $adminUser ? $adminUser['id'] : null,
             substr($effectiveQuery, 0, 255),
             $totalResults,
             $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1'
@@ -304,6 +314,72 @@ if ($action === 'search') {
         'total_count' => $totalResults
     ]);
 }
+
+// --- 1b. LIVE SEARCH SUGGESTIONS WHILE TYPING (PUBLIC TO ALL USERS) ---
+if ($action === 'suggestions') {
+    $q = trim($_GET['q'] ?? '');
+    if (empty($q)) {
+        json_response(['status' => 'success', 'suggestions' => []]);
+    }
+
+    $suggestions = [];
+    $seen = [];
+
+    // Query external music suggestions
+    $raw = call_ytmusic('music/get_search_suggestions', ['input' => $q]);
+    if ($raw && isset($raw['contents'][0]['searchSuggestionsSectionRenderer']['contents'])) {
+        $items = $raw['contents'][0]['searchSuggestionsSectionRenderer']['contents'];
+        foreach ($items as $it) {
+            $renderer = $it['searchSuggestionRenderer'] ?? null;
+            if ($renderer) {
+                $text = get_runs_text($renderer['suggestion'] ?? null);
+                if (!empty($text)) {
+                    $k = strtolower(trim($text));
+                    if (!isset($seen[$k])) {
+                        $seen[$k] = true;
+                        $suggestions[] = [
+                            'text' => $text,
+                            'type' => 'query'
+                        ];
+                    }
+                }
+            }
+        }
+    }
+
+    // Match local database tracks and artists
+    try {
+        $like = '%' . $q . '%';
+        $stmt = $pdo->prepare("
+            SELECT id, title, artist_name, cover_art_url, video_id 
+            FROM tracks 
+            WHERE is_deleted = 0 AND (title LIKE ? OR artist_name LIKE ?) 
+            ORDER BY stream_count DESC LIMIT 5
+        ");
+        $stmt->execute([$like, $like]);
+        while ($row = $stmt->fetch()) {
+            $tKey = strtolower(trim($row['title']));
+            if (!isset($seen[$tKey])) {
+                $seen[$tKey] = true;
+                $suggestions[] = [
+                    'text' => $row['title'],
+                    'type' => 'song',
+                    'artist' => $row['artist_name'],
+                    'track_id' => $row['id'],
+                    'videoId' => $row['video_id'],
+                    'cover_url' => $row['cover_art_url']
+                ];
+            }
+        }
+    } catch (Exception $e) {}
+
+    json_response([
+        'status' => 'success',
+        'query' => $q,
+        'suggestions' => array_slice($suggestions, 0, 10)
+    ]);
+}
+
 
 // --- 2. YOUTUBE MUSIC CHARTS (Top songs, top music videos, trending artists) ---
 if ($action === 'charts') {

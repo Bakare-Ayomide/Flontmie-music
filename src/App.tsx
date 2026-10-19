@@ -932,7 +932,7 @@ export default function App() {
                   <div className="border-b border-white/[0.08] pb-5">
                     <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-red-500 mb-1">
                       <Compass className="w-4 h-4" />
-                      <span>Flontmie Music Catalog & Charts</span>
+                      <span>Flontmie Music Discovery & Charts</span>
                     </div>
                     <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">Explore</h1>
                     <p className="text-xs sm:text-sm text-neutral-400 mt-1">
@@ -985,7 +985,7 @@ export default function App() {
                           <Flame className="w-4 h-4 text-red-500" />
                           <h3 className="text-xs sm:text-sm font-bold text-white uppercase tracking-wider">Top Streamed Tracks</h3>
                         </div>
-                        <span className="text-[11px] text-neutral-500 font-mono">Live MySQL Catalog</span>
+                        <span className="text-[11px] text-neutral-500 font-mono">Trending Releases</span>
                       </div>
                       <div className="space-y-1.5">
                         {tracks

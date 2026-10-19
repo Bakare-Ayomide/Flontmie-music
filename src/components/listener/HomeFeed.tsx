@@ -169,15 +169,14 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
             <div className="flex items-center gap-2">
               <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-red-600/20 text-red-400 border border-red-500/30">
                 <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                Authorized Server Streaming
+                Live High-Fidelity Audio
               </span>
-              <span className="text-xs text-neutral-400 font-mono hidden sm:inline">MySQL Catalog · HTTP 206 Audio</span>
             </div>
             <h2 className="text-xl md:text-2xl font-extrabold text-white tracking-tight">
-              Flontmie Certified Charts & Featured Catalog
+              Flontmie Certified Charts & Featured Releases
             </h2>
             <p className="text-xs md:text-sm text-neutral-400 max-w-xl">
-              Stream verified studio releases, albums, and curated collections directly from Flontmie's high-speed media servers.
+              Stream verified studio releases, albums, and curated collections directly across all devices.
             </p>
           </div>
           {onNavigateToExplore && (
@@ -186,7 +185,7 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
               className="shrink-0 px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 active:scale-95 text-white text-xs font-semibold flex items-center gap-2 transition-all shadow-lg shadow-red-600/30 cursor-pointer"
             >
               <Compass className="w-4 h-4" />
-              <span>Explore Full Catalog</span>
+              <span>Explore All Music</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </button>
           )}
@@ -229,7 +228,7 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
                       </div>
                     </button>
                     <div className="absolute top-2 right-2 px-1.5 py-0.5 rounded text-[9px] font-bold bg-black/70 text-emerald-400 border border-emerald-500/30 backdrop-blur-sm">
-                      {item.genre || 'Catalog'}
+                      {item.genre || 'Single'}
                     </div>
                   </div>
 

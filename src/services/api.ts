@@ -166,8 +166,8 @@ class ApiService {
       lyrics: parseLyricsToLines(t.lyrics, dur),
       isrc: t.isrc || 'USFLM2026001',
       upc: t.upc || '012345678901',
-      label: t.label_name || 'Flontmie Verified Catalog',
-      distributor: 'Flontmie Catalog Hub',
+      label: t.label_name || 'Flontmie Records',
+      distributor: 'Flontmie Direct',
       isExplicit: Boolean(Number(t.explicit ?? t.isExplicit ?? 0)),
       bpm: Number(t.bpm) || 120,
       moods: ['trending', 'party'] as any[],
@@ -283,7 +283,7 @@ class ApiService {
       primaryGenre: genresList[0] || a.primaryGenre || 'Music',
       country: a.country || 'US',
       socialLinks: a.social_links || {},
-      distributorName: a.distributor_name || 'YouTube Music Global Feed',
+      distributorName: a.distributor_name || 'Global Release',
       claimedStatus: a.claimed_status || 'Verified'
     };
   }
@@ -467,8 +467,8 @@ class ApiService {
               lyrics: parseLyricsToLines(t.lyrics, dur),
               isrc: t.isrc || 'USFLM2026001',
               upc: '012345678901',
-              label: 'YouTube Music / Flontmie',
-              distributor: 'YouTube Music Global Feed',
+              label: 'Flontmie Records',
+              distributor: 'Flontmie Global',
               isExplicit: Boolean(Number(t.explicit)),
               scale: t.scale,
               bpm: Number(t.bpm) || 120,
@@ -889,12 +889,33 @@ class ApiService {
     });
   }
 
-  // --- ADMIN-ONLY YOUTUBE MUSIC DISCOVERY & IMPORT PIPELINE API ---
+  public async getSearchSuggestions(query: string) {
+    if (!query || !query.trim()) return [];
+    try {
+      const res = await this.request<{
+        status: string;
+        suggestions: Array<{
+          text: string;
+          type: 'query' | 'song' | 'artist' | 'album';
+          artist?: string;
+          track_id?: string;
+          videoId?: string;
+          cover_url?: string;
+        }>;
+      }>(`/youtube_music.php?action=suggestions&q=${encodeURIComponent(query.trim())}`);
+      return res?.suggestions || [];
+    } catch {
+      return [];
+    }
+  }
+
+  // --- PUBLIC MUSIC DISCOVERY & SEARCH API ---
   public async searchYouTubeMusic(
     query: string,
     filter?: 'songs' | 'artists' | 'albums' | 'playlists' | 'all',
     options?: { country?: string; year?: string; genre?: string }
   ) {
+
     const params = new URLSearchParams();
     params.append('action', 'search');
     params.append('q', query);

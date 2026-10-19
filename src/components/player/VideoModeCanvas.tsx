@@ -116,8 +116,6 @@ export const VideoModeCanvas: React.FC<VideoModeCanvasProps> = ({ currentTrack, 
             <span>Video Canvas Mode</span>
             <span aria-hidden="true">·</span>
             <span>{currentTrack.genre.toUpperCase()}</span>
-            <span aria-hidden="true">·</span>
-            <span>{currentTrack.bpm} BPM</span>
           </div>
         </div>
       )}

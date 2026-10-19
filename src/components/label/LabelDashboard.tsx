@@ -35,7 +35,7 @@ export const LabelDashboard: React.FC<LabelDashboardProps> = ({
 
   const handleExportCsv = () => {
     // Generate real CSV ledger content
-    const headers = 'Artist,Catalog Tracks,Total Streams,Monthly Revenue (USD),Advance (USD),Recouped (USD),Recoupment Status\n';
+    const headers = 'Artist,Released Tracks,Total Streams,Monthly Revenue (USD),Advance (USD),Recouped (USD),Recoupment Status\n';
     const rows = labelArtists
       .map(
         (a) =>
@@ -80,7 +80,7 @@ export const LabelDashboard: React.FC<LabelDashboardProps> = ({
               Astral Horizon Records
             </h1>
             <p className="text-xs text-neutral-400 mt-1 max-w-xl">
-              Catalog management, multi-territory publishing sync, and master recording advances
+              Repertoire management, multi-territory publishing sync, and master recording advances
             </p>
           </div>
         </div>
@@ -113,7 +113,7 @@ export const LabelDashboard: React.FC<LabelDashboardProps> = ({
           <p className="text-2xl font-bold font-mono tabular-nums text-white">
             {labelArtists.length} Artists
           </p>
-          <div className="text-[11px] text-neutral-400">{totalCatalogTracks} Master Tracks</div>
+          <div className="text-[11px] text-neutral-400">{totalCatalogTracks} Released Masters</div>
         </div>
 
         <div className="p-5 rounded-xl bg-neutral-900/40 border border-white/[0.06] space-y-2">
@@ -142,7 +142,7 @@ export const LabelDashboard: React.FC<LabelDashboardProps> = ({
 
         <div className="p-5 rounded-xl bg-neutral-900/40 border border-white/[0.06] space-y-2">
           <div className="flex items-center justify-between text-neutral-400">
-            <span className="text-xs font-medium">Total Catalog Streams</span>
+            <span className="text-xs font-medium">Total Music Streams</span>
             <Globe className="w-4 h-4 text-neutral-400" />
           </div>
           <p className="text-2xl font-bold font-mono tabular-nums text-white">
