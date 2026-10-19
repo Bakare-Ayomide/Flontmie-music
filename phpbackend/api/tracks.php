@@ -151,6 +151,10 @@ if ($method === 'GET') {
     foreach ($tracks as &$t) {
         $t['mood_tags'] = !empty($t['mood_tags_json']) ? json_decode($t['mood_tags_json'], true) : [];
         $t['is_liked'] = isset($likedMap[$t['id']]);
+        if (empty($t['video_id']) && strpos($t['id'], 'yt_') === 0) {
+            $t['video_id'] = substr($t['id'], 3);
+        }
+        $t['videoId'] = $t['video_id'] ?? null;
     }
 
     json_response([

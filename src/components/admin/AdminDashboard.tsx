@@ -93,7 +93,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     try {
       const res = await api.searchPublicMusic(q);
       if (res && res.results) {
-        setSearchResults(res.results);
+        const list = Array.isArray(res.results) ? res.results : (res.results.songs || []);
+        setSearchResults(list);
       }
     } catch (err: any) {
       setImportNotice(`Search error: ${err.message || 'Failed to search'}`);

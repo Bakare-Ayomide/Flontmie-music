@@ -80,6 +80,45 @@ export const YouTubeMusicDiscovery: React.FC<YouTubeMusicDiscoveryProps> = ({
     isLoading: false
   });
 
+  // Artist & Discography Modal State
+  const [selectedArtist, setSelectedArtist] = useState<{
+    isOpen: boolean;
+    isLoading: boolean;
+    artist: any;
+    topSongs: any[];
+    albums: any[];
+    singles: any[];
+  }>({
+    isOpen: false,
+    isLoading: false,
+    artist: null,
+    topSongs: [],
+    albums: [],
+    singles: []
+  });
+
+  // Album Tracklist Modal State
+  const [selectedAlbum, setSelectedAlbum] = useState<{
+    isOpen: boolean;
+    isLoading: boolean;
+    album: any;
+  }>({
+    isOpen: false,
+    isLoading: false,
+    album: null
+  });
+
+  // Playlist & Tracks Modal State
+  const [selectedPlaylist, setSelectedPlaylist] = useState<{
+    isOpen: boolean;
+    isLoading: boolean;
+    playlist: any;
+  }>({
+    isOpen: false,
+    isLoading: false,
+    playlist: null
+  });
+
   const [importingIds, setImportingIds] = useState<Record<string, boolean>>({});
   const [importedIds, setImportedIds] = useState<Record<string, boolean>>({});
 
@@ -133,13 +172,14 @@ export const YouTubeMusicDiscovery: React.FC<YouTubeMusicDiscoveryProps> = ({
       artistId: `art_${(song.artist || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
       album: song.album || 'YouTube Music Discovery',
       duration: Number(song.duration) || 210,
-      genre: song.genre || 'Global Music',
+      genre: (song.genre || 'pop') as any,
       coverUrl: song.cover_url || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600',
       audioUrl: song.audio_url || 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
       streams: Number(song.streams) || (typeof song.plays === 'string' ? parseInt(song.plays.replace(/[^0-9]/g, '')) || 250000 : 250000),
       likes: Math.floor((Number(song.streams) || 250000) * 0.08),
       releaseDate: new Date().toISOString().split('T')[0],
       isrc: 'US-YT-26-' + Math.floor(10000 + Math.random() * 90000),
+      upc: '012345678901',
       bpm: 120,
       moods: ['trending', 'party'] as any[],
       label: 'YouTube Music / Flontmie Stream',
@@ -213,6 +253,98 @@ export const YouTubeMusicDiscovery: React.FC<YouTubeMusicDiscoveryProps> = ({
         source: 'Error',
         isLoading: false
       }));
+    }
+  };
+
+  const handleOpenArtist = async (art: any) => {
+    const browseId = art.id?.startsWith('UC') ? art.id : '';
+    setSelectedArtist({
+      isOpen: true,
+      isLoading: true,
+      artist: {
+        name: art.name,
+        avatar_url: art.avatar_url || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600',
+        subscribers: art.subscribers || 'YouTube Music Verified Artist',
+        description: ''
+      },
+      topSongs: [],
+      albums: [],
+      singles: []
+    });
+
+    try {
+      const res = await api.getYouTubeMusicArtist(browseId, art.name);
+      if (res && res.status === 'success') {
+        setSelectedArtist({
+          isOpen: true,
+          isLoading: false,
+          artist: res.artist || { name: art.name, avatar_url: art.avatar_url },
+          topSongs: res.top_songs || [],
+          albums: res.albums || [],
+          singles: res.singles || []
+        });
+      }
+    } catch (e) {
+      console.warn('Failed to load artist:', e);
+      setSelectedArtist((prev) => ({ ...prev, isLoading: false }));
+    }
+  };
+
+  const handleOpenAlbum = async (alb: any) => {
+    setSelectedAlbum({
+      isOpen: true,
+      isLoading: true,
+      album: {
+        title: alb.title,
+        artist: alb.artist,
+        cover_url: alb.cover_url || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600',
+        year: alb.year || '2026',
+        tracks: []
+      }
+    });
+
+    try {
+      const browseId = alb.browseId || alb.id;
+      const res = await api.getYouTubeMusicAlbum(browseId);
+      if (res && res.album) {
+        setSelectedAlbum({
+          isOpen: true,
+          isLoading: false,
+          album: res.album
+        });
+      }
+    } catch (e) {
+      console.warn('Failed to load album:', e);
+      setSelectedAlbum((prev) => ({ ...prev, isLoading: false }));
+    }
+  };
+
+  const handleOpenPlaylist = async (pl: any) => {
+    setSelectedPlaylist({
+      isOpen: true,
+      isLoading: true,
+      playlist: {
+        title: pl.title,
+        curator: pl.curator || 'YouTube Music Editorial',
+        cover_url: pl.cover_url || 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600',
+        description: 'Curated YouTube Music stream',
+        tracks: []
+      }
+    });
+
+    try {
+      const browseId = pl.browseId || pl.id;
+      const res = await api.getYouTubeMusicPlaylist(browseId);
+      if (res && res.playlist) {
+        setSelectedPlaylist({
+          isOpen: true,
+          isLoading: false,
+          playlist: res.playlist
+        });
+      }
+    } catch (e) {
+      console.warn('Failed to load playlist:', e);
+      setSelectedPlaylist((prev) => ({ ...prev, isLoading: false }));
     }
   };
 
@@ -515,7 +647,7 @@ export const YouTubeMusicDiscovery: React.FC<YouTubeMusicDiscoveryProps> = ({
                 {searchResults.artists.map((art) => (
                   <div
                     key={art.id}
-                    onClick={() => onViewArtist && onViewArtist(art.name)}
+                    onClick={() => handleOpenArtist(art)}
                     className="p-3 rounded-2xl bg-neutral-900/40 border border-white/[0.06] hover:border-white/20 transition-all text-center cursor-pointer group"
                   >
                     <img
@@ -545,7 +677,8 @@ export const YouTubeMusicDiscovery: React.FC<YouTubeMusicDiscoveryProps> = ({
                 {searchResults.albums.map((alb) => (
                   <div
                     key={alb.id}
-                    className="p-3 rounded-2xl bg-neutral-900/40 border border-white/[0.06] hover:border-white/20 transition-all group"
+                    onClick={() => handleOpenAlbum(alb)}
+                    className="p-3 rounded-2xl bg-neutral-900/40 border border-white/[0.06] hover:border-white/20 transition-all group cursor-pointer"
                   >
                     <img
                       src={alb.cover_url}
@@ -553,7 +686,7 @@ export const YouTubeMusicDiscovery: React.FC<YouTubeMusicDiscoveryProps> = ({
                       referrerPolicy="no-referrer"
                       className="w-full aspect-square rounded-xl object-cover mb-2 border border-white/10 group-hover:scale-105 transition-transform"
                     />
-                    <p className="text-xs font-bold text-white truncate">{alb.title}</p>
+                    <p className="text-xs font-bold text-white truncate group-hover:text-blue-400">{alb.title}</p>
                     <p className="text-[10px] text-neutral-400 truncate">{alb.artist}</p>
                   </div>
                 ))}
@@ -574,7 +707,8 @@ export const YouTubeMusicDiscovery: React.FC<YouTubeMusicDiscoveryProps> = ({
                 {searchResults.playlists.map((pl) => (
                   <div
                     key={pl.id}
-                    className="p-3 rounded-2xl bg-neutral-900/40 border border-white/[0.06] hover:border-white/20 transition-all group"
+                    onClick={() => handleOpenPlaylist(pl)}
+                    className="p-3 rounded-2xl bg-neutral-900/40 border border-white/[0.06] hover:border-white/20 transition-all group cursor-pointer"
                   >
                     <img
                       src={pl.cover_url}
@@ -582,7 +716,7 @@ export const YouTubeMusicDiscovery: React.FC<YouTubeMusicDiscoveryProps> = ({
                       referrerPolicy="no-referrer"
                       className="w-full aspect-square rounded-xl object-cover mb-2 border border-white/10 group-hover:scale-105 transition-transform"
                     />
-                    <p className="text-xs font-bold text-white truncate">{pl.title}</p>
+                    <p className="text-xs font-bold text-white truncate group-hover:text-emerald-400">{pl.title}</p>
                     <p className="text-[10px] text-neutral-400 truncate">{pl.curator}</p>
                   </div>
                 ))}
@@ -672,6 +806,329 @@ export const YouTubeMusicDiscovery: React.FC<YouTubeMusicDiscoveryProps> = ({
                 {lyricsModal.lyrics}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Artist & Discography Viewer Modal */}
+      {selectedArtist.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-150">
+          <div className="w-full max-w-3xl max-h-[85vh] bg-[#121215] border border-white/10 rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+            {/* Header */}
+            <div className="relative p-5 sm:p-6 bg-gradient-to-b from-neutral-800/80 to-transparent border-b border-white/[0.08] flex items-center justify-between gap-4 shrink-0">
+              <div className="flex items-center gap-4 min-w-0">
+                <img
+                  src={selectedArtist.artist?.avatar_url || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600'}
+                  alt={selectedArtist.artist?.name}
+                  referrerPolicy="no-referrer"
+                  className="w-16 h-16 sm:w-20 sm:h-20 rounded-full object-cover border-2 border-white/10 shadow-lg shrink-0"
+                />
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-lg sm:text-xl font-extrabold text-white truncate">
+                      {selectedArtist.artist?.name}
+                    </h2>
+                    <span className="text-[10px] uppercase font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30 px-2 py-0.5 rounded-full">
+                      YouTube Music
+                    </span>
+                  </div>
+                  <p className="text-xs text-neutral-400 mt-1">
+                    {selectedArtist.artist?.subscribers || 'Artist'} · Official Discography
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedArtist((prev) => ({ ...prev, isOpen: false }))}
+                className="p-2 rounded-full text-neutral-400 hover:text-white hover:bg-white/10 transition-colors shrink-0"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Content body */}
+            <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-6">
+              {selectedArtist.isLoading ? (
+                <div className="py-20 flex flex-col items-center justify-center space-y-2 text-neutral-400">
+                  <Loader2 className="w-8 h-8 animate-spin text-purple-400" />
+                  <p className="text-xs">Loading discography and top tracks from YouTube Music...</p>
+                </div>
+              ) : (
+                <>
+                  {/* Top Songs */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between border-b border-white/[0.06] pb-2">
+                      <div className="flex items-center gap-2">
+                        <Flame className="w-4 h-4 text-red-500" />
+                        <h4 className="text-xs font-bold text-white uppercase tracking-wider">Top Songs & Popular Tracks</h4>
+                      </div>
+                      <span className="text-[11px] text-neutral-500 font-mono">{selectedArtist.topSongs.length} Songs</span>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      {selectedArtist.topSongs.map((song, i) => {
+                        const key = song.id || song.videoId || song.title;
+                        const isImported = Boolean(importedIds[key]);
+                        const isImporting = Boolean(importingIds[key]);
+
+                        return (
+                          <div
+                            key={key || i}
+                            className="flex items-center justify-between p-2.5 rounded-xl hover:bg-white/[0.06] transition-colors group text-xs"
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <span className="font-mono text-neutral-500 w-5 text-center shrink-0">{i + 1}</span>
+                              <img
+                                src={song.cover_url}
+                                alt={song.title}
+                                referrerPolicy="no-referrer"
+                                className="w-10 h-10 rounded-lg object-cover shrink-0 bg-neutral-800"
+                              />
+                              <div className="min-w-0">
+                                <p className="font-semibold text-white truncate group-hover:text-red-400 transition-colors">
+                                  {song.title}
+                                </p>
+                                <p className="text-[11px] text-neutral-400 truncate">{song.plays || song.artist}</p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              {song.videoId && (
+                                <button
+                                  onClick={() => handleFetchLyrics(song)}
+                                  className="p-1.5 rounded-lg text-neutral-400 hover:text-white hover:bg-white/10"
+                                  title="View Lyrics"
+                                >
+                                  <FileText className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                              <button
+                                onClick={() => handlePlayYouTubeSong(song)}
+                                className="p-2 rounded-full bg-white text-black hover:scale-105 active:scale-95 transition-transform"
+                                title="Play Track"
+                              >
+                                <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
+                              </button>
+                              <button
+                                onClick={() => handleImport(song)}
+                                disabled={isImported || isImporting}
+                                className={`p-1.5 rounded-lg text-xs ${
+                                  isImported ? 'text-emerald-400 bg-emerald-500/10' : 'text-neutral-400 hover:text-white hover:bg-white/10'
+                                }`}
+                                title="Import into MySQL Catalog"
+                              >
+                                {isImporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : isImported ? <Check className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Albums and Singles */}
+                  {(selectedArtist.albums.length > 0 || selectedArtist.singles.length > 0) && (
+                    <div className="space-y-3 pt-2">
+                      <div className="flex items-center gap-2 border-b border-white/[0.06] pb-2">
+                        <Disc3 className="w-4 h-4 text-blue-400" />
+                        <h4 className="text-xs font-bold text-white uppercase tracking-wider">Albums, EPs & Singles</h4>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        {[...selectedArtist.albums, ...selectedArtist.singles].map((item) => (
+                          <div
+                            key={item.id}
+                            onClick={() => handleOpenAlbum(item)}
+                            className="p-3 rounded-2xl bg-neutral-900/40 border border-white/[0.06] hover:border-white/20 transition-all cursor-pointer group"
+                          >
+                            <img
+                              src={item.cover_url}
+                              alt={item.title}
+                              referrerPolicy="no-referrer"
+                              className="w-full aspect-square rounded-xl object-cover mb-2 border border-white/10 group-hover:scale-105 transition-transform"
+                            />
+                            <p className="text-xs font-bold text-white truncate group-hover:text-blue-400">{item.title}</p>
+                            <p className="text-[10px] text-neutral-400 truncate">{item.year || 'Album'}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Album Detail Modal */}
+      {selectedAlbum.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-150">
+          <div className="w-full max-w-2xl max-h-[85vh] bg-[#121215] border border-white/10 rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+            <div className="p-5 sm:p-6 bg-gradient-to-b from-blue-950/40 to-transparent border-b border-white/[0.08] flex items-center justify-between gap-4 shrink-0">
+              <div className="flex items-center gap-4 min-w-0">
+                <img
+                  src={selectedAlbum.album?.cover_url}
+                  alt={selectedAlbum.album?.title}
+                  referrerPolicy="no-referrer"
+                  className="w-16 h-16 sm:w-20 sm:h-20 rounded-xl object-cover border border-white/10 shadow-lg shrink-0"
+                />
+                <div className="min-w-0">
+                  <h3 className="text-base sm:text-lg font-bold text-white truncate">{selectedAlbum.album?.title}</h3>
+                  <p className="text-xs text-neutral-400 mt-1">
+                    {selectedAlbum.album?.artist} · {selectedAlbum.album?.year || 'Album'}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedAlbum((prev) => ({ ...prev, isOpen: false }))}
+                className="p-2 rounded-full text-neutral-400 hover:text-white hover:bg-white/10 transition-colors shrink-0"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-3">
+              {selectedAlbum.isLoading ? (
+                <div className="py-16 flex flex-col items-center justify-center space-y-2 text-neutral-400">
+                  <Loader2 className="w-8 h-8 animate-spin text-blue-400" />
+                  <p className="text-xs">Fetching album tracklist from YouTube Music...</p>
+                </div>
+              ) : selectedAlbum.album?.tracks?.length === 0 ? (
+                <div className="py-12 text-center text-neutral-400 text-xs">
+                  No individual tracks listed. Use Search to explore songs directly.
+                </div>
+              ) : (
+                selectedAlbum.album?.tracks?.map((track: any, i: number) => {
+                  const key = track.id || track.videoId || track.title;
+                  const isImported = Boolean(importedIds[key]);
+                  const isImporting = Boolean(importingIds[key]);
+
+                  return (
+                    <div
+                      key={key || i}
+                      className="flex items-center justify-between p-2.5 rounded-xl hover:bg-white/[0.06] transition-colors text-xs group"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="font-mono text-neutral-500 w-5 text-center shrink-0">{i + 1}</span>
+                        <div className="min-w-0">
+                          <p className="font-semibold text-white truncate group-hover:text-blue-400">{track.title}</p>
+                          <p className="text-[11px] text-neutral-400 truncate">{track.artist}</p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => handlePlayYouTubeSong(track)}
+                          className="p-2 rounded-full bg-white text-black hover:scale-105 active:scale-95 transition-transform"
+                          title="Play Track"
+                        >
+                          <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
+                        </button>
+                        <button
+                          onClick={() => handleImport(track)}
+                          disabled={isImported || isImporting}
+                          className={`p-1.5 rounded-lg text-xs ${
+                            isImported ? 'text-emerald-400 bg-emerald-500/10' : 'text-neutral-400 hover:text-white hover:bg-white/10'
+                          }`}
+                          title="Import into MySQL Catalog"
+                        >
+                          {isImporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : isImported ? <Check className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Playlist & Tracks Modal */}
+      {selectedPlaylist.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-150">
+          <div className="w-full max-w-2xl max-h-[85vh] bg-[#121215] border border-white/10 rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+            <div className="p-5 sm:p-6 bg-gradient-to-b from-emerald-950/40 to-transparent border-b border-white/[0.08] flex items-center justify-between gap-4 shrink-0">
+              <div className="flex items-center gap-4 min-w-0">
+                <img
+                  src={selectedPlaylist.playlist?.cover_url}
+                  alt={selectedPlaylist.playlist?.title}
+                  referrerPolicy="no-referrer"
+                  className="w-16 h-16 sm:w-20 sm:h-20 rounded-xl object-cover border border-white/10 shadow-lg shrink-0"
+                />
+                <div className="min-w-0">
+                  <h3 className="text-base sm:text-lg font-bold text-white truncate">{selectedPlaylist.playlist?.title}</h3>
+                  <p className="text-xs text-neutral-400 mt-1">
+                    {selectedPlaylist.playlist?.curator} · YouTube Music Curated
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedPlaylist((prev) => ({ ...prev, isOpen: false }))}
+                className="p-2 rounded-full text-neutral-400 hover:text-white hover:bg-white/10 transition-colors shrink-0"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-3">
+              {selectedPlaylist.isLoading ? (
+                <div className="py-16 flex flex-col items-center justify-center space-y-2 text-neutral-400">
+                  <Loader2 className="w-8 h-8 animate-spin text-emerald-400" />
+                  <p className="text-xs">Fetching playlist tracks from YouTube Music...</p>
+                </div>
+              ) : selectedPlaylist.playlist?.tracks?.length === 0 ? (
+                <div className="py-12 text-center text-neutral-400 text-xs">
+                  No tracks available for this playlist.
+                </div>
+              ) : (
+                selectedPlaylist.playlist?.tracks?.map((track: any, i: number) => {
+                  const key = track.id || track.videoId || track.title;
+                  const isImported = Boolean(importedIds[key]);
+                  const isImporting = Boolean(importingIds[key]);
+
+                  return (
+                    <div
+                      key={key || i}
+                      className="flex items-center justify-between p-2.5 rounded-xl hover:bg-white/[0.06] transition-colors text-xs group"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="font-mono text-neutral-500 w-5 text-center shrink-0">{i + 1}</span>
+                        <img
+                          src={track.cover_url}
+                          alt={track.title}
+                          referrerPolicy="no-referrer"
+                          className="w-10 h-10 rounded-lg object-cover shrink-0 bg-neutral-800"
+                        />
+                        <div className="min-w-0">
+                          <p className="font-semibold text-white truncate group-hover:text-emerald-400">{track.title}</p>
+                          <p className="text-[11px] text-neutral-400 truncate">{track.artist}</p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => handlePlayYouTubeSong(track)}
+                          className="p-2 rounded-full bg-white text-black hover:scale-105 active:scale-95 transition-transform"
+                          title="Play Track"
+                        >
+                          <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
+                        </button>
+                        <button
+                          onClick={() => handleImport(track)}
+                          disabled={isImported || isImporting}
+                          className={`p-1.5 rounded-lg text-xs ${
+                            isImported ? 'text-emerald-400 bg-emerald-500/10' : 'text-neutral-400 hover:text-white hover:bg-white/10'
+                          }`}
+                          title="Import into MySQL Catalog"
+                        >
+                          {isImporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : isImported ? <Check className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>
         </div>
       )}

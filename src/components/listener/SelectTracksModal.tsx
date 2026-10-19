@@ -23,8 +23,8 @@ export const SelectTracksModal: React.FC<SelectTracksModalProps> = ({
 
   const filtered = allTracks.filter(
     (t) =>
-      t.title.toLowerCase().includes(search.toLowerCase()) ||
-      t.artist.toLowerCase().includes(search.toLowerCase())
+      (t?.title || '').toLowerCase().includes(search.toLowerCase()) ||
+      (t?.artist || '').toLowerCase().includes(search.toLowerCase())
   );
 
   return (

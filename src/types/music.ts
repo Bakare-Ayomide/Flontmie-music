@@ -2,7 +2,7 @@ export type Persona = 'listener' | 'artist' | 'label' | 'distributor' | 'admin';
 
 export type MoodCategory = 'all' | 'relax' | 'energize' | 'workout' | 'focus' | 'party' | 'romance' | 'oldschool';
 
-export type MusicGenre = 'afrobeat' | 'pop' | 'rap' | 'oldschool' | 'r&b' | 'synthwave' | 'lo-fi' | 'ambient';
+export type MusicGenre = 'afrobeat' | 'afrobeats' | 'pop' | 'rap' | 'hip-hop' | 'oldschool' | 'r&b' | 'synthwave' | 'lo-fi' | 'ambient' | 'rock' | 'electronic' | string;
 
 export type TimeOfDay = 'dawn' | 'morning' | 'noon' | 'afternoon' | 'dusk' | 'evening' | 'night' | 'midnight';
 
@@ -19,7 +19,9 @@ export interface Track {
   album: string;
   coverUrl: string;
   duration: number; // in seconds
+  videoId?: string;
   audioKey?: string;
+  audioUrl?: string;
   genre: MusicGenre;
   bpm: number;
   moods: MoodCategory[];

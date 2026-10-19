@@ -14,7 +14,7 @@ import {
   JamParticipant 
 } from './types/music';
 import { 
-  INITIAL_TRACKS, 
+  INITIAL_TRACKS,
   INITIAL_PLAYLISTS, 
   ARTIST_PROFILES, 
   LABEL_ARTISTS, 
@@ -29,6 +29,7 @@ import { audioEngine } from './services/audioEngine';
 import { api } from './services/api';
 import { Navbar } from './components/layout/Navbar';
 import { Sidebar } from './components/layout/Sidebar';
+import { YouTubePlayerEmbed } from './components/player/YouTubePlayerEmbed';
 import { MobileDock } from './components/layout/MobileDock';
 import { BottomPlayer } from './components/player/BottomPlayer';
 import { QueueDrawer } from './components/player/QueueDrawer';
@@ -48,6 +49,7 @@ import { FullPlaybackScreen } from './components/player/FullPlaybackScreen';
 import { PublicArtistPage } from './components/artist/PublicArtistPage';
 import { AuthModal, AuthUser } from './components/auth/AuthModal';
 import { ProfilePage } from './components/profile/ProfilePage';
+import { YouTubeMusicDiscovery } from './components/discovery/YouTubeMusicDiscovery';
 import { Heart, Compass, Sparkles, Flame, Disc3, ArrowLeft, Music, Layers, Play, Check } from 'lucide-react';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
 
@@ -59,6 +61,7 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
   const [selectedArtistId, setSelectedArtistId] = useState<string | null>(null);
+  const [isLoadingPlaylist, setIsLoadingPlaylist] = useState<boolean>(false);
 
   // Authentication & User Session State
   const [currentUser, setCurrentUser] = useState<AuthUser | null>({
@@ -76,11 +79,11 @@ export default function App() {
   // Desktop sidebar collapse state
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
 
-  // Music Catalog & Hub State
+  // Music Catalog & Hub State - Loaded from Real MySQL Backend & YouTube Music
   const [tracks, setTracks] = useState<Track[]>(INITIAL_TRACKS);
   const [playlists, setPlaylists] = useState<Playlist[]>(INITIAL_PLAYLISTS);
   const [artistProfiles, setArtistProfiles] = useState<Record<string, ArtistProfile>>(ARTIST_PROFILES);
-  const [likedTrackIds, setLikedTrackIds] = useState<string[]>(['track-afro-1', 'track-pop-1', 'track-synth-1']);
+  const [likedTrackIds, setLikedTrackIds] = useState<string[]>([]);
   const [labelArtists, setLabelArtists] = useState<LabelArtist[]>(LABEL_ARTISTS);
   const [upcomingReleases, setUpcomingReleases] = useState<ReleaseScheduleItem[]>(UPCOMING_RELEASES);
   const [featuredAccounts, setFeaturedAccounts] = useState<FeaturedAccount[]>(FEATURED_ACCOUNTS);
@@ -89,10 +92,10 @@ export default function App() {
   const [adminPermissions, setAdminPermissions] = useState<AdminRolePermission[]>(ADMIN_ROLE_PERMISSIONS);
 
   // Playback State
-  const [currentTrack, setCurrentTrack] = useState<Track | null>(INITIAL_TRACKS[0]);
+  const [currentTrack, setCurrentTrack] = useState<Track | null>(INITIAL_TRACKS[0] || null);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [currentTime, setCurrentTime] = useState<number>(0);
-  const [duration, setDuration] = useState<number>(INITIAL_TRACKS[0].duration);
+  const [duration, setDuration] = useState<number>(INITIAL_TRACKS[0]?.duration || 153);
   const [volume, setVolume] = useState<number>(0.85);
   const [isShuffle, setIsShuffle] = useState<boolean>(false);
   const [repeatMode, setRepeatMode] = useState<'off' | 'all' | 'one'>('off');
@@ -156,12 +159,26 @@ export default function App() {
           return;
         }
 
+        if (path === '/playlist' || path === '/playlists' || hash === '#playlist' || hash === '#playlists') {
+          setCurrentTab('library');
+          setSelectedPlaylistId(null);
+          setSelectedArtistId(null);
+          setCurrentPersona('listener');
+          return;
+        }
+
         if (path.startsWith('/playlist/') || hash.startsWith('#playlist/')) {
           const seg = path.startsWith('/playlist/')
-            ? path.replace('/playlist/', '').split('/')[0]
-            : hash.replace('#playlist/', '').split('/')[0];
+            ? path.replace('/playlist/', '').split('/')[0].trim()
+            : hash.replace('#playlist/', '').split('/')[0].trim();
           if (seg) {
             setSelectedPlaylistId(seg);
+            setSelectedArtistId(null);
+            setCurrentPersona('listener');
+            return;
+          } else {
+            setCurrentTab('library');
+            setSelectedPlaylistId(null);
             setSelectedArtistId(null);
             setCurrentPersona('listener');
             return;
@@ -188,7 +205,7 @@ export default function App() {
           setSelectedPlaylistId(null);
           setSelectedArtistId(null);
           setCurrentPersona('listener');
-        } else if (path === '/' || path === '') {
+        } else {
           setCurrentTab('home');
           setSelectedPlaylistId(null);
           setSelectedArtistId(null);
@@ -207,14 +224,39 @@ export default function App() {
     };
   }, []);
 
+  // Fetch playlist on demand if direct URL or ID isn't in cache yet
+  useEffect(() => {
+    if (selectedPlaylistId && !playlists.some((p) => p.id === selectedPlaylistId)) {
+      setIsLoadingPlaylist(true);
+      api.getPlaylistById(selectedPlaylistId)
+        .then((res) => {
+          if (res && res.playlist) {
+            setPlaylists((prev) => {
+              if (prev.some((p) => p.id === res.playlist.id)) return prev;
+              return [res.playlist, ...prev];
+            });
+            if (res.tracks && res.tracks.length > 0) {
+              setTracks((prev) => {
+                const existing = new Set(prev.map((t) => t.id));
+                const newTracks = res.tracks.filter((t) => !existing.has(t.id));
+                return [...newTracks, ...prev];
+              });
+            }
+          }
+        })
+        .catch(() => {})
+        .finally(() => setIsLoadingPlaylist(false));
+    }
+  }, [selectedPlaylistId, playlists]);
+
   // Load Live Catalog from MySQL Backend
   useEffect(() => {
     api.getTracks().then((backendTracks) => {
       if (backendTracks && backendTracks.length > 0) {
-        setTracks((prev) => {
-          const backendIds = new Set(backendTracks.map((t) => t.id));
-          return [...backendTracks, ...prev.filter((t) => !backendIds.has(t.id))];
-        });
+        setTracks(backendTracks);
+        setCurrentTrack((curr) => curr || backendTracks[0]);
+        setDuration((dur) => (dur > 0 ? dur : (backendTracks[0]?.duration || 180)));
+        setQueue((q) => (q.length > 0 ? q : backendTracks.slice(1)));
       }
     }).catch(() => {});
 
@@ -230,10 +272,7 @@ export default function App() {
 
     api.getPlaylists().then((backendPlaylists) => {
       if (backendPlaylists && backendPlaylists.length > 0) {
-        setPlaylists((prev) => {
-          const ids = new Set(backendPlaylists.map((p) => p.id));
-          return [...backendPlaylists, ...prev.filter((p) => !ids.has(p.id))];
-        });
+        setPlaylists(backendPlaylists);
       }
     }).catch(() => {});
 
@@ -326,6 +365,9 @@ export default function App() {
   const handleSeek = (seconds: number) => {
     audioEngine.seek(seconds);
     setCurrentTime(seconds);
+    try {
+      window.dispatchEvent(new CustomEvent('flontmie:seek', { detail: seconds }));
+    } catch {}
   };
 
   const handleVolumeChange = (vol: number) => {
@@ -717,6 +759,11 @@ export default function App() {
                     }
                   }}
                 />
+              ) : isLoadingPlaylist ? (
+                <div className="py-24 text-center space-y-4">
+                  <div className="w-10 h-10 border-2 border-red-500 border-t-transparent rounded-full animate-spin mx-auto" />
+                  <p className="text-xs text-neutral-400">Loading collection from Flontmie...</p>
+                </div>
               ) : selectedPlaylistId ? (
                 <div className="py-20 text-center space-y-4">
                   <div className="w-14 h-14 rounded-2xl bg-neutral-900 border border-white/10 flex items-center justify-center text-neutral-400 mx-auto">
@@ -739,13 +786,26 @@ export default function App() {
                   <div className="border-b border-white/[0.08] pb-5">
                     <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-red-500 mb-1">
                       <Compass className="w-4 h-4" />
-                      <span>Flontmie Charts & Curations</span>
+                      <span>Flontmie Music Discovery & Charts</span>
                     </div>
                     <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">Explore</h1>
                     <p className="text-xs sm:text-sm text-neutral-400 mt-1">
-                      Trending music, genre spotlights, certified rankings, and editorial selections
+                      Discover music worldwide with the real-time YouTube Music API engine, genre spotlights, and certified charts
                     </p>
                   </div>
+
+                  {/* YouTube Music Real-Time Discovery Engine */}
+                  <YouTubeMusicDiscovery
+                    onPlayTrack={handlePlayTrack}
+                    onImportTrack={(newTrack) => {
+                      setTracks((prev) => {
+                        const exists = prev.some((t) => t.id === newTrack.id);
+                        return exists ? prev : [newTrack, ...prev];
+                      });
+                    }}
+                    onSelectMood={(mood) => setSelectedMood(mood as any)}
+                    onViewArtist={handleViewArtist}
+                  />
 
                   {/* Explore Genre Highlights Grid */}
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -758,7 +818,7 @@ export default function App() {
                       <div
                         key={g.name}
                         onClick={() => {
-                          const matching = tracks.find((t) => t.genre.toLowerCase().includes(g.name.toLowerCase().split(' ')[0]));
+                          const matching = tracks.find((t) => (t?.genre || '').toLowerCase().includes(g.name.toLowerCase().split(' ')[0]));
                           if (matching) handlePlayTrack(matching);
                         }}
                         className={`p-4 rounded-2xl bg-gradient-to-br ${g.color} border ${g.border} hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer group`}
@@ -966,6 +1026,7 @@ export default function App() {
                   onOpenCreatePlaylist={() => setIsCreatePlaylistOpen(true)}
                   onToggleFollowAccount={handleToggleFollowAccount}
                   onSelectArtist={handleViewArtist}
+                  onNavigateToExplore={() => navigateTab('explore')}
                 />
               )}
             </>
@@ -1189,6 +1250,20 @@ export default function App() {
           setCurrentPersona(user.role);
           setIsAuthModalOpen(false);
         }}
+      />
+
+      {/* Real YouTube Music Streaming & Video Playback Engine */}
+      <YouTubePlayerEmbed
+        currentTrack={currentTrack}
+        isPlaying={isPlaying}
+        volume={volume}
+        isVideoMode={isVideoMode}
+        onTimeUpdate={(cur, dur) => {
+          setCurrentTime(cur);
+          if (dur > 0) setDuration(dur);
+        }}
+        onEnded={handleNextTrack}
+        onPlayStateChange={(playing) => setIsPlaying(playing)}
       />
     </div>
   );

@@ -54,16 +54,17 @@ export const PublicArtistPage: React.FC<PublicArtistPageProps> = ({
   const [activeDiscographyTab, setActiveDiscographyTab] = useState<'all' | 'albums' | 'singles'>('all');
 
   const artistTracks = tracks.filter(
-    (t) => t.artistId === artist.id || t.artist.toLowerCase() === artist.name.toLowerCase()
+    (t) => t && (t.artistId === artist.id || (t.artist || '').toLowerCase() === (artist.name || '').toLowerCase())
   );
 
   const albumsMap = new Map<string, { album: string; coverUrl: string; year: string; count: number; tracks: Track[] }>();
   artistTracks.forEach((t) => {
-    const existing = albumsMap.get(t.album);
+    const albName = t.album || `${t.title || 'Single'} - Single`;
+    const existing = albumsMap.get(albName);
     if (!existing) {
-      albumsMap.set(t.album, {
-        album: t.album,
-        coverUrl: t.coverUrl,
+      albumsMap.set(albName, {
+        album: albName,
+        coverUrl: t.coverUrl || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600',
         year: t.releaseDate ? t.releaseDate.split('-')[0] : '2026',
         count: 1,
         tracks: [t],

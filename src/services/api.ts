@@ -5,8 +5,11 @@
 
 import { Track, Playlist, ArtistProfile } from '../types/music';
 
-// In production, API is served under /phpbackend/api
-const API_BASE = '/phpbackend/api';
+// In production on flontmie.ticketplaster.com, use relative /phpbackend/api.
+// In dev or preview environments, connect directly to the live backend with full CORS support.
+const API_BASE = typeof window !== 'undefined' && window.location.hostname !== 'flontmie.ticketplaster.com'
+  ? 'https://flontmie.ticketplaster.com/phpbackend/api'
+  : '/phpbackend/api';
 
 class ApiService {
   private token: string | null = null;
@@ -76,6 +79,7 @@ class ApiService {
           genre: t.genre,
           coverUrl: t.cover_art_url,
           audioUrl: t.audio_url,
+          videoId: t.video_id || t.videoId || (t.id && t.id.startsWith('yt_') ? t.id.replace('yt_', '') : undefined),
           streams: Number(t.stream_count) || 0,
           likes: Number(t.likes_count) || 0,
           releaseDate: t.release_date || new Date().toISOString().split('T')[0],
@@ -404,6 +408,89 @@ class ApiService {
       method: 'POST',
       body: JSON.stringify(trackData)
     });
+  }
+
+  public async getYouTubeMusicArtist(browseId: string, name?: string) {
+    const params = new URLSearchParams();
+    if (browseId) params.append('browseId', browseId);
+    if (name) params.append('name', name);
+    return this.request<{
+      status: string;
+      artist: {
+        name: string;
+        subscribers: string;
+        description: string;
+        avatar_url: string;
+      };
+      top_songs: Array<{
+        id: string;
+        videoId?: string;
+        title: string;
+        artist: string;
+        cover_url: string;
+        duration: number;
+        plays: string;
+      }>;
+      albums: Array<{
+        id: string;
+        browseId: string;
+        title: string;
+        artist: string;
+        year: string;
+        cover_url: string;
+      }>;
+      singles: Array<{
+        id: string;
+        browseId: string;
+        title: string;
+        artist: string;
+        year: string;
+        cover_url: string;
+      }>;
+    }>(`/youtube_music.php?action=artist&${params.toString()}`);
+  }
+
+  public async getYouTubeMusicAlbum(browseId: string) {
+    return this.request<{
+      status: string;
+      album: {
+        id: string;
+        title: string;
+        artist: string;
+        year: string;
+        cover_url: string;
+        tracks: Array<{
+          id: string;
+          videoId?: string;
+          title: string;
+          artist: string;
+          duration_text?: string;
+          duration: number;
+          cover_url: string;
+        }>;
+      };
+    }>(`/youtube_music.php?action=album&browseId=${encodeURIComponent(browseId)}`);
+  }
+
+  public async getYouTubeMusicPlaylist(browseId: string) {
+    return this.request<{
+      status: string;
+      playlist: {
+        id: string;
+        title: string;
+        curator: string;
+        description: string;
+        cover_url: string;
+        tracks: Array<{
+          id: string;
+          videoId?: string;
+          title: string;
+          artist: string;
+          cover_url: string;
+          duration: number;
+        }>;
+      };
+    }>(`/youtube_music.php?action=playlist&browseId=${encodeURIComponent(browseId)}`);
   }
 
   // Fallback public music search
