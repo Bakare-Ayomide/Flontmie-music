@@ -290,7 +290,7 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
                 {liveSearchResults.artists.slice(0, 8).map((art, i) => (
                   <button
                     key={art.browseId || art.name || i}
-                    onClick={() => onSelectArtist(art.name || art.browseId)}
+                    onClick={() => onSelectArtist?.(art.name || art.browseId)}
                     className="flex items-center gap-2.5 px-3 py-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] transition-colors shrink-0 cursor-pointer"
                   >
                     <img

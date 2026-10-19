@@ -248,7 +248,7 @@ export const DistributorDashboard: React.FC<DistributorDashboardProps> = ({
         upc: releaseUpc,
         genre: releaseGenre,
         releaseDate: releaseDate,
-        flontmieStatus: status === 'live' ? 'Live' : status === 'under_review' ? 'Ingestion QA' : 'Metadata Processing',
+        flontmieStatus: status === 'live' ? 'Live on Flontmie' : status === 'under_review' ? 'Ingestion QA' : 'Metadata Processing',
         grantedUploadAccess: true,
         uploadedByDistributor: distributorName,
         audioQuality: 'Lossless Hi-Res',

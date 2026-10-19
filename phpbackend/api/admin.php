@@ -44,6 +44,13 @@ function getOverviewData(PDO $pdo): array {
         LIMIT 15
     ")->fetchAll();
 
+    try {
+        require_once __DIR__ . '/../media_matcher.php';
+        $mediaCounts = MediaMatcher::getDatabaseCounts($pdo);
+    } catch (Throwable $e) {
+        $mediaCounts = ['total_scanned' => 0, 'matched' => 0, 'ambiguous' => 0, 'unmatched' => 0, 'unsupported' => 0, 'error' => 0, 'video_files' => 0];
+    }
+
     return [
         'total_users' => $totalUsers,
         'active_users' => $activeUsers,
@@ -58,7 +65,8 @@ function getOverviewData(PDO $pdo): array {
         'pending_claims' => $pendingClaims,
         'open_reports' => $openReports,
         'active_sessions' => $activeSessions,
-        'recent_activity' => $recentActivity
+        'recent_activity' => $recentActivity,
+        'media_counts' => $mediaCounts
     ];
 }
 

@@ -264,6 +264,11 @@ try {
     ");
     $results[] = "Tables `import_jobs` and `import_schedules` created or verified.";
 
+    // 4d. Media Scanner & Matching Tables
+    require_once __DIR__ . '/media_matcher.php';
+    MediaMatcher::ensureTables($pdo);
+    $results[] = "Tables `media_scan_runs` and `media_scan_files` created or verified.";
+
     // 5. Playlists Table
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS playlists (

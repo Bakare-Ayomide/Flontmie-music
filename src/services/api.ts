@@ -1237,6 +1237,110 @@ class ApiService {
   public async importPublicTrack(trackData: any) {
     return this.importYouTubeMusicTrack(trackData);
   }
+
+  // --- AUTOMATIC MEDIA-TO-METADATA SCANNER & MATCHER ---
+  public async getMediaScannerStatus() {
+    return this.request<{
+      status: string;
+      counts: {
+        total_scanned: number;
+        matched: number;
+        ambiguous: number;
+        unmatched: number;
+        unsupported: number;
+        error: number;
+        video_files: number;
+      };
+      run: any;
+      scan_directories: string[];
+      supported_audio: string[];
+      supported_video: string[];
+      high_conf_threshold: number;
+      ambiguous_threshold: number;
+    }>('/media_scanner.php?action=status');
+  }
+
+  public async getMediaScannerFiles(params: {
+    status?: string;
+    media_type?: string;
+    q?: string;
+    page?: number;
+    limit?: number;
+  } = {}) {
+    const sp = new URLSearchParams();
+    if (params.status) sp.set('status', params.status);
+    if (params.media_type) sp.set('media_type', params.media_type);
+    if (params.q) sp.set('q', params.q);
+    if (params.page) sp.set('page', String(params.page));
+    if (params.limit) sp.set('limit', String(params.limit));
+
+    return this.request<{
+      status: string;
+      files: any[];
+      total: number;
+      page: number;
+      limit: number;
+      total_pages: number;
+    }>(`/media_scanner.php?action=files&${sp.toString()}`);
+  }
+
+  public async startMediaScanNow(batchSize: number = 25) {
+    return this.request<{
+      status: string;
+      message: string;
+      batch: any;
+    }>(`/media_scanner.php?action=scan_now&batch_size=${batchSize}`, {
+      method: 'POST'
+    });
+  }
+
+  public async resumeMediaScan(batchSize: number = 25) {
+    return this.request<{
+      status: string;
+      message: string;
+      batch: any;
+    }>(`/media_scanner.php?action=resume_scan&batch_size=${batchSize}`, {
+      method: 'POST'
+    });
+  }
+
+  public async runMediaScanBatch(batchSize: number = 25) {
+    return this.request<{
+      status: string;
+      batch: any;
+    }>(`/media_scanner.php?action=scan_batch&batch_size=${batchSize}`, {
+      method: 'POST'
+    });
+  }
+
+  public async manualLinkMediaFile(fileId: string, trackId: string) {
+    return this.request<{
+      status: string;
+      message: string;
+      track: any;
+      file: any;
+    }>('/media_scanner.php?action=manual_link', {
+      method: 'POST',
+      body: JSON.stringify({ file_id: fileId, track_id: trackId })
+    });
+  }
+
+  public async unlinkMediaFile(fileId: string) {
+    return this.request<{
+      status: string;
+      message: string;
+    }>('/media_scanner.php?action=unlink', {
+      method: 'POST',
+      body: JSON.stringify({ file_id: fileId })
+    });
+  }
+
+  public async searchCatalogForMediaMatch(q: string) {
+    return this.request<{
+      status: string;
+      tracks: any[];
+    }>(`/media_scanner.php?action=catalog_search&q=${encodeURIComponent(q)}`);
+  }
 }
 
 export const api = new ApiService();

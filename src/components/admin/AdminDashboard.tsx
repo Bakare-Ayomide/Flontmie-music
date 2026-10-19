@@ -41,7 +41,8 @@ import {
   Filter,
   Sparkles,
   RotateCcw,
-  Ban
+  Ban,
+  FolderSearch
 } from 'lucide-react';
 import { 
   Track, 
@@ -50,6 +51,7 @@ import {
 } from '../../types/music';
 import { api } from '../../services/api';
 import { AuthUser } from '../auth/AuthModal';
+import { MediaScannerAdmin } from './MediaScannerAdmin';
 
 interface AdminDashboardProps {
   currentUser?: AuthUser | null;
@@ -67,6 +69,7 @@ interface AdminDashboardProps {
 
 type AdminSection =
   | 'overview'
+  | 'media_scanner'
   | 'ytmusic_import'
   | 'catalog'
   | 'users'
@@ -728,6 +731,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const navItems: { id: AdminSection; label: string; icon: React.ReactNode; badge?: number }[] = [
     { id: 'overview', label: 'Overview', icon: <Activity className="w-4 h-4" /> },
+    { id: 'media_scanner', label: 'Media Matching', icon: <FolderSearch className="w-4 h-4 text-indigo-400" />, badge: stats?.media_counts?.ambiguous || undefined },
     { id: 'ytmusic_import', label: 'Ingestion & Discovery', icon: <Download className="w-4 h-4" />, badge: dbImportJobs.length },
     { id: 'catalog', label: 'Music Releases', icon: <Music className="w-4 h-4" />, badge: stats?.total_tracks ?? dbTracks.length },
     { id: 'users', label: 'Users', icon: <Users className="w-4 h-4" />, badge: stats?.total_users },
@@ -932,6 +936,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   </button>
                 </div>
 
+                <div className="p-3.5 rounded-xl bg-indigo-950/20 border border-indigo-500/20 flex items-center justify-between">
+                  <div>
+                    <p className="font-semibold text-white flex items-center gap-1.5">
+                      <FolderSearch className="w-4 h-4 text-indigo-400" />
+                      Media-to-Metadata Auto Matcher
+                    </p>
+                    <p className="text-[11px] text-neutral-400">
+                      {stats?.media_counts?.matched ?? 0} files matched · {stats?.media_counts?.ambiguous ?? 0} ambiguous review pending
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setActiveSection('media_scanner')}
+                    className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold transition"
+                  >
+                    Open Matcher
+                  </button>
+                </div>
+
                 <div className="p-3.5 rounded-xl bg-white/[0.02] border border-white/[0.05] flex items-center justify-between">
                   <div>
                     <p className="font-semibold text-white">Active Authenticated Sessions</p>
@@ -948,6 +970,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* SECTION: MEDIA MATCHING */}
+      {activeSection === 'media_scanner' && (
+        <MediaScannerAdmin />
       )}
 
       {/* SECTION 2: USERS */}
