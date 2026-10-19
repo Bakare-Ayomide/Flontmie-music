@@ -68,7 +68,7 @@ export const DistributorDashboard: React.FC<DistributorDashboardProps> = ({
   const [items, setItems] = useState<DistributorIngestionItem[]>(ingestions);
 
   // Selected distributor identity
-  const [distributorName, setDistributorName] = useState<string>('TuneCore Direct on Flontmie');
+  const [distributorName, setDistributorName] = useState<string>('TuneCore Direct');
 
   // --- ARTIST MANAGEMENT STATE ---
   const [isCreateArtistModalOpen, setIsCreateArtistModalOpen] = useState(false);
@@ -248,7 +248,7 @@ export const DistributorDashboard: React.FC<DistributorDashboardProps> = ({
         upc: releaseUpc,
         genre: releaseGenre,
         releaseDate: releaseDate,
-        flontmieStatus: status === 'live' ? 'Live on Flontmie' : status === 'under_review' ? 'Ingestion QA' : 'Metadata Processing',
+        flontmieStatus: status === 'live' ? 'Live' : status === 'under_review' ? 'Ingestion QA' : 'Metadata Processing',
         grantedUploadAccess: true,
         uploadedByDistributor: distributorName,
         audioQuality: 'Lossless Hi-Res',
@@ -291,7 +291,7 @@ export const DistributorDashboard: React.FC<DistributorDashboardProps> = ({
       name: newArtistName.trim(),
       avatarUrl: newArtistAvatar || IMAGES.synthwave,
       headerUrl: newArtistBanner || IMAGES.synthwave,
-      bio: newArtistBio.trim() || `${newArtistName.trim()} is an official recording artist on the Flontmie music platform.`,
+      bio: newArtistBio.trim() || `${newArtistName.trim()} is an official recording artist.`,
       verified: true,
       monthlyListeners: 84000,
       totalStreams: 120000,
@@ -312,7 +312,7 @@ export const DistributorDashboard: React.FC<DistributorDashboardProps> = ({
     };
 
     onCreateArtistProfile(newProfile);
-    setArtistSuccessNotice(`Artist page for "${newArtistName}" created on Flontmie with ID ${uniqueId}!`);
+    setArtistSuccessNotice(`Artist page for "${newArtistName}" created with ID ${uniqueId}!`);
     setTimeout(() => {
       setArtistSuccessNotice(null);
       setIsCreateArtistModalOpen(false);
@@ -379,13 +379,13 @@ export const DistributorDashboard: React.FC<DistributorDashboardProps> = ({
                 Distributor Direct Gateway
               </span>
               <span aria-hidden="true" className="text-neutral-500">·</span>
-              <span className="text-xs text-neutral-400">Distributing onto Flontmie Platform</span>
+              <span className="text-xs text-neutral-400">Distributing onto Platform</span>
             </div>
             <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight mt-0.5">
               TuneCore · CD Baby · Ditto Distributor Portal
             </h1>
             <p className="text-xs text-neutral-400 mt-1 max-w-xl">
-              Create and manage artist pages, ingest albums & singles, grant upload rights, and manage live music metadata on Flontmie.
+              Create and manage artist pages, ingest albums &amp; singles, grant upload rights, and manage live music metadata.
             </p>
           </div>
         </div>
@@ -416,15 +416,15 @@ export const DistributorDashboard: React.FC<DistributorDashboardProps> = ({
           <p className="text-2xl font-bold font-mono tabular-nums text-white">
             {artistList.length} Artists
           </p>
-          <div className="text-[11px] text-purple-400 font-mono">Public pages active on Flontmie</div>
+          <div className="text-[11px] text-purple-400 font-mono">Public pages active</div>
         </div>
 
         <div className="p-5 rounded-xl bg-neutral-900/40 border border-white/[0.06] space-y-2">
-          <span className="text-xs font-medium text-neutral-400">Releases on Flontmie</span>
+          <span className="text-xs font-medium text-neutral-400">Active Releases</span>
           <p className="text-2xl font-bold font-mono tabular-nums text-white">
             {tracks.length} Tracks
           </p>
-          <div className="text-[11px] text-emerald-400 font-mono">100% Live on Flontmie App</div>
+          <div className="text-[11px] text-emerald-400 font-mono">100% Live on Platform</div>
         </div>
 
         <div className="p-5 rounded-xl bg-neutral-900/40 border border-white/[0.06] space-y-2">
@@ -473,7 +473,7 @@ export const DistributorDashboard: React.FC<DistributorDashboardProps> = ({
           }`}
         >
           <Music2 className="w-3.5 h-3.5" />
-          <span>Flontmie Live Ingestions ({items.length})</span>
+          <span>Live Ingestions ({items.length})</span>
         </button>
 
         <button
@@ -504,9 +504,9 @@ export const DistributorDashboard: React.FC<DistributorDashboardProps> = ({
         <div className="space-y-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <h2 className="text-lg font-bold text-white">Managed Artists on Flontmie</h2>
+              <h2 className="text-lg font-bold text-white">Managed Artists</h2>
               <p className="text-xs text-neutral-400">
-                Each artist profile has a unique identifier and an active public artist page on Flontmie
+                Each artist profile has a unique identifier and an active public artist page
               </p>
             </div>
 
@@ -587,7 +587,7 @@ export const DistributorDashboard: React.FC<DistributorDashboardProps> = ({
                     <button
                       onClick={() => onViewArtistPublicPage(artist.id)}
                       className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-white/[0.06] hover:bg-white/10 text-white text-xs font-semibold transition-colors"
-                      title="View public artist page on Flontmie"
+                      title="View public artist page"
                     >
                       <ExternalLink className="w-3.5 h-3.5" />
                       <span>View Public Page</span>
@@ -652,7 +652,7 @@ export const DistributorDashboard: React.FC<DistributorDashboardProps> = ({
                       <div className="flex items-center gap-2">
                         <span className="font-semibold text-sm text-white truncate">{t.title}</span>
                         <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-mono">
-                          Live on Flontmie
+                          Live
                         </span>
                       </div>
                       <p className="text-xs text-neutral-400 truncate">
@@ -711,7 +711,7 @@ export const DistributorDashboard: React.FC<DistributorDashboardProps> = ({
           <div className="border border-white/[0.08] rounded-xl overflow-hidden bg-neutral-900/30">
             <div className="p-4 border-b border-white/[0.06] flex items-center justify-between">
               <div>
-                <h3 className="text-sm font-bold text-white">Music Distributed Directly onto Flontmie</h3>
+                <h3 className="text-sm font-bold text-white">Music Distributed Directly</h3>
                 <p className="text-xs text-neutral-400">Releases ingested from TuneCore, CD Baby, and Ditto</p>
               </div>
               <span className="text-xs text-emerald-400 font-mono">Platform Stream Ready</span>
@@ -726,7 +726,7 @@ export const DistributorDashboard: React.FC<DistributorDashboardProps> = ({
                     <th className="py-3 px-4">ISRC Code</th>
                     <th className="py-3 px-4">Distributor Source</th>
                     <th className="py-3 px-4">Audio Quality</th>
-                    <th className="py-3 px-4 text-right">Flontmie Status</th>
+                    <th className="py-3 px-4 text-right">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/[0.04]">
@@ -744,7 +744,7 @@ export const DistributorDashboard: React.FC<DistributorDashboardProps> = ({
                       <td className="py-3.5 px-4 text-emerald-400 font-mono">{item.audioQuality}</td>
                       <td className="py-3.5 px-4 text-right">
                         <span className="font-semibold text-emerald-400">
-                          {item.flontmieStatus}
+                          {item.flontmieStatus ? item.flontmieStatus.replace(' on Flontmie', '') : 'Live'}
                         </span>
                       </td>
                     </tr>
@@ -764,9 +764,9 @@ export const DistributorDashboard: React.FC<DistributorDashboardProps> = ({
           <div className="border border-white/[0.08] rounded-xl overflow-hidden bg-neutral-900/30">
             <div className="p-4 border-b border-white/[0.06] flex items-center justify-between">
               <div>
-                <h3 className="text-sm font-bold text-white">Granted Upload Rights on Flontmie</h3>
+                <h3 className="text-sm font-bold text-white">Granted Upload Rights</h3>
                 <p className="text-xs text-neutral-400">
-                  Manage which artists and record labels have permission to upload songs & albums
+                  Manage which artists and record labels have permission to upload songs &amp; albums
                 </p>
               </div>
             </div>
@@ -857,14 +857,14 @@ export const DistributorDashboard: React.FC<DistributorDashboardProps> = ({
       {activeTab === 'modify' && (
         <div className="max-w-xl p-6 rounded-2xl bg-neutral-900/40 border border-white/[0.08] space-y-4">
           <div>
-            <h3 className="text-base font-bold text-white">Edit & Modify Song on Flontmie</h3>
+            <h3 className="text-base font-bold text-white">Edit &amp; Modify Song</h3>
             <p className="text-xs text-neutral-400">Update track title, genre or metadata in the live streaming app</p>
           </div>
 
           {modifySuccess && (
             <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-400 text-xs font-semibold flex items-center gap-2">
               <Check className="w-4 h-4" />
-              <span>Track metadata updated successfully on Flontmie!</span>
+              <span>Track metadata updated successfully!</span>
             </div>
           )}
 
@@ -924,7 +924,7 @@ export const DistributorDashboard: React.FC<DistributorDashboardProps> = ({
               type="submit"
               className="w-full py-2.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs transition-colors"
             >
-              Save Changes to Flontmie
+              Save Changes
             </button>
           </form>
         </div>
@@ -940,10 +940,10 @@ export const DistributorDashboard: React.FC<DistributorDashboardProps> = ({
               <div>
                 <h3 className="text-lg font-bold text-white flex items-center gap-2">
                   <Users className="w-5 h-5 text-purple-400" />
-                  <span>Create Artist Profile on Flontmie</span>
+                  <span>Create Artist Profile</span>
                 </h3>
                 <p className="text-xs text-neutral-400 mt-0.5">
-                  Generates a unique ID and a live public artist page on Flontmie
+                  Generates a unique ID and a live public artist page
                 </p>
               </div>
               <button
@@ -982,10 +982,10 @@ export const DistributorDashboard: React.FC<DistributorDashboardProps> = ({
                       onChange={(e) => setDistributorName(e.target.value)}
                       className="w-full px-3 py-2 bg-neutral-900 border border-white/10 rounded-xl text-white"
                     >
-                      <option value="TuneCore Direct on Flontmie">TuneCore Direct on Flontmie</option>
-                      <option value="CDBaby Gateway on Flontmie">CDBaby Gateway on Flontmie</option>
-                      <option value="Ditto Music Hub on Flontmie">Ditto Music Hub on Flontmie</option>
-                      <option value="DistroKid Direct on Flontmie">DistroKid Direct on Flontmie</option>
+                      <option value="TuneCore Direct">TuneCore Direct</option>
+                      <option value="CDBaby Gateway">CDBaby Gateway</option>
+                      <option value="Ditto Music Hub">Ditto Music Hub</option>
+                      <option value="DistroKid Direct">DistroKid Direct</option>
                     </select>
                   </div>
                 </div>
@@ -1098,7 +1098,7 @@ export const DistributorDashboard: React.FC<DistributorDashboardProps> = ({
                     type="submit"
                     className="w-full py-3 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs tracking-wider uppercase shadow-xl shadow-purple-600/30 transition-all hover:scale-[1.01]"
                   >
-                    Publish Artist Profile to Flontmie
+                    Publish Artist Profile
                   </button>
                 </div>
               </form>
@@ -1135,7 +1135,7 @@ export const DistributorDashboard: React.FC<DistributorDashboardProps> = ({
               <div className="p-6 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-center space-y-2">
                 <CheckCircle2 className="w-8 h-8 text-emerald-400 mx-auto" />
                 <h4 className="text-sm font-bold text-white">{releaseNotice}</h4>
-                <p className="text-xs text-neutral-400">Tracks have been registered in the Flontmie catalog.</p>
+                <p className="text-xs text-neutral-400">Tracks have been registered successfully.</p>
               </div>
             ) : (
               <div className="space-y-5 text-xs">
@@ -1391,7 +1391,7 @@ export const DistributorDashboard: React.FC<DistributorDashboardProps> = ({
                     onClick={() => handleSubmitRelease('live')}
                     className="w-full sm:flex-1 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-lg shadow-purple-600/30 tracking-wide"
                   >
-                    Publish Directly to Flontmie Live
+                    Publish Directly to Live Platform
                   </button>
                 </div>
               </div>
@@ -1411,7 +1411,7 @@ export const DistributorDashboard: React.FC<DistributorDashboardProps> = ({
               <h3 className="text-base font-bold text-white">Safeguarded Release Deletion</h3>
             </div>
             <p className="text-xs text-neutral-300 leading-relaxed">
-              Are you sure you want to remove <strong className="text-white">"{itemToDelete.title}"</strong> from the Flontmie catalog? This will delete the playback availability for listeners and take down associated audio streams.
+              Are you sure you want to remove <strong className="text-white">"{itemToDelete.title}"</strong> from published releases? This will delete the playback availability for listeners and take down associated audio streams.
             </p>
             <div className="flex items-center justify-end gap-3 pt-3 border-t border-white/[0.08]">
               <button

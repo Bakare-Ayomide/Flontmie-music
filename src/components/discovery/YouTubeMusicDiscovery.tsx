@@ -109,8 +109,8 @@ export const YouTubeMusicDiscovery: React.FC<YouTubeMusicDiscoveryProps> = ({
         performDiscoverySearch(q);
       }
     };
-    window.addEventListener('flontmie:submit_search', handleSearchEvent);
-    return () => window.removeEventListener('flontmie:submit_search', handleSearchEvent);
+    window.addEventListener('app:submit_search', handleSearchEvent);
+    return () => window.removeEventListener('app:submit_search', handleSearchEvent);
   }, []);
 
   // Fetch initial charts if search query is empty
@@ -181,8 +181,8 @@ export const YouTubeMusicDiscovery: React.FC<YouTubeMusicDiscoveryProps> = ({
       moods: ['all'],
       isrc: 'USFLM2026001',
       upc: '012345678901',
-      label: 'Flontmie Records',
-      distributor: 'Flontmie Direct',
+      label: 'Official',
+      distributor: 'Music',
     };
     onPlayTrack(streamableTrack);
   };
@@ -244,45 +244,11 @@ export const YouTubeMusicDiscovery: React.FC<YouTubeMusicDiscoveryProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Search Bar & Discovery Filter Controls */}
-      <div className="p-4 sm:p-5 rounded-2xl bg-neutral-900/40 border border-white/[0.08] backdrop-blur-sm space-y-3">
-        <form onSubmit={handleSearchSubmit} className="flex items-center gap-2">
-          <div className="relative flex-1">
-            <Search className="w-4 h-4 text-neutral-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-            <input
-              type="text"
-              placeholder="Search across all music, songs, artists, albums, and playlists..."
-              value={localQuery}
-              onChange={(e) => setLocalQuery(e.target.value)}
-              className="w-full pl-10 pr-24 py-2.5 bg-neutral-950/80 text-white placeholder-neutral-500 rounded-xl border border-white/10 focus:outline-none focus:border-red-500/50 text-xs sm:text-sm font-medium transition-colors"
-            />
-            {localQuery && (
-              <button
-                type="button"
-                onClick={() => {
-                  setLocalQuery('');
-                  if (onSearchChange) onSearchChange('');
-                  setSearchResults({ songs: [], artists: [], albums: [], playlists: [] });
-                }}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-neutral-400 hover:text-white px-2 py-0.5 rounded transition-colors"
-              >
-                Clear
-              </button>
-            )}
-          </div>
-
-          <button
-            type="submit"
-            disabled={!localQuery.trim() || isSearching}
-            className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white font-bold text-xs uppercase tracking-wider transition-all flex items-center gap-1.5 shrink-0 shadow-lg shadow-red-600/20 cursor-pointer"
-          >
-            {isSearching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
-            <span className="hidden sm:inline">Search</span>
-          </button>
-        </form>
+      {/* Category & Segmented Filter Bar */}
+      <div className="p-3 sm:p-4 rounded-2xl bg-neutral-900/40 border border-white/[0.08] backdrop-blur-sm">
 
         {/* Category & Segmented Filters */}
-        <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-white/[0.05]">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-1">
             {[
               { id: 'all', label: 'All Results' },

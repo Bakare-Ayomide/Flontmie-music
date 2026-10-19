@@ -84,7 +84,7 @@ export const QueueDrawer: React.FC<QueueDrawerProps> = ({
       )}
 
       {/* Up Next List */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-1">
+      <div className="flex-1 overflow-y-auto no-scrollbar p-3 space-y-1">
         <span className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider px-2 block my-2">
           Up Next
         </span>

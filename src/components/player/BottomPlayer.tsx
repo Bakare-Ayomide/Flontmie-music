@@ -294,7 +294,7 @@ export const BottomPlayer: React.FC<BottomPlayerProps> = ({
         </div>
 
         {/* Right / Mobile Compact Controls */}
-        <div className="flex items-center justify-end gap-1.5 md:gap-2 md:w-1/4 md:min-w-[200px] shrink-0">
+        <div className="flex items-center justify-end gap-1.5 md:gap-2 md:w-1/4 md:min-w-[200px] shrink-0 overflow-x-auto no-scrollbar">
           {/* Mobile Play / Next Controls */}
           <div className="flex md:hidden items-center gap-1.5">
             <button
@@ -321,7 +321,7 @@ export const BottomPlayer: React.FC<BottomPlayerProps> = ({
             </button>
           </div>
 
-          {/* Song / Video Switcher (YT Music Signature Feature!) */}
+          {/* Audio / Video Switcher */}
           <button
             onClick={onToggleVideoMode}
             className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-all ${

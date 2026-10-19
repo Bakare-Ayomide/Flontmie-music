@@ -560,7 +560,7 @@ export default function App() {
       isrc: newTrack.isrc || 'US-FLN-26-99999',
       upc: newTrack.upc || '840192837999',
       label: newTrack.label || 'Astral Horizon Records',
-      distributor: newTrack.distributor || 'TuneCore Direct on Flontmie',
+      distributor: newTrack.distributor || 'TuneCore Direct',
       status: 'active',
       featuredOnHome: true,
       lyrics: [
@@ -579,7 +579,7 @@ export default function App() {
       title: newSong.title || 'Untitled Master',
       artist: newSong.artist || 'Unknown Artist',
       artistId: newSong.artistId || 'artist-unknown',
-      album: newSong.album || 'Flontmie Single',
+      album: newSong.album || 'Single',
       coverUrl: newSong.coverUrl || IMAGES.partymix,
       duration: newSong.duration || 210,
       genre: (newSong.genre as any) || 'afrobeat',
@@ -592,7 +592,7 @@ export default function App() {
       isrc: newSong.isrc || `US-FLN-26-${Math.floor(10000 + Math.random() * 90000)}`,
       upc: newSong.upc || `840192837${Math.floor(100 + Math.random() * 900)}`,
       label: newSong.label || 'Independent Label',
-      distributor: newSong.distributor || 'TuneCore Direct on Flontmie',
+      distributor: newSong.distributor || 'TuneCore Direct',
       status: newSong.status || 'active',
       featuredOnHome: true,
     };
@@ -637,7 +637,7 @@ export default function App() {
           monthlyListeners: null,
           totalStreams: null,
           followers: null,
-          label: 'Official Catalog',
+          label: 'Official',
           topTracks: [],
           primaryGenre: 'Music',
           country: 'US',
@@ -727,7 +727,12 @@ export default function App() {
         selectedMood={selectedMood}
         onSelectMood={setSelectedMood}
         searchQuery={searchQuery}
-        onSearchChange={setSearchQuery}
+        onSearchChange={(q) => {
+          setSearchQuery(q);
+          if (q.trim().length >= 2 && currentTab !== 'home' && currentTab !== 'explore') {
+            navigateTab('home');
+          }
+        }}
         onOpenJamModal={() => setIsJamModalOpen(true)}
         isJamActive={isJamActive}
         jamParticipantCount={jamParticipants.length}
@@ -788,7 +793,7 @@ export default function App() {
                   <span className="text-[11px] font-bold uppercase tracking-wider text-amber-400">Protected Route · /admin</span>
                   <h2 className="text-xl font-extrabold text-white">Administrator Authentication Required</h2>
                   <p className="text-xs text-neutral-400">
-                    Sign in with an authorized Flontmie administrator account to access platform governance.
+                    Sign in with an authorized administrator account to access platform governance.
                   </p>
                 </div>
                 <div className="flex flex-col gap-2.5 pt-2">
@@ -805,7 +810,7 @@ export default function App() {
                     onClick={() => navigateTab('home')}
                     className="w-full py-2.5 rounded-xl bg-white/[0.06] hover:bg-white/10 text-neutral-300 text-xs font-semibold transition-all cursor-pointer"
                   >
-                    Return to Flontmie Streaming
+                    Return to Streaming Home
                   </button>
                 </div>
               </div>
@@ -908,7 +913,7 @@ export default function App() {
               ) : isLoadingPlaylist ? (
                 <div className="py-24 text-center space-y-4">
                   <div className="w-10 h-10 border-2 border-red-500 border-t-transparent rounded-full animate-spin mx-auto" />
-                  <p className="text-xs text-neutral-400">Loading collection from Flontmie...</p>
+                  <p className="text-xs text-neutral-400">Loading collection...</p>
                 </div>
               ) : selectedPlaylistId ? (
                 <div className="py-20 text-center space-y-4">
@@ -932,15 +937,15 @@ export default function App() {
                   <div className="border-b border-white/[0.08] pb-5">
                     <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-red-500 mb-1">
                       <Compass className="w-4 h-4" />
-                      <span>Flontmie Music Discovery & Charts</span>
+                      <span>Music Discovery &amp; Charts</span>
                     </div>
                     <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">Explore</h1>
                     <p className="text-xs sm:text-sm text-neutral-400 mt-1">
-                      Browse and stream songs, albums, verified artists, and editorial playlists hosted on Flontmie
+                      Browse and stream songs, albums, verified artists, and editorial playlists
                     </p>
                   </div>
 
-                  {/* Flontmie Database-Driven Catalog Explorer */}
+                  {/* Database-Driven Explorer */}
                   <YouTubeMusicDiscovery
                     tracks={tracks}
                     albums={albums}
@@ -948,6 +953,8 @@ export default function App() {
                     playlists={playlists}
                     currentTrackId={currentTrack?.id}
                     isPlaying={isPlaying}
+                    searchQuery={searchQuery}
+                    onSearchChange={setSearchQuery}
                     onPlayTrack={handlePlayTrack}
                     onSelectArtist={handleViewArtist}
                     onSelectPlaylist={navigatePlaylist}
@@ -1059,7 +1066,7 @@ export default function App() {
                                     {pl.title || 'Curated Playlist'}
                                   </p>
                                   <p className="text-[11px] text-neutral-400 truncate">
-                                    {pl.curator || 'Flontmie Editorial'} · {trackCount} songs
+                                    {pl.curator || 'Editorial'} · {trackCount} songs
                                   </p>
                                 </div>
                               </div>
@@ -1108,7 +1115,7 @@ export default function App() {
                       <Heart className="w-8 h-8 sm:w-10 sm:h-10 text-white fill-white" />
                     </div>
                     <div>
-                      <span className="text-[11px] font-semibold text-red-400 uppercase tracking-wider">Flontmie Collection</span>
+                      <span className="text-[11px] font-semibold text-red-400 uppercase tracking-wider">Favorites</span>
                       <h1 className="text-xl sm:text-2xl md:text-3xl font-extrabold text-white mt-0.5">Liked Songs</h1>
                       <p className="text-xs text-neutral-400 mt-1 font-mono tabular-nums">{likedTrackIds.length} tracks saved</p>
                     </div>

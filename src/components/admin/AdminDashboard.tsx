@@ -503,7 +503,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       if (res && res.track && onTrackImported) {
         onTrackImported(res.track);
       }
-      showNotice(res.message || `Imported "${song.title}" to Flontmie server storage & MySQL.`);
+      showNotice(res.message || `Imported "${song.title}" to server storage.`);
       fetchAdminData();
     } catch (err: any) {
       setError(err?.message || 'Import failed.');
@@ -530,7 +530,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     const items = Object.values(selectedYtMap);
     if (items.length === 0) return;
     setIsBulkImporting(true);
-    setImportProgressMsg(`Running bulk import pipeline for ${items.length} selected songs (acquiring audio, artwork & syncing MySQL)...`);
+    setImportProgressMsg(`Running bulk import pipeline for ${items.length} selected songs (acquiring audio & artwork)...`);
     try {
       const res = await api.bulkImportYouTubeMusicTracks({
         items,
@@ -674,10 +674,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const handleSyncAllServerStorage = async () => {
     setIsSyncingStorage(true);
-    setImportProgressMsg('Verifying and synchronizing local server audio & artwork files for all catalog tracks...');
+    setImportProgressMsg('Verifying and synchronizing local server audio & artwork files...');
     try {
       const res = await api.syncAllStorage();
-      showNotice(res.message || 'All catalog files synchronized.');
+      showNotice(res.message || 'All media files synchronized.');
       fetchAdminData();
     } catch (err: any) {
       setError(err?.message || 'Storage sync failed.');
@@ -693,7 +693,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setIsUploadingFile(true);
     try {
       const res = await api.uploadMediaFile(file, uploadMediaType, uploadTargetTrackId || undefined);
-      showNotice(res.message || `Uploaded ${uploadMediaType} file (${Math.round((res.size || 0) / 1024)} KB) and synced with catalog.`);
+      showNotice(res.message || `Uploaded ${uploadMediaType} file (${Math.round((res.size || 0) / 1024)} KB) and synced.`);
       fetchAdminData();
     } catch (err: any) {
       setError(err?.message || 'Media upload failed.');
@@ -760,7 +760,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </span>
             </div>
             <h1 className="text-xl md:text-2xl font-extrabold text-white tracking-tight mt-0.5">
-              Flontmie Master Administrator Dashboard
+              Master Administrator Dashboard
             </h1>
             <p className="text-xs text-neutral-400 mt-0.5">
               Role-based governance connected to live backend APIs and secure database
@@ -2127,7 +2127,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <span>Authorized Master Audio & Artwork File Manager Upload</span>
                 </h3>
                 <p className="text-xs text-neutral-400 mt-0.5">
-                  Upload authorized audio files (.mp3, .m4a, .wav, .flac) or artwork (.jpg, .png, .webp) directly into Flontmie's protected server storage and sync with catalog metadata.
+                  Upload authorized audio files (.mp3, .m4a, .wav, .flac) or artwork (.jpg, .png, .webp) directly into protected server storage and sync with releases.
                 </p>
               </div>
 
@@ -2612,7 +2612,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
           {/* Top Popular Songs */}
           <div className="p-5 rounded-2xl bg-neutral-900/40 border border-white/[0.08] space-y-4">
-            <h3 className="text-sm font-bold text-white">Most Streamed Songs on Flontmie</h3>
+            <h3 className="text-sm font-bold text-white">Most Streamed Songs</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
               {(dbAnalytics?.top_tracks || dbTracks.slice(0, 8)).map((t: any, i: number) => (
                 <div key={t.id} className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.05] flex items-center justify-between">
@@ -2727,7 +2727,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <label className="block font-semibold text-neutral-300 mb-1">Platform Display Name</label>
               <input
                 type="text"
-                value={dbSettings.platform_name ?? 'Flontmie Music Streaming & Industry Hub'}
+                value={dbSettings.platform_name ?? 'SoundPulse Music Streaming & Industry Hub'}
                 onChange={(e) => setDbSettings({ ...dbSettings, platform_name: e.target.value })}
                 className="w-full px-3 py-2 rounded-xl bg-neutral-950 border border-white/10 text-white"
               />

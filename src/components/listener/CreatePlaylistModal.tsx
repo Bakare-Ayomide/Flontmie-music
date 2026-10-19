@@ -28,7 +28,7 @@ export const CreatePlaylistModal: React.FC<CreatePlaylistModalProps> = ({
 
     onCreate({
       title: title.trim(),
-      description: description.trim() || 'Curated community playlist on Flontmie.',
+      description: description.trim() || 'Curated community playlist.',
       coverUrl: IMAGES[coverType] || IMAGES.synthwave,
       curator: 'You',
       isPublic: true,

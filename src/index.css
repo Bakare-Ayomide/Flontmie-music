@@ -9,25 +9,30 @@
 }
 
 /* Hide all scrollbars globally across player actions, search, dropdowns, and all elements */
-* {
+html, body, * {
   scrollbar-width: none !important;
   -ms-overflow-style: none !important;
 }
 
 *::-webkit-scrollbar,
-::-webkit-scrollbar {
+::-webkit-scrollbar,
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
   display: none !important;
   width: 0px !important;
   height: 0px !important;
   background: transparent !important;
 }
 
-.no-scrollbar {
+.no-scrollbar,
+.scrollbar-none {
   scrollbar-width: none !important;
   -ms-overflow-style: none !important;
+  -webkit-overflow-scrolling: touch;
 }
 
-.no-scrollbar::-webkit-scrollbar {
+.no-scrollbar::-webkit-scrollbar,
+.scrollbar-none::-webkit-scrollbar {
   display: none !important;
   width: 0px !important;
   height: 0px !important;

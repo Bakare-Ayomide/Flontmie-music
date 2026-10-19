@@ -53,27 +53,27 @@ export const Navbar: React.FC<NavbarProps> = ({
   const personaLabels: Record<Persona, { title: string; subtitle: string; badge: string }> = {
     listener: {
       title: 'Listener',
-      subtitle: 'Flontmie Streaming',
+      subtitle: 'Music Streaming',
       badge: 'Stream',
     },
     artist: {
       title: 'Artist Studio',
-      subtitle: 'Nova Waves Dashboard',
+      subtitle: 'Creator Dashboard',
       badge: 'Creator',
     },
     label: {
       title: 'Record Label Hub',
-      subtitle: 'Astral Horizon Records',
+      subtitle: 'Label & Roster',
       badge: 'A&R',
     },
     distributor: {
       title: 'Distributor Portal',
-      subtitle: 'TuneCore & CDBaby Ingest to Flontmie',
+      subtitle: 'Release Management',
       badge: 'Ingest',
     },
     admin: {
       title: 'Owner Admin',
-      subtitle: 'Flontmie Master Governance Console',
+      subtitle: 'Governance Console',
       badge: 'Owner',
     },
   };
@@ -140,7 +140,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     setShowSuggestions(false);
     onSearchChange(q);
     try {
-      window.dispatchEvent(new CustomEvent('flontmie:submit_search', { detail: q }));
+      window.dispatchEvent(new CustomEvent('app:submit_search', { detail: q }));
     } catch {}
   };
 
@@ -213,7 +213,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
             {/* Live Search Suggestions Dropdown while typing */}
             {showSuggestions && suggestions.length > 0 && (
-              <div className="absolute top-full left-0 right-0 mt-2 bg-[#121216] border border-white/15 rounded-2xl shadow-2xl overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-100 max-h-96 overflow-y-auto divide-y divide-white/[0.05]">
+              <div className="absolute top-full left-0 right-0 mt-2 bg-[#121216] border border-white/15 rounded-2xl shadow-2xl overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-100 max-h-96 overflow-y-auto no-scrollbar divide-y divide-white/[0.05]">
                 <div className="p-2 space-y-1">
                   {suggestions.map((item, idx) => (
                     <button
@@ -320,8 +320,8 @@ export const Navbar: React.FC<NavbarProps> = ({
               />
               <div className="absolute right-0 mt-2 w-72 rounded-xl bg-[#121212] border border-white/10 shadow-2xl p-1.5 z-50 animate-in fade-in zoom-in-95 duration-100">
                 <div className="px-3 py-2 border-b border-white/[0.06] mb-1">
-                  <p className="text-[11px] font-medium text-neutral-400 uppercase tracking-wider">Flontmie Portals</p>
-                  <p className="text-xs text-neutral-200">Switch creator or industry workspace</p>
+                  <p className="text-[11px] font-medium text-neutral-400 uppercase tracking-wider">Portals</p>
+                  <p className="text-xs text-neutral-200">Switch workspace</p>
                 </div>
                 {(['listener', 'artist', 'label', 'distributor'] as Persona[]).map((p) => {
                   const item = personaLabels[p];
@@ -378,7 +378,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           <button
             onClick={onOpenAuth}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-red-600 hover:bg-red-500 text-white text-xs font-bold shadow-md shadow-red-600/30 transition-all cursor-pointer"
-            title="Log In / Join Flontmie"
+            title="Sign In"
           >
             <LogIn className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Sign In</span>

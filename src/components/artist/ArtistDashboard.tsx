@@ -97,7 +97,7 @@ export const ArtistDashboard: React.FC<ArtistDashboardProps> = ({
       isrc: `US-FLN-26-${Math.floor(10000 + Math.random() * 90000)}`,
       upc: `840192837${Math.floor(100 + Math.random() * 900)}`,
       label: artistProfile.label,
-      distributor: 'TuneCore Direct on Flontmie',
+      distributor: 'TuneCore Direct',
     };
 
     onAddNewTrack(trackObj);
@@ -516,7 +516,7 @@ export const ArtistDashboard: React.FC<ArtistDashboardProps> = ({
                   <Check className="w-6 h-6" />
                 </div>
                 <h4 className="text-base font-bold text-white">Track Registered & Live!</h4>
-                <p className="text-xs text-neutral-400">Added to Flontmie streaming and published directly.</p>
+                <p className="text-xs text-neutral-400">Added to streaming and published directly.</p>
               </div>
             ) : (
               <form onSubmit={handleCreateRelease} className="space-y-4 text-xs">

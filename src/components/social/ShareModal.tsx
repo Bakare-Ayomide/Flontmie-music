@@ -21,13 +21,11 @@ export const ShareModal: React.FC<ShareModalProps> = ({
 
   if (!isOpen) return null;
 
-  const title = track ? track.title : playlist ? playlist.title : 'Flontmie Stream';
+  const title = track ? track.title : playlist ? playlist.title : 'Music Stream';
   const subtitle = track ? `by ${track.artist}` : playlist ? `Curated by ${playlist.curator}` : 'High-fidelity music streaming';
-  const shareUrl = track
-    ? `https://flontmie.com/track/${track.id}`
-    : playlist
-    ? `https://flontmie.com/playlist/${playlist.id}`
-    : window.location.href;
+  const shareUrl = typeof window !== 'undefined'
+    ? `${window.location.origin}${track ? `?track=${track.id}` : playlist ? `/playlist/${playlist.id}` : ''}`
+    : 'https://soundpulse.app';
 
   const embedSnippet = `<iframe src="${shareUrl}?embed=true" width="100%" height="152" frameborder="0" allow="autoplay; clipboard-write; encrypted-media"></iframe>`;
 
@@ -44,12 +42,12 @@ export const ShareModal: React.FC<ShareModalProps> = ({
   };
 
   const handleShareTwitter = () => {
-    const text = `Listening to "${title}" on Flontmie! 🎧 Check it out:`;
+    const text = `Listening to "${title}"! 🎧 Check it out:`;
     window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(shareUrl)}`, '_blank');
   };
 
   const handleShareWhatsApp = () => {
-    const text = `Check out "${title}" on Flontmie: ${shareUrl}`;
+    const text = `Check out "${title}": ${shareUrl}`;
     window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`, '_blank');
   };
 

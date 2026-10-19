@@ -331,11 +331,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             </div>
             <div>
               <h2 className="text-lg font-black tracking-wider text-white uppercase font-sans">
-                FLONTMIE
+                SOUNDPULSE
               </h2>
               <p className="text-[11px] text-neutral-400 font-medium">
                 {view === 'login' && 'Sign in to your account'}
-                {view === 'signup' && 'Create a new Flontmie account'}
+                {view === 'signup' && 'Create a new account'}
                 {view === 'verify_email' && 'Verify your email address'}
                 {view === 'forgot_password' && 'Recover your account password'}
                 {view === 'reset_password' && 'Enter reset code & new password'}
@@ -510,7 +510,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   </>
                 ) : (
                   <>
-                    <span>Sign In to Flontmie</span>
+                    <span>Sign In</span>
                     <ArrowRight className="w-4 h-4" />
                   </>
                 )}
@@ -613,7 +613,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   {[
                     { id: 'listener', label: 'Music Listener', desc: 'Stream, discover, curate', icon: <Headphones className="w-3.5 h-3.5 text-emerald-400" /> },
                     { id: 'artist', label: 'Artist / Creator', desc: 'Upload songs, manage profile', icon: <Mic2 className="w-3.5 h-3.5 text-red-400" /> },
-                    { id: 'label', label: 'Record Label', desc: 'Manage artist roster & catalog', icon: <Building2 className="w-3.5 h-3.5 text-blue-400" /> },
+                    { id: 'label', label: 'Record Label', desc: 'Manage artist roster & releases', icon: <Building2 className="w-3.5 h-3.5 text-blue-400" /> },
                     { id: 'distributor', label: 'Music Distributor', desc: 'Direct upload & ingestion', icon: <Network className="w-3.5 h-3.5 text-purple-400" /> },
                   ].map((r) => {
                     const isSelected = signupRole === r.id;
@@ -667,7 +667,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   className="mt-0.5 rounded border-white/20 bg-neutral-900 text-red-600 focus:ring-0"
                 />
                 <span>
-                  I agree to the Flontmie Terms of Service, Creator Code of Conduct, and Privacy Policy.
+                  I agree to the Terms of Service, Creator Code of Conduct, and Privacy Policy.
                 </span>
               </label>
 
@@ -752,7 +752,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           {view === 'forgot_password' && (
             <form onSubmit={handleForgotPasswordSubmit} className="space-y-4">
               <p className="text-xs text-neutral-400">
-                Enter the email address associated with your Flontmie account to receive a 6-digit password reset code.
+                Enter the email address associated with your account to receive a 6-digit password reset code.
               </p>
               <div>
                 <label className="block text-xs font-semibold text-neutral-300 mb-1">

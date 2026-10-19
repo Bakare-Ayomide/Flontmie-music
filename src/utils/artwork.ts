@@ -47,14 +47,14 @@ const VERIFIED_ARTWORK_MAP: Record<string, string> = {
 /**
  * Guaranteed SVG Data URI fallback so an <img> tag can NEVER show a broken image icon even offline
  */
-export function createSvgCoverDataUri(label: string = 'FLONTMIE', type: 'track' | 'artist' | 'album' | 'playlist' = 'track'): string {
-  const clean = (label || 'Flontmie').replace(/[^a-zA-Z0-9 &.-]/g, '').slice(0, 22) || 'Flontmie';
+export function createSvgCoverDataUri(label: string = 'MUSIC', type: 'track' | 'artist' | 'album' | 'playlist' = 'track'): string {
+  const clean = (label || 'Music').replace(/[^a-zA-Z0-9 &.-]/g, '').slice(0, 22) || 'Music';
   const initials = clean
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 2)
     .map((w) => w[0]?.toUpperCase() || '')
-    .join('') || 'FM';
+    .join('') || 'SP';
 
   const bgGrad =
     type === 'artist'
@@ -72,7 +72,7 @@ export function createSvgCoverDataUri(label: string = 'FLONTMIE', type: 'track' 
     <circle cx="200" cy="175" r="26" fill="rgba(239,68,68,0.22)" stroke="rgba(239,68,68,0.45)" stroke-width="2"/>
     <text x="200" y="185" text-anchor="middle" fill="#ffffff" font-family="system-ui, sans-serif" font-weight="800" font-size="28" letter-spacing="2">${initials}</text>
     <text x="200" y="315" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-family="system-ui, sans-serif" font-weight="700" font-size="18">${clean}</text>
-    <text x="200" y="342" text-anchor="middle" fill="rgba(255,255,255,0.45)" font-family="monospace" font-weight="600" font-size="11" letter-spacing="3">FLONTMIE CATALOG</text>
+    <text x="200" y="342" text-anchor="middle" fill="rgba(255,255,255,0.45)" font-family="monospace" font-weight="600" font-size="11" letter-spacing="3">MUSIC RELEASE</text>
   </svg>`;
 
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
@@ -88,7 +88,7 @@ export function resolveArtworkUrl(
 ): string {
   const trimmed = (url || '').trim();
   if (!trimmed) {
-    return createSvgCoverDataUri(titleOrName || 'Flontmie', fallbackType);
+    return createSvgCoverDataUri(titleOrName || 'Music', fallbackType);
   }
 
   // Check if URL contains any mapped videoId
@@ -137,7 +137,7 @@ export function handleImageError(
   }
 
   // Stage 3: Guaranteed inline SVG cover art (never fails, works offline/online)
-  const fallbackUri = createSvgCoverDataUri(label || img.alt || 'Flontmie', fallbackType);
+  const fallbackUri = createSvgCoverDataUri(label || img.alt || 'Music', fallbackType);
   if (img.src !== fallbackUri) {
     img.src = fallbackUri;
   }

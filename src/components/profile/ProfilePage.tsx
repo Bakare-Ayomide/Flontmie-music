@@ -54,7 +54,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
   const [email, setEmail] = useState(currentUser?.email || '');
   const [country, setCountry] = useState(currentUser?.country || 'US');
   const [avatarUrl, setAvatarUrl] = useState(currentUser?.avatar_url || '');
-  const [bio, setBio] = useState('Passionate music creator and listener on Flontmie.');
+  const [bio, setBio] = useState('Passionate music creator and listener.');
   const [isSaved, setIsSaved] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -205,7 +205,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
             <p className="text-xs text-neutral-400 font-mono flex items-center justify-center sm:justify-start gap-2">
               <span>@{currentUser?.username || 'alex_listener'}</span>
               <span>•</span>
-              <span>{currentUser?.email || 'listener@flontmie.com'}</span>
+              <span>{currentUser?.email || 'listener@music.app'}</span>
               <span>•</span>
               <span className="uppercase">{currentUser?.country || 'US'} 🌍</span>
             </p>
@@ -278,7 +278,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
                 <p className="text-xl sm:text-2xl font-black text-white mt-1">{userPlaylists.length}</p>
                 <p className="text-[10px] text-blue-400 mt-1 flex items-center gap-1">
                   <ListMusic className="w-3 h-3" />
-                  <span>Personal catalogs</span>
+                  <span>Personal collections</span>
                 </p>
               </div>
 
@@ -286,7 +286,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
                 <p className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider">Membership</p>
                 <p className="text-xl sm:text-2xl font-black text-amber-400 mt-1">Pro Studio</p>
                 <p className="text-[10px] text-neutral-400 mt-1">
-                  Flontmie Verified Hub
+                  Verified Member
                 </p>
               </div>
             </div>

@@ -24,8 +24,13 @@ import {
   ArrowRight,
   TrendingUp,
   Search,
-  Compass
+  Compass,
+  Loader2,
+  Disc3,
+  Mic2,
+  Music
 } from 'lucide-react';
+import { api } from '../../services/api';
 import { VideoModeCanvas } from '../player/VideoModeCanvas';
 import { CarouselShelf } from '../common/CarouselShelf';
 import { resolveArtworkUrl, handleImageError } from '../../utils/artwork';
@@ -146,8 +151,219 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
 
   const artistList = Object.values(artistProfiles);
 
+  // Live Search Results State (enables public music search directly on Home feed)
+  const [liveSearchResults, setLiveSearchResults] = useState<{
+    songs: any[];
+    artists: any[];
+    albums: any[];
+  }>({ songs: [], artists: [], albums: [] });
+  const [isLiveSearching, setIsLiveSearching] = useState<boolean>(false);
+  const [liveCharts, setLiveCharts] = useState<any[]>([]);
+
+  useEffect(() => {
+    let isMounted = true;
+    api.getYouTubeMusicCharts()
+      .then((res) => {
+        if (isMounted && res && res.charts && res.charts.length > 0) {
+          setLiveCharts(res.charts);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (q.length < 2) {
+      setLiveSearchResults({ songs: [], artists: [], albums: [] });
+      setIsLiveSearching(false);
+      return;
+    }
+
+    let isMounted = true;
+    setIsLiveSearching(true);
+    const timer = setTimeout(() => {
+      api.searchYouTubeMusic(q, 'all')
+        .then((res) => {
+          if (isMounted && res && res.results) {
+            setLiveSearchResults({
+              songs: res.results.songs || [],
+              artists: res.results.artists || [],
+              albums: res.results.albums || [],
+            });
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (isMounted) setIsLiveSearching(false);
+        });
+    }, 200);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timer);
+    };
+  }, [searchQuery]);
+
+  const hasLiveResults =
+    liveSearchResults.songs.length > 0 ||
+    liveSearchResults.artists.length > 0 ||
+    liveSearchResults.albums.length > 0;
+
   return (
     <div className="space-y-12 pb-32 animate-in fade-in duration-200">
+      {/* Live Discovered Search Results when user searches via top bar */}
+      {searchQuery.trim().length >= 2 && (
+        <section className="p-5 sm:p-6 rounded-3xl bg-neutral-900/60 border border-white/10 space-y-4">
+          <div className="flex items-center justify-between border-b border-white/[0.08] pb-3">
+            <div className="flex items-center gap-2">
+              <Search className="w-4 h-4 text-red-500" />
+              <h2 className="text-base sm:text-lg font-bold text-white">
+                Results for "{searchQuery}"
+              </h2>
+            </div>
+            {isLiveSearching && <Loader2 className="w-4 h-4 animate-spin text-red-500" />}
+          </div>
+
+          {liveSearchResults.songs.length > 0 && (
+            <div className="space-y-2">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-neutral-400">Songs</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                {liveSearchResults.songs.slice(0, 6).map((song, i) => (
+                  <div
+                    key={song.id || i}
+                    onClick={() => {
+                      const trk: Track = {
+                        id: song.id || `rel_${Math.random().toString(36).slice(2, 9)}`,
+                        title: song.title,
+                        artist: song.artist || 'Artist',
+                        artistId: song.artistId || '',
+                        album: song.album || 'Single',
+                        duration: song.duration || 210,
+                        genre: song.genre || 'Music',
+                        coverUrl: resolveArtworkUrl(song.cover_url, 'track', song.title),
+                        audioUrl: song.videoId ? `https://music.youtube.com/watch?v=c2gK9tq57iQ` : '',
+                        videoId: song.videoId,
+                        streams: 140000,
+                        likes: 4200,
+                        releaseDate: new Date().toISOString().split('T')[0],
+                        isExplicit: false,
+                        bpm: 120,
+                        moods: ['all'],
+                        isrc: 'US-REL-26-00001',
+                        upc: '012345678901',
+                        label: 'Official',
+                        distributor: 'Music',
+                      };
+                      onPlayTrack(trk);
+                    }}
+                    className="p-2.5 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] border border-white/[0.06] flex items-center justify-between gap-3 cursor-pointer group transition-colors"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <img
+                        src={resolveArtworkUrl(song.cover_url, 'track', song.title)}
+                        alt={song.title}
+                        onError={(e) => handleImageError(e, song.title, 'track')}
+                        className="w-10 h-10 rounded-lg object-cover bg-neutral-800 shrink-0"
+                      />
+                      <div className="min-w-0">
+                        <p className="text-xs font-semibold text-white truncate group-hover:text-red-400 transition-colors">
+                          {song.title}
+                        </p>
+                        <p className="text-[11px] text-neutral-400 truncate">{song.artist}</p>
+                      </div>
+                    </div>
+                    <Play className="w-3.5 h-3.5 text-neutral-400 group-hover:text-white shrink-0" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {liveSearchResults.artists.length > 0 && (
+            <div className="space-y-2 pt-2 border-t border-white/[0.06]">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-neutral-400">Artists</h3>
+              <div className="flex items-center gap-3 overflow-x-auto no-scrollbar py-1">
+                {liveSearchResults.artists.slice(0, 8).map((art, i) => (
+                  <button
+                    key={art.browseId || art.name || i}
+                    onClick={() => onSelectArtist(art.name || art.browseId)}
+                    className="flex items-center gap-2.5 px-3 py-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] transition-colors shrink-0 cursor-pointer"
+                  >
+                    <img
+                      src={resolveArtworkUrl(art.avatarUrl, 'artist', art.name)}
+                      alt={art.name}
+                      onError={(e) => handleImageError(e, art.name, 'artist')}
+                      className="w-8 h-8 rounded-full object-cover bg-neutral-800"
+                    />
+                    <span className="text-xs font-semibold text-white whitespace-nowrap">{art.name}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {liveSearchResults.albums.length > 0 && (
+            <div className="space-y-2 pt-2 border-t border-white/[0.06]">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-neutral-400">Albums & Singles</h3>
+              <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3">
+                {liveSearchResults.albums.slice(0, 6).map((alb, i) => (
+                  <div
+                    key={alb.browseId || alb.title || i}
+                    onClick={() => {
+                      if (alb.browseId) {
+                        api.getYouTubeMusicAlbum(alb.browseId)
+                          .then((res) => {
+                            if (res && res.album && res.album.tracks && res.album.tracks.length > 0) {
+                              const first = res.album.tracks[0];
+                              onPlayTrack({
+                                id: first.id || `trk_${Math.random().toString(36).slice(2, 9)}`,
+                                title: first.title,
+                                artist: first.artist || alb.artist || 'Artist',
+                                artistId: alb.browseId || '',
+                                album: alb.title,
+                                duration: first.duration || 210,
+                                genre: 'Music',
+                                coverUrl: resolveArtworkUrl(alb.cover_url, 'album', alb.title),
+                                audioUrl: first.videoId ? `https://music.youtube.com/watch?v=c2gK9tq57iQ` : '',
+                                videoId: first.videoId,
+                                streams: 100000,
+                                likes: 2500,
+                                releaseDate: alb.year || new Date().toISOString().split('T')[0],
+                                isExplicit: false,
+                                bpm: 120,
+                                moods: ['all'],
+                                isrc: 'US-REL-26-00001',
+                                upc: '012345678901',
+                                label: 'Official',
+                                distributor: 'Music',
+                              });
+                            }
+                          })
+                          .catch(() => {});
+                      }
+                    }}
+                    className="p-2.5 rounded-2xl bg-white/[0.02] hover:bg-white/[0.06] border border-white/[0.05] cursor-pointer group transition-all"
+                  >
+                    <img
+                      src={resolveArtworkUrl(alb.cover_url, 'album', alb.title)}
+                      alt={alb.title}
+                      onError={(e) => handleImageError(e, alb.title, 'album')}
+                      className="w-full aspect-square rounded-xl object-cover bg-neutral-800 mb-2 group-hover:scale-[1.02] transition-transform"
+                    />
+                    <p className="text-xs font-semibold text-white truncate group-hover:text-red-400">{alb.title}</p>
+                    <p className="text-[11px] text-neutral-400 truncate">{alb.artist}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
       {/* Video Mode Canvas (When Active) */}
       {isVideoMode && (
         <section className="space-y-2">
@@ -161,7 +377,7 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
         </section>
       )}
 
-      {/* FLONTMIE AUTHORIZED CATALOG & CHARTS SPOTLIGHT (100% DATABASE-DRIVEN) */}
+      {/* SPOTLIGHT RELEASES & CHARTS */}
       <section className="relative overflow-hidden rounded-3xl p-6 md:p-8 bg-gradient-to-r from-red-950/40 via-neutral-900/60 to-black border border-red-500/20 shadow-2xl">
         <div className="absolute top-0 right-0 -mt-12 -mr-12 w-64 h-64 bg-red-600/10 rounded-full blur-3xl pointer-events-none" />
         <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-6">
@@ -173,7 +389,7 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
               </span>
             </div>
             <h2 className="text-xl md:text-2xl font-extrabold text-white tracking-tight">
-              Flontmie Certified Charts & Featured Releases
+              Certified Charts & Featured Releases
             </h2>
             <p className="text-xs md:text-sm text-neutral-400 max-w-xl">
               Stream verified studio releases, albums, and curated collections directly across all devices.
@@ -191,12 +407,12 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
           )}
         </div>
 
-        {/* Database-Driven Top Charting Hits Shelf */}
+        {/* Top Charting Hits Shelf */}
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Flame className="w-4 h-4 text-red-500" />
-              <h3 className="text-sm font-bold text-white">Top Streamed Hits on Flontmie</h3>
+              <h3 className="text-sm font-bold text-white">Top Streamed Hits</h3>
             </div>
             <span className="text-[11px] text-neutral-400 font-mono">
               {topCatalogTracks.length} Verified Tracks
@@ -258,11 +474,83 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
         </div>
       </section>
 
-      {/* FEATURED ALBUMS & RELEASES CAROUSEL (FROM MYSQL ALBUMS TABLE) */}
+      {/* Dynamic Trending Top Hits from Live Discovery API */}
+      {liveCharts.length > 0 && (
+        <section className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Flame className="w-5 h-5 text-red-500" />
+              <h2 className="text-base sm:text-lg font-bold text-white">Trending Top Hits</h2>
+            </div>
+            <span className="text-xs text-neutral-400 font-mono">Live Chart Positions</span>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+            {liveCharts.slice(0, 10).map((item, idx) => (
+              <div
+                key={item.id || item.videoId || idx}
+                onClick={() => {
+                  const trk: Track = {
+                    id: item.id || `trk_chart_${item.videoId || idx}`,
+                    title: item.title,
+                    artist: item.artist || 'Artist',
+                    artistId: '',
+                    album: 'Trending Single',
+                    duration: 210,
+                    genre: 'Pop',
+                    coverUrl: resolveArtworkUrl(item.cover_url, 'track', item.title),
+                    audioUrl: item.videoId ? `https://music.youtube.com/watch?v=c2gK9tq57iQ` : '',
+                    videoId: item.videoId,
+                    streams: item.streams || 350000,
+                    likes: 12000,
+                    releaseDate: new Date().toISOString().split('T')[0],
+                    isExplicit: false,
+                    bpm: 120,
+                    moods: ['energize'],
+                    isrc: 'US-REL-26-00001',
+                    upc: '012345678901',
+                    label: 'Official',
+                    distributor: 'Music',
+                  };
+                  onPlayTrack(trk);
+                }}
+                className="group relative p-3 rounded-2xl bg-neutral-900/50 hover:bg-neutral-800/80 border border-white/[0.06] transition-all cursor-pointer flex flex-col justify-between"
+              >
+                <div className="relative aspect-square rounded-xl overflow-hidden mb-2.5 bg-neutral-800">
+                  <img
+                    src={resolveArtworkUrl(item.cover_url, 'track', item.title)}
+                    alt={item.title}
+                    onError={(e) => handleImageError(e, item.title, 'track')}
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                  />
+                  <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded-md bg-black/70 backdrop-blur-sm text-[10px] font-bold text-white">
+                    #{idx + 1}
+                  </div>
+                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                    <div className="w-10 h-10 rounded-full bg-white text-black flex items-center justify-center shadow-lg transform group-hover:scale-110 transition-transform">
+                      <Play className="w-4 h-4 fill-black ml-0.5" />
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-white truncate group-hover:text-red-400 transition-colors">
+                    {item.title}
+                  </h4>
+                  <p className="text-[11px] text-neutral-400 truncate mt-0.5">
+                    {item.artist}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* FEATURED ALBUMS & RELEASES CAROUSEL */}
       {albums.length > 0 && (
         <CarouselShelf
           title="Featured Albums & Studio Releases"
-          subtitle="Full-length albums and EPs synchronized in Flontmie's catalog"
+          subtitle="Studio albums and EPs featured across all genres"
         >
           {albums.map((alb) => {
             const albumTrack = tracks.find(
@@ -355,7 +643,7 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
       {/* 2. CIRCULAR CAROUSEL: ACCOUNTS YOU MAY FOLLOW */}
       <CarouselShelf
         title="Accounts & Curators You May Follow"
-        subtitle="Connect with verified artists, music producers, and community tastemakers on Flontmie"
+        subtitle="Connect with verified artists, music producers, and community tastemakers"
       >
         {featuredAccounts.map((account) => (
           <div
@@ -464,7 +752,7 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
       {/* 4. CIRCLE & PORTRAIT CAROUSEL: ARTIST PROFILES */}
       <CarouselShelf
         title="Featured Artist Profiles"
-        subtitle="Discover top streaming recording artists and their official catalogs"
+        subtitle="Discover top streaming recording artists and their official releases"
       >
         {artistList.map((artist) => {
           const formattedAudience =
@@ -707,7 +995,7 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
       {workoutPlaylists.length > 0 && (
         <CarouselShelf
           title="Workout Energy & Focus Playlists"
-          subtitle="Pumping BPMs for gym sessions and flow-state coding marathons"
+          subtitle="Pumping tempo for gym sessions and flow-state coding marathons"
         >
           {[...workoutPlaylists, ...focusPlaylists].map((pl) => (
             <div

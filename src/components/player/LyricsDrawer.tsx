@@ -121,7 +121,7 @@ export const LyricsDrawer: React.FC<LyricsDrawerProps> = ({
       )}
 
       {/* Lyrics body */}
-      <div ref={containerRef} className="flex-1 overflow-y-auto px-6 py-8 space-y-6">
+      <div ref={containerRef} className="flex-1 overflow-y-auto no-scrollbar px-6 py-8 space-y-6">
         {isLoadingLyrics ? (
           <div className="text-center py-20 text-neutral-400 space-y-2">
             <Loader2 className="w-7 h-7 animate-spin text-red-500 mx-auto" />

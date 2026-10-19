@@ -23,7 +23,7 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error('Flontmie caught UI rendering error:', error, errorInfo);
+    console.error('Application caught UI rendering error:', error, errorInfo);
   }
 
   private handleReset = () => {

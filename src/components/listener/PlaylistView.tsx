@@ -103,7 +103,7 @@ export const PlaylistView: React.FC<PlaylistViewProps> = ({
           <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-red-400">
             <span>{playlist.isCollaborative ? 'Collaborative Playlist' : 'Curated Playlist'}</span>
             <span aria-hidden="true">·</span>
-            <span className="capitalize">{playlist.category || 'Flontmie Music'}</span>
+            <span className="capitalize">{playlist.category || 'Featured Music'}</span>
           </div>
 
           <h1 className="text-2xl md:text-4xl font-extrabold tracking-tight text-white truncate">
@@ -111,12 +111,12 @@ export const PlaylistView: React.FC<PlaylistViewProps> = ({
           </h1>
 
           <p className="text-sm text-neutral-300 max-w-2xl leading-relaxed">
-            {playlist.description || 'Curated music collection on Flontmie.'}
+            {playlist.description || 'Curated music collection.'}
           </p>
 
           {/* Clean metadata line with typographic separators */}
           <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-400 pt-1">
-            <span className="font-semibold text-white">{playlist.curator || 'Flontmie Editorial'}</span>
+            <span className="font-semibold text-white">{playlist.curator || 'Editorial'}</span>
             <span aria-hidden="true">·</span>
             <span className="font-mono tabular-nums">{followersFormatted !== 'N/A' ? `${followersFormatted} saves` : 'N/A saves'}</span>
             <span aria-hidden="true">·</span>

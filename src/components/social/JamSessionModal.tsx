@@ -24,7 +24,7 @@ export const JamSessionModal: React.FC<JamSessionModalProps> = ({
   reactions,
 }) => {
   const [copiedCode, setCopiedCode] = useState(false);
-  const roomCode = 'JAM-FLONTMIE-882';
+  const roomCode = 'JAM-ROOM-882';
 
   if (!isOpen) return null;
 
