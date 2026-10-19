@@ -23,14 +23,17 @@ import {
   Disc,
   ArrowRight,
   TrendingUp,
-  Search
+  Search,
+  Compass
 } from 'lucide-react';
 import { VideoModeCanvas } from '../player/VideoModeCanvas';
 import { CarouselShelf } from '../common/CarouselShelf';
-import { api } from '../../services/api';
+import { resolveArtworkUrl, handleImageError } from '../../utils/artwork';
+import { formatCompactNumber } from '../../utils/formatters';
 
 interface HomeFeedProps {
   tracks: Track[];
+  albums?: any[];
   playlists: Playlist[];
   currentTrack: Track | null;
   isPlaying: boolean;
@@ -52,6 +55,7 @@ interface HomeFeedProps {
 
 export const HomeFeed: React.FC<HomeFeedProps> = ({
   tracks,
+  albums = [],
   playlists,
   currentTrack,
   isPlaying,
@@ -70,47 +74,6 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
   onSelectArtist,
   onNavigateToExplore,
 }) => {
-  const [ytCharts, setYtCharts] = useState<any[]>([]);
-  const [isLoadingYt, setIsLoadingYt] = useState<boolean>(false);
-
-  useEffect(() => {
-    setIsLoadingYt(true);
-    api.getYouTubeMusicCharts()
-      .then((res) => {
-        if (res && res.charts && res.charts.length > 0) {
-          setYtCharts(res.charts);
-        }
-      })
-      .catch(() => {})
-      .finally(() => setIsLoadingYt(false));
-  }, []);
-
-  const handlePlayChartSong = (song: any) => {
-    const vid = song.videoId || (song.id && song.id.startsWith('yt_') ? song.id.replace('yt_', '') : '');
-    const trackObj: Track = {
-      id: song.id || (vid ? `yt_${vid}` : `trk_yt_${Date.now()}`),
-      videoId: vid || undefined,
-      title: song.title || 'Untitled Hit',
-      artist: song.artist || 'YouTube Music Artist',
-      artistId: `art_${(song.artist || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
-      album: song.shelf || 'YouTube Music Discovery',
-      duration: 210,
-      genre: 'pop',
-      coverUrl: song.cover_url || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600',
-      audioUrl: `https://music.youtube.com/watch?v=${vid}`,
-      streams: song.streams || 25000000,
-      likes: Math.floor((song.streams || 25000000) * 0.08),
-      releaseDate: new Date().toISOString().split('T')[0],
-      isrc: 'US-YT-26-' + Math.floor(10000 + Math.random() * 90000),
-      upc: '012345678901',
-      bpm: 120,
-      moods: ['trending', 'party'] as any[],
-      label: 'YouTube Music Global Feed',
-      distributor: 'YouTube Music'
-    };
-    onPlayTrack(trackObj);
-  };
-
   // AUTOMATIC DETECTION OF TIME OF DAY (NO MANUAL USER SELECTOR)
   const getAutoDetectedTimeOfDay = (): { id: TimeOfDay; title: string; greeting: string; icon: string } => {
     const hour = new Date().getHours();
@@ -152,6 +115,9 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
       (t.album || '').toLowerCase().includes(q)
     );
   };
+
+  const filteredCatalogTracks = tracks.filter(matchesSearch);
+  const topCatalogTracks = [...filteredCatalogTracks].sort((a, b) => (Number(b.streams) || 0) - (Number(a.streams) || 0));
 
   // Grouped tracks by individual genres with broad case-insensitive matching
   const afrobeatTracks = tracks.filter((t) => ((t.genre || '').toLowerCase().includes('afro') || (t.moodTags || []).some(m => m.toLowerCase().includes('afro'))) && matchesSearch(t));
@@ -195,7 +161,7 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
         </section>
       )}
 
-      {/* YOUTUBE MUSIC LIVE DISCOVERY SPOTLIGHT */}
+      {/* FLONTMIE AUTHORIZED CATALOG & CHARTS SPOTLIGHT (100% DATABASE-DRIVEN) */}
       <section className="relative overflow-hidden rounded-3xl p-6 md:p-8 bg-gradient-to-r from-red-950/40 via-neutral-900/60 to-black border border-red-500/20 shadow-2xl">
         <div className="absolute top-0 right-0 -mt-12 -mr-12 w-64 h-64 bg-red-600/10 rounded-full blur-3xl pointer-events-none" />
         <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-6">
@@ -203,44 +169,44 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
             <div className="flex items-center gap-2">
               <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-red-600/20 text-red-400 border border-red-500/30">
                 <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                YouTube Music API Active
+                Authorized Server Streaming
               </span>
-              <span className="text-xs text-neutral-400 font-mono hidden sm:inline">ytmusicapi standard</span>
+              <span className="text-xs text-neutral-400 font-mono hidden sm:inline">MySQL Catalog · HTTP 206 Audio</span>
             </div>
             <h2 className="text-xl md:text-2xl font-extrabold text-white tracking-tight">
-              YouTube Music Discovery & Live Charts
+              Flontmie Certified Charts & Featured Catalog
             </h2>
             <p className="text-xs md:text-sm text-neutral-400 max-w-xl">
-              Discover real-time global songs, trending charts, artist discographies, albums, and synced lyrics powered by YouTube Music.
+              Stream verified studio releases, albums, and curated collections directly from Flontmie's high-speed media servers.
             </p>
           </div>
           {onNavigateToExplore && (
             <button
               onClick={onNavigateToExplore}
-              className="shrink-0 px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 active:scale-95 text-white text-xs font-semibold flex items-center gap-2 transition-all shadow-lg shadow-red-600/30"
+              className="shrink-0 px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 active:scale-95 text-white text-xs font-semibold flex items-center gap-2 transition-all shadow-lg shadow-red-600/30 cursor-pointer"
             >
               <Compass className="w-4 h-4" />
-              <span>Open YouTube Music Hub</span>
+              <span>Explore Full Catalog</span>
               <ArrowRight className="w-3.5 h-3.5" />
             </button>
           )}
         </div>
 
-        {/* Live YouTube Music Charts Shelf */}
+        {/* Database-Driven Top Charting Hits Shelf */}
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Flame className="w-4 h-4 text-red-500" />
-              <h3 className="text-sm font-bold text-white">Top Charting Hits on YouTube Music</h3>
+              <h3 className="text-sm font-bold text-white">Top Streamed Hits on Flontmie</h3>
             </div>
             <span className="text-[11px] text-neutral-400 font-mono">
-              {ytCharts.length > 0 ? `${ytCharts.length} Live Tracks` : 'Streaming Worldwide'}
+              {topCatalogTracks.length} Verified Tracks
             </span>
           </div>
 
           <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-none snap-x">
-            {(ytCharts.length > 0 ? ytCharts.slice(0, 16) : tracks.slice(0, 8)).map((item) => {
-              const isCurrent = currentTrack?.id === item.id || (item.videoId && currentTrack?.videoId === item.videoId);
+            {topCatalogTracks.slice(0, 16).map((item) => {
+              const isCurrent = currentTrack?.id === item.id;
               return (
                 <div
                   key={item.id}
@@ -248,21 +214,22 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
                 >
                   <div className="relative aspect-square rounded-xl overflow-hidden bg-neutral-800 mb-2.5 shadow-lg">
                     <img
-                      src={item.cover_url || item.coverUrl}
+                      src={resolveArtworkUrl(item.coverUrl, 'track', item.title)}
                       alt={item.title}
                       referrerPolicy="no-referrer"
+                      onError={(e) => handleImageError(e, item.title, 'track')}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                     />
                     <button
-                      onClick={() => (item.cover_url ? handlePlayChartSong(item) : onPlayTrack(item))}
-                      className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"
+                      onClick={() => onPlayTrack(item)}
+                      className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity cursor-pointer"
                     >
                       <div className="w-10 h-10 rounded-full bg-red-600 text-white flex items-center justify-center shadow-lg shadow-red-600/40 hover:scale-105 active:scale-95 transition-transform">
                         <Play className="w-4 h-4 fill-current ml-0.5" />
                       </div>
                     </button>
-                    <div className="absolute top-2 right-2 px-1.5 py-0.5 rounded text-[9px] font-bold bg-black/70 text-red-400 border border-red-500/30 backdrop-blur-sm">
-                      YouTube
+                    <div className="absolute top-2 right-2 px-1.5 py-0.5 rounded text-[9px] font-bold bg-black/70 text-emerald-400 border border-emerald-500/30 backdrop-blur-sm">
+                      {item.genre || 'Catalog'}
                     </div>
                   </div>
 
@@ -275,12 +242,12 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
 
                   <div className="mt-2 pt-2 border-t border-white/[0.05] flex items-center justify-between text-[10px] text-neutral-400">
                     <span className="text-red-400 font-mono">
-                      {item.streams ? `${(item.streams / 1000000).toFixed(1)}M streams` : 'Verified Hit'}
+                      {item.streams ? `${formatCompactNumber(item.streams)} plays` : 'N/A'}
                     </span>
                     <button
-                      onClick={() => (item.cover_url ? handlePlayChartSong(item) : onPlayTrack(item))}
-                      className="text-white hover:text-red-400"
-                      title="Play Now"
+                      onClick={() => onPlayTrack(item)}
+                      className="text-white hover:text-red-400 cursor-pointer"
+                      title="Stream Now"
                     >
                       <Play className="w-3 h-3 fill-current" />
                     </button>
@@ -291,6 +258,54 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
           </div>
         </div>
       </section>
+
+      {/* FEATURED ALBUMS & RELEASES CAROUSEL (FROM MYSQL ALBUMS TABLE) */}
+      {albums.length > 0 && (
+        <CarouselShelf
+          title="Featured Albums & Studio Releases"
+          subtitle="Full-length albums and EPs synchronized in Flontmie's catalog"
+        >
+          {albums.map((alb) => {
+            const albumTrack = tracks.find(
+              (t) =>
+                t.album?.toLowerCase() === String(alb.title || '').toLowerCase() ||
+                t.artist?.toLowerCase() === String(alb.artist_name || '').toLowerCase()
+            );
+            return (
+              <div
+                key={alb.id}
+                onClick={() => {
+                  if (albumTrack) onPlayTrack(albumTrack);
+                }}
+                className="w-44 sm:w-48 shrink-0 p-3 rounded-2xl bg-neutral-900/40 border border-white/[0.06] hover:border-white/20 transition-all group flex flex-col snap-start select-none cursor-pointer"
+              >
+                <div className="relative aspect-square rounded-xl overflow-hidden bg-neutral-800 mb-2.5 shadow-md">
+                  <img
+                    src={resolveArtworkUrl(alb.cover_art_url || alb.coverUrl, 'album', alb.title)}
+                    alt={alb.title}
+                    referrerPolicy="no-referrer"
+                    onError={(e) => handleImageError(e, alb.title, 'album')}
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                  />
+                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                    <div className="w-10 h-10 rounded-full bg-red-600 text-white flex items-center justify-center shadow-lg">
+                      <Play className="w-4 h-4 fill-current ml-0.5" />
+                    </div>
+                  </div>
+                </div>
+                <h4 className="text-xs md:text-sm font-semibold truncate text-white group-hover:text-red-400">
+                  {alb.title}
+                </h4>
+                <p className="text-xs text-neutral-400 truncate">{alb.artist_name}</p>
+                <div className="mt-2 pt-2 border-t border-white/[0.05] flex items-center justify-between text-[10px] text-neutral-500 font-mono">
+                  <span>{alb.genre || 'Album'}</span>
+                  <span>{alb.release_date ? String(alb.release_date).slice(0, 4) : '2025'}</span>
+                </div>
+              </div>
+            );
+          })}
+        </CarouselShelf>
+      )}
 
       {/* 1. AUTOMATICALLY DETECTED TIME OF DAY CAROUSEL (NO USER SELECTION BUTTONS) */}
       <CarouselShelf
@@ -306,9 +321,10 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
             >
               <div className="relative aspect-square rounded-xl overflow-hidden bg-neutral-800 mb-2.5 shadow-md">
                 <img
-                  src={track.coverUrl}
+                  src={resolveArtworkUrl(track.coverUrl, 'track', track.title)}
                   alt={track.title}
                   referrerPolicy="no-referrer"
+                  onError={(e) => handleImageError(e, track.title, 'track')}
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                 />
                 <button
@@ -330,7 +346,7 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
 
               <div className="mt-2 pt-2 border-t border-white/[0.05] flex items-center justify-between text-[10px] text-neutral-500">
                 <span className="capitalize">{track.genre}</span>
-                <span className="font-mono tabular-nums">{track.bpm} BPM</span>
+                <span className="font-mono tabular-nums">{formatCompactNumber(track.streams)} plays</span>
               </div>
             </div>
           );
@@ -350,9 +366,10 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
             {/* Distinct Circular Avatar Design */}
             <div className="relative w-20 h-20 sm:w-24 sm:h-24 rounded-full overflow-hidden mb-3 border-2 border-white/15 group-hover:border-red-500/60 transition-colors shadow-lg shadow-black/40">
               <img
-                src={account.avatarUrl}
+                src={resolveArtworkUrl(account.avatarUrl, 'artist', account.name)}
                 alt={account.name}
                 referrerPolicy="no-referrer"
+                onError={(e) => handleImageError(e, account.name, 'artist')}
                 className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
               />
             </div>
@@ -408,9 +425,10 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
                 {/* Wide Rectangle Artwork */}
                 <div className="relative aspect-[16/10] rounded-xl overflow-hidden bg-neutral-800 mb-2.5 shadow-lg">
                   <img
-                    src={track.coverUrl}
+                    src={resolveArtworkUrl(track.coverUrl, 'track', track.title)}
                     alt={track.title}
                     referrerPolicy="no-referrer"
+                    onError={(e) => handleImageError(e, track.title, 'track')}
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                   />
                   <button
@@ -449,43 +467,50 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
         title="Featured Artist Profiles"
         subtitle="Discover top streaming recording artists and their official catalogs"
       >
-        {artistList.map((artist) => (
-          <div
-            key={artist.id}
-            onClick={() => onSelectArtist && onSelectArtist(artist.id)}
-            className="w-44 sm:w-52 shrink-0 p-3.5 rounded-2xl bg-gradient-to-b from-neutral-900/60 to-neutral-950 border border-white/[0.08] hover:border-white/20 transition-all flex flex-col items-center text-center snap-start select-none group cursor-pointer"
-          >
-            <div className="relative w-24 h-24 sm:w-28 sm:h-28 rounded-full overflow-hidden mb-3 border-2 border-white/20 group-hover:border-red-500 shadow-xl">
-              <img
-                src={artist.avatarUrl}
-                alt={artist.name}
-                referrerPolicy="no-referrer"
-                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-              />
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  const firstTrack = tracks.find((t) => t.artistId === artist.id);
-                  if (firstTrack) onPlayTrack(firstTrack);
-                }}
-                className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"
-                title={`Play ${artist.name}`}
-              >
-                <div className="w-10 h-10 rounded-full bg-red-600 text-white flex items-center justify-center shadow-lg">
-                  <Play className="w-4 h-4 fill-current ml-0.5" />
-                </div>
-              </button>
-            </div>
+        {artistList.map((artist) => {
+          const formattedAudience =
+            artist.ytMonthlyAudience ||
+            (artist.monthlyListeners ? `${formatCompactNumber(artist.monthlyListeners)} monthly listeners` : null) ||
+            (artist.totalStreams ? `${formatCompactNumber(artist.totalStreams)} plays` : 'N/A');
+          return (
+            <div
+              key={artist.id}
+              onClick={() => onSelectArtist && onSelectArtist(artist.id)}
+              className="w-44 sm:w-52 shrink-0 p-3.5 rounded-2xl bg-gradient-to-b from-neutral-900/60 to-neutral-950 border border-white/[0.08] hover:border-white/20 transition-all flex flex-col items-center text-center snap-start select-none group cursor-pointer"
+            >
+              <div className="relative w-24 h-24 sm:w-28 sm:h-28 rounded-full overflow-hidden mb-3 border-2 border-white/20 group-hover:border-red-500 shadow-xl">
+                <img
+                  src={resolveArtworkUrl(artist.avatarUrl, 'artist', artist.name)}
+                  alt={artist.name}
+                  referrerPolicy="no-referrer"
+                  onError={(e) => handleImageError(e, artist.name, 'artist')}
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                />
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const firstTrack = tracks.find((t) => t.artistId === artist.id || t.artist.toLowerCase() === artist.name.toLowerCase());
+                    if (firstTrack) onPlayTrack(firstTrack);
+                  }}
+                  className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"
+                  title={`Play ${artist.name}`}
+                >
+                  <div className="w-10 h-10 rounded-full bg-red-600 text-white flex items-center justify-center shadow-lg">
+                    <Play className="w-4 h-4 fill-current ml-0.5" />
+                  </div>
+                </button>
+              </div>
 
-            <h4 className="text-sm font-bold text-white group-hover:text-red-400 transition-colors truncate w-full">
-              {artist.name}
-            </h4>
-            <span className="text-[11px] text-neutral-400">{artist.primaryGenre || 'Artist'}</span>
-            <p className="text-[10px] text-neutral-500 font-mono mt-1">
-              {(artist.monthlyListeners / 1000000).toFixed(1)}M monthly listeners
-            </p>
-          </div>
-        ))}
+              <h4 className="text-sm font-bold text-white group-hover:text-red-400 transition-colors truncate w-full">
+                {artist.name}
+              </h4>
+              <span className="text-[11px] text-neutral-400">{artist.primaryGenre || 'Artist'}</span>
+              <p className="text-[10px] text-neutral-500 font-mono mt-1">
+                {formattedAudience}
+              </p>
+            </div>
+          );
+        })}
       </CarouselShelf>
 
       {/* 5. GENRE CAROUSEL: AFROBEAT */}
@@ -500,14 +525,20 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
               className="w-40 sm:w-48 shrink-0 p-3 rounded-2xl bg-neutral-900/40 border border-white/[0.06] hover:border-white/20 transition-all group flex flex-col snap-start select-none"
             >
               <div className="relative aspect-square rounded-xl overflow-hidden bg-neutral-800 mb-2.5 shadow-md">
-                <img src={track.coverUrl} alt={track.title} referrerPolicy="no-referrer" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                <img
+                  src={resolveArtworkUrl(track.coverUrl, 'track', track.title)}
+                  alt={track.title}
+                  referrerPolicy="no-referrer"
+                  onError={(e) => handleImageError(e, track.title, 'track')}
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                />
                 <button onClick={() => onPlayTrack(track)} className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                   <div className="w-10 h-10 rounded-full bg-red-600 text-white flex items-center justify-center shadow-lg"><Play className="w-4 h-4 fill-current ml-0.5" /></div>
                 </button>
               </div>
               <h4 className="text-xs md:text-sm font-semibold truncate text-white group-hover:text-red-400">{track.title}</h4>
               <p className="text-xs text-neutral-400 truncate">{track.artist}</p>
-              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-neutral-500 font-mono">{(Number(track.streams) || 0).toLocaleString()} streams</div>
+              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-neutral-500 font-mono">{formatCompactNumber(track.streams)} plays</div>
             </div>
           ))}
         </CarouselShelf>
@@ -525,14 +556,20 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
               className="w-40 sm:w-48 shrink-0 p-3 rounded-2xl bg-neutral-900/40 border border-white/[0.06] hover:border-white/20 transition-all group flex flex-col snap-start select-none"
             >
               <div className="relative aspect-square rounded-xl overflow-hidden bg-neutral-800 mb-2.5 shadow-md">
-                <img src={track.coverUrl} alt={track.title} referrerPolicy="no-referrer" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                <img
+                  src={resolveArtworkUrl(track.coverUrl, 'track', track.title)}
+                  alt={track.title}
+                  referrerPolicy="no-referrer"
+                  onError={(e) => handleImageError(e, track.title, 'track')}
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                />
                 <button onClick={() => onPlayTrack(track)} className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                   <div className="w-10 h-10 rounded-full bg-red-600 text-white flex items-center justify-center shadow-lg"><Play className="w-4 h-4 fill-current ml-0.5" /></div>
                 </button>
               </div>
               <h4 className="text-xs md:text-sm font-semibold truncate text-white group-hover:text-red-400">{track.title}</h4>
               <p className="text-xs text-neutral-400 truncate">{track.artist}</p>
-              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-neutral-500 font-mono">{(Number(track.streams) || 0).toLocaleString()} streams</div>
+              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-neutral-500 font-mono">{formatCompactNumber(track.streams)} plays</div>
             </div>
           ))}
         </CarouselShelf>
@@ -550,14 +587,20 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
               className="w-40 sm:w-48 shrink-0 p-3 rounded-2xl bg-neutral-900/40 border border-white/[0.06] hover:border-white/20 transition-all group flex flex-col snap-start select-none"
             >
               <div className="relative aspect-square rounded-xl overflow-hidden bg-neutral-800 mb-2.5 shadow-md">
-                <img src={track.coverUrl} alt={track.title} referrerPolicy="no-referrer" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                <img
+                  src={resolveArtworkUrl(track.coverUrl, 'track', track.title)}
+                  alt={track.title}
+                  referrerPolicy="no-referrer"
+                  onError={(e) => handleImageError(e, track.title, 'track')}
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                />
                 <button onClick={() => onPlayTrack(track)} className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                   <div className="w-10 h-10 rounded-full bg-red-600 text-white flex items-center justify-center shadow-lg"><Play className="w-4 h-4 fill-current ml-0.5" /></div>
                 </button>
               </div>
               <h4 className="text-xs md:text-sm font-semibold truncate text-white group-hover:text-red-400">{track.title}</h4>
               <p className="text-xs text-neutral-400 truncate">{track.artist}</p>
-              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-neutral-500 font-mono">{(Number(track.streams) || 0).toLocaleString()} streams</div>
+              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-neutral-500 font-mono">{formatCompactNumber(track.streams)} plays</div>
             </div>
           ))}
         </CarouselShelf>
@@ -575,14 +618,20 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
               className="w-40 sm:w-48 shrink-0 p-3 rounded-2xl bg-neutral-900/40 border border-white/[0.06] hover:border-white/20 transition-all group flex flex-col snap-start select-none"
             >
               <div className="relative aspect-square rounded-xl overflow-hidden bg-neutral-800 mb-2.5 shadow-md">
-                <img src={track.coverUrl} alt={track.title} referrerPolicy="no-referrer" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                <img
+                  src={resolveArtworkUrl(track.coverUrl, 'track', track.title)}
+                  alt={track.title}
+                  referrerPolicy="no-referrer"
+                  onError={(e) => handleImageError(e, track.title, 'track')}
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                />
                 <button onClick={() => onPlayTrack(track)} className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                   <div className="w-10 h-10 rounded-full bg-red-600 text-white flex items-center justify-center shadow-lg"><Play className="w-4 h-4 fill-current ml-0.5" /></div>
                 </button>
               </div>
               <h4 className="text-xs md:text-sm font-semibold truncate text-white group-hover:text-red-400">{track.title}</h4>
               <p className="text-xs text-neutral-400 truncate">{track.artist}</p>
-              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-neutral-500 font-mono">{(Number(track.streams) || 0).toLocaleString()} streams</div>
+              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-neutral-500 font-mono">{formatCompactNumber(track.streams)} plays</div>
             </div>
           ))}
         </CarouselShelf>
@@ -602,7 +651,13 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
             >
               {/* Tall Portrait Shape (aspect-[3/4]) */}
               <div className="relative aspect-[3/4] rounded-xl overflow-hidden bg-neutral-800 mb-2.5 shadow-lg">
-                <img src={pl.coverUrl} alt={pl.title} referrerPolicy="no-referrer" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                <img
+                  src={resolveArtworkUrl(pl.coverUrl, 'playlist', pl.title)}
+                  alt={pl.title}
+                  referrerPolicy="no-referrer"
+                  onError={(e) => handleImageError(e, pl.title, 'playlist')}
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent flex items-end p-3">
                   <div className="w-full">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-rose-400">Romance Curation</span>
@@ -611,7 +666,7 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
                 </div>
               </div>
               <p className="text-[11px] text-neutral-400 line-clamp-1">{pl.description}</p>
-              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-rose-300 font-mono">{(Number(pl.followers) || 0).toLocaleString()} saves</div>
+              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-rose-300 font-mono">{formatCompactNumber(pl.followers)} saves</div>
             </div>
           ))}
         </CarouselShelf>
@@ -630,14 +685,20 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
               className="w-40 sm:w-48 shrink-0 p-3 rounded-2xl bg-neutral-900/40 border border-white/[0.06] hover:border-white/20 transition-all cursor-pointer group flex flex-col snap-start select-none"
             >
               <div className="relative aspect-square rounded-xl overflow-hidden bg-neutral-800 mb-2.5 shadow-md">
-                <img src={pl.coverUrl} alt={pl.title} referrerPolicy="no-referrer" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                <img
+                  src={resolveArtworkUrl(pl.coverUrl, 'playlist', pl.title)}
+                  alt={pl.title}
+                  referrerPolicy="no-referrer"
+                  onError={(e) => handleImageError(e, pl.title, 'playlist')}
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                />
                 <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                   <div className="w-10 h-10 rounded-full bg-red-600 text-white flex items-center justify-center shadow-lg"><Play className="w-4 h-4 fill-current ml-0.5" /></div>
                 </div>
               </div>
               <h4 className="text-xs md:text-sm font-semibold truncate text-white group-hover:text-red-400">{pl.title}</h4>
               <p className="text-[11px] text-neutral-400 line-clamp-1">{pl.description}</p>
-              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-neutral-500 font-mono">{(Number(pl.followers) || 0).toLocaleString()} saves</div>
+              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-neutral-500 font-mono">{formatCompactNumber(pl.followers)} saves</div>
             </div>
           ))}
         </CarouselShelf>
@@ -656,14 +717,20 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
               className="w-40 sm:w-48 shrink-0 p-3 rounded-2xl bg-neutral-900/40 border border-white/[0.06] hover:border-white/20 transition-all cursor-pointer group flex flex-col snap-start select-none"
             >
               <div className="relative aspect-square rounded-xl overflow-hidden bg-neutral-800 mb-2.5 shadow-md">
-                <img src={pl.coverUrl} alt={pl.title} referrerPolicy="no-referrer" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                <img
+                  src={resolveArtworkUrl(pl.coverUrl, 'playlist', pl.title)}
+                  alt={pl.title}
+                  referrerPolicy="no-referrer"
+                  onError={(e) => handleImageError(e, pl.title, 'playlist')}
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                />
                 <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                   <div className="w-10 h-10 rounded-full bg-red-600 text-white flex items-center justify-center shadow-lg"><Play className="w-4 h-4 fill-current ml-0.5" /></div>
                 </div>
               </div>
               <h4 className="text-xs md:text-sm font-semibold truncate text-white group-hover:text-red-400">{pl.title}</h4>
               <p className="text-[11px] text-neutral-400 line-clamp-1">{pl.description}</p>
-              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-neutral-500 font-mono">{(Number(pl.followers) || 0).toLocaleString()} saves</div>
+              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-neutral-500 font-mono">{formatCompactNumber(pl.followers)} saves</div>
             </div>
           ))}
         </CarouselShelf>
@@ -681,14 +748,20 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
               className="w-40 sm:w-48 shrink-0 p-3 rounded-2xl bg-neutral-900/40 border border-white/[0.06] hover:border-white/20 transition-all group flex flex-col snap-start select-none"
             >
               <div className="relative aspect-square rounded-xl overflow-hidden bg-neutral-800 mb-2.5 shadow-md">
-                <img src={track.coverUrl} alt={track.title} referrerPolicy="no-referrer" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                <img
+                  src={resolveArtworkUrl(track.coverUrl, 'track', track.title)}
+                  alt={track.title}
+                  referrerPolicy="no-referrer"
+                  onError={(e) => handleImageError(e, track.title, 'track')}
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                />
                 <button onClick={() => onPlayTrack(track)} className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                   <div className="w-10 h-10 rounded-full bg-red-600 text-white flex items-center justify-center shadow-lg"><Play className="w-4 h-4 fill-current ml-0.5" /></div>
                 </button>
               </div>
               <h4 className="text-xs md:text-sm font-semibold truncate text-white group-hover:text-red-400">{track.title}</h4>
               <p className="text-xs text-neutral-400 truncate">{track.artist}</p>
-              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-neutral-500 font-mono">{(Number(track.streams) || 0).toLocaleString()} streams</div>
+              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-neutral-500 font-mono">{formatCompactNumber(track.streams)} plays</div>
             </div>
           ))}
         </CarouselShelf>
@@ -706,14 +779,20 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
               className="w-40 sm:w-48 shrink-0 p-3 rounded-2xl bg-neutral-900/40 border border-white/[0.06] hover:border-white/20 transition-all group flex flex-col snap-start select-none"
             >
               <div className="relative aspect-square rounded-xl overflow-hidden bg-neutral-800 mb-2.5 shadow-md">
-                <img src={track.coverUrl} alt={track.title} referrerPolicy="no-referrer" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                <img
+                  src={resolveArtworkUrl(track.coverUrl, 'track', track.title)}
+                  alt={track.title}
+                  referrerPolicy="no-referrer"
+                  onError={(e) => handleImageError(e, track.title, 'track')}
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                />
                 <button onClick={() => onPlayTrack(track)} className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
                   <div className="w-10 h-10 rounded-full bg-red-600 text-white flex items-center justify-center shadow-lg"><Play className="w-4 h-4 fill-current ml-0.5" /></div>
                 </button>
               </div>
               <h4 className="text-xs md:text-sm font-semibold truncate text-white group-hover:text-red-400">{track.title}</h4>
               <p className="text-xs text-neutral-400 truncate">{track.artist}</p>
-              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-neutral-500 font-mono">{(Number(track.streams) || 0).toLocaleString()} streams</div>
+              <div className="mt-2 pt-2 border-t border-white/[0.05] text-[10px] text-neutral-500 font-mono">{formatCompactNumber(track.streams)} plays</div>
             </div>
           ))}
         </CarouselShelf>

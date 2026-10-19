@@ -6,6 +6,7 @@
 require_once __DIR__ . '/../config.php';
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth_helper.php';
+require_once __DIR__ . '/../artist_enrichment.php';
 
 $method = $_SERVER['REQUEST_METHOD'];
 $id = $_GET['id'] ?? '';
@@ -21,11 +22,16 @@ if ($method === 'GET' && !empty($id)) {
         json_response(['status' => 'error', 'message' => 'Album not found'], 404);
     }
 
-    $trkStmt = $pdo->prepare("SELECT * FROM tracks WHERE album_id = ? AND is_deleted = 0 ORDER BY id ASC");
+    $album['cover_art_url'] = ArtistEnrichment::resolveArtworkUrl($album['cover_art_url'] ?? '', $album['artist_id'] ?? $album['id']);
+
+    $trkStmt = $pdo->prepare("SELECT * FROM tracks WHERE album_id = ? AND is_deleted = 0 AND (status IS NULL OR status = 'published' OR status = 'active') ORDER BY id ASC");
     $trkStmt->execute([$id]);
     $tracks = $trkStmt->fetchAll();
     foreach ($tracks as &$t) {
         $t['mood_tags'] = !empty($t['mood_tags_json']) ? json_decode($t['mood_tags_json'], true) : [];
+        $t['cover_art_url'] = ArtistEnrichment::resolveArtworkUrl($t['cover_art_url'] ?? '', $t['video_id'] ?? $t['id']);
+        $t['audio_url'] = '/phpbackend/api/stream.php?id=' . urlencode($t['id']);
+        unset($t['local_audio_path'], $t['local_artwork_path']);
     }
     $album['tracks'] = $tracks;
 
@@ -55,6 +61,10 @@ if ($method === 'GET') {
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
     $albums = $stmt->fetchAll();
+
+    foreach ($albums as &$alb) {
+        $alb['cover_art_url'] = ArtistEnrichment::resolveArtworkUrl($alb['cover_art_url'] ?? '', $alb['artist_id'] ?? $alb['id']);
+    }
 
     json_response(['status' => 'success', 'count' => count($albums), 'albums' => $albums]);
 }

@@ -1,16 +1,45 @@
 <?php
 /**
- * Flontmie API - Artists Roster, Public Profiles & Claims
+ * Flontmie API - Artists Roster, Public Profiles, Enriched Discographies, Biographies & Claims
  */
 
 require_once __DIR__ . '/../config.php';
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth_helper.php';
+require_once __DIR__ . '/../artist_enrichment.php';
 
 $method = $_SERVER['REQUEST_METHOD'];
 $action = $_GET['action'] ?? '';
-$id = $_GET['id'] ?? '';
+$id = trim($_GET['id'] ?? '');
 $pdo = Database::getConnection();
+
+// Ensure tracks table has flontmie_plays column for distinguishing Flontmie analytics from external YT Music figures
+try {
+    $colCheck = $pdo->query("SHOW COLUMNS FROM tracks LIKE 'flontmie_plays'")->fetch();
+    if (!$colCheck) {
+        $pdo->exec("ALTER TABLE tracks ADD COLUMN flontmie_plays BIGINT DEFAULT 0 AFTER stream_count");
+    }
+} catch (Throwable $e) {
+    // Ignore if already exists
+}
+
+// --- GET RELEASE TRACKLIST (ALBUM, SINGLE/EP, FEATURED ON, OR PLAYLIST) ---
+if ($method === 'GET' && $action === 'release') {
+    $browseId = trim($_GET['browse_id'] ?? $_GET['id'] ?? '');
+    $title = trim($_GET['title'] ?? '');
+    $artistName = trim($_GET['artist'] ?? '');
+    $coverUrl = trim($_GET['cover_url'] ?? '');
+
+    if (empty($browseId) && empty($title)) {
+        json_response(['status' => 'error', 'message' => 'Release browse_id or title is required'], 400);
+    }
+
+    $release = ArtistEnrichment::fetchReleaseTracks($pdo, $browseId, $title, $artistName, $coverUrl);
+    json_response([
+        'status' => 'success',
+        'release' => $release
+    ]);
+}
 
 // --- SUBMIT ARTIST CLAIM ---
 if ($method === 'POST' && $action === 'claim' && !empty($id)) {
@@ -25,7 +54,6 @@ if ($method === 'POST' && $action === 'claim' && !empty($id)) {
         json_response(['status' => 'error', 'message' => 'Evidence details are required for artist profile claim.'], 400);
     }
 
-    // Check artist
     $artStmt = $pdo->prepare("SELECT * FROM artists WHERE id = ?");
     $artStmt->execute([$id]);
     $artist = $artStmt->fetch();
@@ -51,10 +79,8 @@ if ($method === 'POST' && $action === 'claim' && !empty($id)) {
         $proofUrl
     ]);
 
-    // Update artist claim status to pending
     $pdo->prepare("UPDATE artists SET claimed_status = 'pending' WHERE id = ?")->execute([$id]);
 
-    // Audit log
     $log = $pdo->prepare("INSERT INTO audit_logs (user_id, action, entity_type, entity_id, details_json, ip_address) VALUES (?, ?, ?, ?, ?, ?)");
     $log->execute([$user['id'], 'ARTIST_CLAIM_SUBMITTED', 'ARTIST', $id, json_encode(['claim_id' => $claimId]), $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1']);
 
@@ -72,34 +98,17 @@ if ($method === 'POST' && $action === 'follow' && !empty($id)) {
     json_response(['status' => 'success', 'message' => 'Followed artist']);
 }
 
-// --- GET SINGLE ARTIST BY ID OR SLUG ---
+// --- GET SINGLE ENRICHED ARTIST BY ID, SLUG, BROWSE_ID, OR NAME ---
 if ($method === 'GET' && !empty($id)) {
-    $stmt = $pdo->prepare("SELECT * FROM artists WHERE id = ? OR slug = ?");
-    $stmt->execute([$id, $id]);
-    $artist = $stmt->fetch();
-
-    if (!$artist) {
+    $enrichedArtist = ArtistEnrichment::getEnrichedArtistProfile($pdo, $id);
+    if (!$enrichedArtist) {
         json_response(['status' => 'error', 'message' => 'Artist profile not found'], 404);
     }
 
-    $artist['genres'] = !empty($artist['genres_json']) ? json_decode($artist['genres_json'], true) : [];
-    $artist['social_links'] = !empty($artist['social_links_json']) ? json_decode($artist['social_links_json'], true) : [];
-
-    // Get Artist Top Tracks
-    $trkStmt = $pdo->prepare("SELECT * FROM tracks WHERE artist_id = ? AND is_deleted = 0 ORDER BY stream_count DESC LIMIT 20");
-    $trkStmt->execute([$artist['id']]);
-    $tracks = $trkStmt->fetchAll();
-    foreach ($tracks as &$t) {
-        $t['mood_tags'] = !empty($t['mood_tags_json']) ? json_decode($t['mood_tags_json'], true) : [];
-    }
-    $artist['tracks'] = $tracks;
-
-    // Get Artist Albums
-    $albStmt = $pdo->prepare("SELECT * FROM albums WHERE artist_id = ? AND status = 'published' ORDER BY release_date DESC");
-    $albStmt->execute([$artist['id']]);
-    $artist['albums'] = $albStmt->fetchAll();
-
-    json_response(['status' => 'success', 'artist' => $artist]);
+    json_response([
+        'status' => 'success',
+        'artist' => $enrichedArtist
+    ]);
 }
 
 // --- GET ARTISTS LIST ---
@@ -130,8 +139,43 @@ if ($method === 'GET') {
     $artists = $stmt->fetchAll();
 
     foreach ($artists as &$a) {
+        $artId = $a['id'];
+        $a['avatar_url'] = ArtistEnrichment::resolveArtworkUrl($a['avatar_url'] ?? '', $artId);
+        $a['header_url'] = ArtistEnrichment::resolveArtworkUrl($a['header_url'] ?? $a['avatar_url'], $artId);
         $a['genres'] = !empty($a['genres_json']) ? json_decode($a['genres_json'], true) : [];
         $a['social_links'] = !empty($a['social_links_json']) ? json_decode($a['social_links_json'], true) : [];
+        $a['yt_monthly_audience'] = ArtistEnrichment::parseMetric((string)($a['monthly_listeners'] ?? ''))['compact'];
+        $a['yt_subscribers'] = ArtistEnrichment::parseMetric((string)($a['followers'] ?? ''))['compact'];
+        $a['yt_total_views'] = ArtistEnrichment::parseMetric((string)($a['total_streams'] ?? ''))['compact'];
+        $a['country'] = ArtistEnrichment::$KNOWN_ARTISTS[$artId]['country'] ?? 'US';
+
+        // Check if cached enrichment exists to attach Wikipedia bio & YT stats without network overhead on list view
+        $safeCacheId = preg_replace('/[^a-zA-Z0-9_-]/', '_', $artId);
+        $cacheFile = STORAGE_ROOT . "/cache/artists/{$safeCacheId}_v2.json";
+        if (is_file($cacheFile)) {
+            $cached = json_decode((string)file_get_contents($cacheFile), true);
+            if (!empty($cached['wiki']['bio'])) {
+                $a['bio'] = $cached['wiki']['bio'];
+                $a['bio_source'] = $cached['wiki']['bio_source'] ?? 'Wikipedia / Wikidata';
+                $a['bio_url'] = $cached['wiki']['bio_url'] ?? null;
+                $a['wikidata_id'] = $cached['wiki']['wikidata_id'] ?? null;
+            }
+            if (!empty($cached['yt']['avatar_url'])) {
+                $a['avatar_url'] = $cached['yt']['avatar_url'];
+                $a['header_url'] = $cached['yt']['header_url'] ?? $cached['yt']['avatar_url'];
+            }
+            if (!empty($cached['yt']['monthly_audience_compact'])) {
+                $a['yt_monthly_audience'] = $cached['yt']['monthly_audience_compact'];
+                $a['monthly_listeners'] = $cached['yt']['monthly_audience_num'] ?? $a['monthly_listeners'];
+            }
+            if (!empty($cached['yt']['subscribers_compact'])) {
+                $a['yt_subscribers'] = $cached['yt']['subscribers_compact'];
+            }
+            if (!empty($cached['yt']['total_views_compact'])) {
+                $a['yt_total_views'] = $cached['yt']['total_views_compact'];
+                $a['total_streams'] = $cached['yt']['total_views_num'] ?? $a['total_streams'];
+            }
+        }
     }
 
     json_response(['status' => 'success', 'count' => count($artists), 'artists' => $artists]);
@@ -149,8 +193,8 @@ if ($method === 'POST') {
 
     $artistId = 'art_' . bin2hex(random_bytes(6));
     $slug = strtolower(preg_replace('/[^A-Za-z0-9-]+/', '-', $name)) . '-' . rand(100, 999);
-    $avatar = $input['avatar_url'] ?? 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400';
-    $header = $input['header_url'] ?? 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=1200';
+    $avatar = ArtistEnrichment::resolveArtworkUrl($input['avatar_url'] ?? '');
+    $header = ArtistEnrichment::resolveArtworkUrl($input['header_url'] ?? $avatar);
     $bio = $input['bio'] ?? '';
     $genres = is_array($input['genres'] ?? null) ? $input['genres'] : ['Afrobeats'];
     $socials = is_array($input['social_links'] ?? null) ? $input['social_links'] : [];
@@ -166,7 +210,6 @@ if ($method === 'POST') {
         json_encode($genres), json_encode($socials), $distributorName, $distributorName, $distributorId
     ]);
 
-    // Audit log
     $log = $pdo->prepare("INSERT INTO audit_logs (user_id, action, entity_type, entity_id, details_json, ip_address) VALUES (?, ?, ?, ?, ?, ?)");
     $log->execute([$user['id'], 'ARTIST_CREATED', 'ARTIST', $artistId, json_encode(['name' => $name, 'distributor' => $distributorName]), $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1']);
 

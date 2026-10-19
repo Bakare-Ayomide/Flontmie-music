@@ -79,25 +79,17 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   return (
     <header className="sticky top-0 z-40 bg-[#030303]/95 backdrop-blur-md border-b border-white/[0.08] px-3 md:px-6 py-2 flex items-center justify-between gap-2 md:gap-4 h-[57px]">
-      {/* Zone 1: Pure uppercase FLONTMIE Wordmark without play icon + Desktop sidebar toggle */}
-      <div className="flex items-center gap-2 md:gap-3 shrink-0">
-        <button
-          onClick={onToggleSidebar}
-          className="hidden md:flex w-8 h-8 rounded-lg text-neutral-400 hover:text-white hover:bg-white/[0.08] items-center justify-center transition-colors"
-          title={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        >
-          {isSidebarCollapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
-        </button>
-
-        <a href="#home" className="flex items-center text-white hover:opacity-90 transition-opacity">
-          <span className="text-xl md:text-2xl font-black tracking-widest text-white uppercase select-none">
-            FLONTMIE
-          </span>
-        </a>
-      </div>
+      {/* Zone 1: Desktop sidebar toggle (FLONTMIE brand removed to maximize search space) */}
+      <button
+        onClick={onToggleSidebar}
+        className="hidden md:flex w-8 h-8 rounded-lg text-neutral-400 hover:text-white hover:bg-white/[0.08] items-center justify-center transition-colors shrink-0"
+        title={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+      >
+        {isSidebarCollapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
+      </button>
 
       {/* Zone 2: Search input and quick category filter buttons */}
-      <div className="flex-1 max-w-xl flex items-center gap-2 min-w-0">
+      <div className="flex-1 max-w-2xl flex items-center gap-2 min-w-0">
         {currentPersona === 'listener' ? (
           <div className="w-full flex items-center gap-2">
             <div className="relative flex-1 min-w-0">
@@ -187,9 +179,9 @@ export const Navbar: React.FC<NavbarProps> = ({
               <div className="absolute right-0 mt-2 w-72 rounded-xl bg-[#121212] border border-white/10 shadow-2xl p-1.5 z-50 animate-in fade-in zoom-in-95 duration-100">
                 <div className="px-3 py-2 border-b border-white/[0.06] mb-1">
                   <p className="text-[11px] font-medium text-neutral-400 uppercase tracking-wider">Flontmie Portals</p>
-                  <p className="text-xs text-neutral-200">Switch workspace view or admin console</p>
+                  <p className="text-xs text-neutral-200">Switch creator or industry workspace</p>
                 </div>
-                {(['listener', 'artist', 'label', 'distributor', 'admin'] as Persona[]).map((p) => {
+                {(['listener', 'artist', 'label', 'distributor'] as Persona[]).map((p) => {
                   const item = personaLabels[p];
                   const isSelected = currentPersona === p;
                   return (

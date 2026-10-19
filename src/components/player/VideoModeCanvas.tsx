@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { audioEngine } from '../../services/audioEngine';
 import { Track } from '../../types/music';
+import { resolveArtworkUrl, handleImageError } from '../../utils/artwork';
 
 interface VideoModeCanvasProps {
   currentTrack: Track | null;
@@ -94,11 +95,12 @@ export const VideoModeCanvas: React.FC<VideoModeCanvasProps> = ({ currentTrack, 
       {/* Center Track Artwork & Info Overlay */}
       {currentTrack && (
         <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center bg-black/30 backdrop-blur-[2px]">
-          <div className="w-48 h-48 md:w-60 md:h-60 rounded-xl overflow-hidden shadow-2xl border border-white/20 relative group">
+          <div className="w-48 h-48 md:w-60 md:h-60 rounded-xl overflow-hidden shadow-2xl border border-white/20 relative group bg-neutral-900">
             <img
-              src={currentTrack.coverUrl}
+              src={resolveArtworkUrl(currentTrack.coverUrl, 'track', currentTrack.title)}
               alt={currentTrack.title}
               referrerPolicy="no-referrer"
+              onError={(e) => handleImageError(e, currentTrack.title, 'track')}
               className={`w-full h-full object-cover transition-transform duration-700 ${isPlaying ? 'scale-105' : 'scale-100'}`}
             />
             <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent flex items-end p-4">

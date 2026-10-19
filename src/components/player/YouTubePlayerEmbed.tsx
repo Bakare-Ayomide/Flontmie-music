@@ -33,13 +33,23 @@ export const YouTubePlayerEmbed: React.FC<YouTubePlayerEmbedProps> = ({
   const [playerReady, setPlayerReady] = useState(false);
   const timeUpdateInterval = useRef<number | null>(null);
 
-  // Extract video ID from videoId or track id
+  // Extract video ID from videoId, track id (trk_yt_ or yt_), or audioUrl
   const getVideoId = (track: Track | null): string | null => {
     if (!track) return null;
     if (track.videoId && track.videoId.length >= 8) return track.videoId;
-    if (track.id && track.id.startsWith('yt_')) {
-      const candidate = track.id.replace('yt_', '');
-      if (candidate.length >= 8) return candidate;
+    if (track.id) {
+      if (track.id.startsWith('trk_yt_')) {
+        const candidate = track.id.replace('trk_yt_', '');
+        if (candidate.length >= 8) return candidate;
+      }
+      if (track.id.startsWith('yt_')) {
+        const candidate = track.id.replace('yt_', '');
+        if (candidate.length >= 8) return candidate;
+      }
+    }
+    if (track.audioUrl) {
+      const m = track.audioUrl.match(/[?&]v=([a-zA-Z0-9_-]{8,15})/);
+      if (m) return m[1];
     }
     return null;
   };

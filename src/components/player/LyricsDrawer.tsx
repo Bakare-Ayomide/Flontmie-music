@@ -1,6 +1,8 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { LyricLine, Track } from '../../types/music';
-import { X, Mic2, Clock } from 'lucide-react';
+import { X, Mic2, Loader2 } from 'lucide-react';
+import { api } from '../../services/api';
+import { resolveArtworkUrl, handleImageError } from '../../utils/artwork';
 
 interface LyricsDrawerProps {
   isOpen: boolean;
@@ -19,8 +21,49 @@ export const LyricsDrawer: React.FC<LyricsDrawerProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const activeLineRef = useRef<HTMLButtonElement | null>(null);
+  const [fetchedLyrics, setFetchedLyrics] = useState<LyricLine[]>([]);
+  const [isLoadingLyrics, setIsLoadingLyrics] = useState<boolean>(false);
 
-  const lyrics = track?.lyrics || [];
+  useEffect(() => {
+    setFetchedLyrics([]);
+    if (!isOpen || !track) return;
+    if (Array.isArray(track.lyrics) && track.lyrics.length > 0) return;
+
+    const vid =
+      track.videoId ||
+      (track.id?.startsWith('trk_yt_')
+        ? track.id.replace('trk_yt_', '')
+        : track.id?.startsWith('yt_')
+        ? track.id.replace('yt_', '')
+        : '');
+
+    if (!vid) return;
+
+    setIsLoadingLyrics(true);
+    api
+      .getYouTubeMusicLyrics(vid)
+      .then((res) => {
+        if (res && res.lyrics) {
+          const lines = res.lyrics
+            .split(/\r?\n/)
+            .map((l) => l.trim())
+            .filter((l) => l.length > 0);
+          const dur = track.duration || 180;
+          const step = Math.max(4, Math.floor((dur - 10) / Math.max(1, lines.length)));
+          setFetchedLyrics(
+            lines.map((text, idx) => ({
+              time: 4 + idx * step,
+              text,
+            }))
+          );
+        }
+      })
+      .catch(() => {})
+      .finally(() => setIsLoadingLyrics(false));
+  }, [isOpen, track?.id, track?.videoId]);
+
+  const rawLyrics = Array.isArray(track?.lyrics) && track.lyrics.length > 0 ? track.lyrics : fetchedLyrics;
+  const lyrics: LyricLine[] = Array.isArray(rawLyrics) ? rawLyrics : [];
 
   // Find active lyric index
   let activeIndex = -1;
@@ -64,10 +107,11 @@ export const LyricsDrawer: React.FC<LyricsDrawerProps> = ({
       {track && (
         <div className="px-5 py-3 bg-neutral-900/60 border-b border-white/[0.06] flex items-center gap-3">
           <img
-            src={track.coverUrl}
+            src={resolveArtworkUrl(track.coverUrl, 'track', track.title)}
             alt={track.title}
             referrerPolicy="no-referrer"
-            className="w-10 h-10 rounded object-cover"
+            onError={(e) => handleImageError(e, track.title, 'track')}
+            className="w-10 h-10 rounded object-cover bg-neutral-800"
           />
           <div className="min-w-0">
             <p className="text-xs font-semibold text-white truncate">{track.title}</p>
@@ -78,7 +122,12 @@ export const LyricsDrawer: React.FC<LyricsDrawerProps> = ({
 
       {/* Lyrics body */}
       <div ref={containerRef} className="flex-1 overflow-y-auto px-6 py-8 space-y-6">
-        {lyrics.length > 0 ? (
+        {isLoadingLyrics ? (
+          <div className="text-center py-20 text-neutral-400 space-y-2">
+            <Loader2 className="w-7 h-7 animate-spin text-red-500 mx-auto" />
+            <p className="text-xs font-medium">Fetching verified lyrics from YouTube Music...</p>
+          </div>
+        ) : lyrics.length > 0 ? (
           lyrics.map((line, idx) => {
             const isActive = idx === activeIndex;
             const isPast = idx < activeIndex;

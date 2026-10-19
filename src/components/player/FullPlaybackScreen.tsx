@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   ChevronDown, 
   Play, 
@@ -19,15 +19,13 @@ import {
   Plus, 
   Trash2, 
   ExternalLink, 
-  Disc, 
   MoveUp, 
-  MoveDown,
-  Clock,
-  Radio,
-  Check
+  MoveDown
 } from 'lucide-react';
 import { Track } from '../../types/music';
 import { VideoModeCanvas } from './VideoModeCanvas';
+import { resolveArtworkUrl, handleImageError } from '../../utils/artwork';
+import { formatCompactNumber } from '../../utils/formatters';
 
 interface FullPlaybackScreenProps {
   isOpen: boolean;
@@ -92,11 +90,33 @@ export const FullPlaybackScreen: React.FC<FullPlaybackScreenProps> = ({
   onNavigateToArtist,
   onNavigateToAlbum,
 }) => {
+  // CRITICAL: All React hooks MUST be declared unconditionally at the top level before any early return
   const [activeTab, setActiveTab] = useState<'player' | 'lyrics' | 'queue'>('player');
   const [isHoveringSeek, setIsHoveringSeek] = useState(false);
   const [hoverSeekTime, setHoverSeekTime] = useState(0);
   const [lastVolume, setLastVolume] = useState(volume || 0.85);
   const activeLyricRef = useRef<HTMLDivElement>(null);
+
+  // Normalize lyrics unconditionally before any early return so hook order never changes
+  const normalizedLyrics: { time: number; text: string }[] = useMemo(() => {
+    if (!currentTrack?.lyrics) return [];
+    if (Array.isArray(currentTrack.lyrics)) {
+      if (currentTrack.lyrics.length === 0) return [];
+      if (typeof currentTrack.lyrics[0] === 'string') {
+        const strLines = (currentTrack.lyrics as unknown as string[]).filter(Boolean);
+        const step = (duration || 180) / Math.max(1, strLines.length);
+        return strLines.map((text, i) => ({ time: Math.floor(i * step), text }));
+      }
+      return currentTrack.lyrics as { time: number; text: string }[];
+    }
+    if (typeof (currentTrack as any).lyrics === 'string') {
+      const rawText = (currentTrack as any).lyrics as string;
+      const lines = rawText.split('\n').map((l) => l.trim()).filter(Boolean);
+      const step = (duration || 180) / Math.max(1, lines.length);
+      return lines.map((text, i) => ({ time: Math.floor(i * step), text }));
+    }
+    return [];
+  }, [currentTrack, duration]);
 
   // Keyboard shortcut: Escape minimizes full player, Space toggles play
   useEffect(() => {
@@ -117,24 +137,25 @@ export const FullPlaybackScreen: React.FC<FullPlaybackScreenProps> = ({
 
   // Auto-scroll lyrics to active line
   useEffect(() => {
-    if (activeTab === 'lyrics' && activeLyricRef.current) {
+    if (isOpen && activeTab === 'lyrics' && activeLyricRef.current) {
       activeLyricRef.current.scrollIntoView({
         behavior: 'smooth',
         block: 'center',
       });
     }
-  }, [currentTime, activeTab]);
+  }, [isOpen, currentTime, activeTab]);
 
+  // Early return ONLY after all hooks have executed in deterministic order
   if (!isOpen || !currentTrack) return null;
 
   const formatTime = (secs: number) => {
-    const s = Math.max(0, Math.floor(secs));
+    const s = Math.max(0, Math.floor(secs || 0));
     const m = Math.floor(s / 60);
     const rem = s % 60;
     return `${m}:${String(rem).padStart(2, '0')}`;
   };
 
-  const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
+  const progressPercent = duration > 0 ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0;
 
   const handleSeekClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -157,31 +178,14 @@ export const FullPlaybackScreen: React.FC<FullPlaybackScreenProps> = ({
     }
   };
 
-  // Normalize lyrics: handles LyricLine[], string[], or multiline string from MySQL
-  const normalizedLyrics: { time: number; text: string }[] = React.useMemo(() => {
-    if (!currentTrack?.lyrics) return [];
-    if (Array.isArray(currentTrack.lyrics)) {
-      if (currentTrack.lyrics.length === 0) return [];
-      if (typeof currentTrack.lyrics[0] === 'string') {
-        const strLines = (currentTrack.lyrics as unknown as string[]).filter(Boolean);
-        const step = (duration || 180) / Math.max(1, strLines.length);
-        return strLines.map((text, i) => ({ time: Math.floor(i * step), text }));
-      }
-      return currentTrack.lyrics as { time: number; text: string }[];
-    }
-    if (typeof (currentTrack as any).lyrics === 'string') {
-      const rawText = (currentTrack as any).lyrics as string;
-      const lines = rawText.split('\n').map((l) => l.trim()).filter(Boolean);
-      const step = (duration || 180) / Math.max(1, lines.length);
-      return lines.map((text, i) => ({ time: Math.floor(i * step), text }));
-    }
-    return [];
-  }, [currentTrack, duration]);
-
   const activeLyricIndex = normalizedLyrics.findIndex((line, idx, arr) => {
     const nextLine = arr[idx + 1];
     return currentTime >= line.time && (!nextLine || currentTime < nextLine.time);
   });
+
+  const resolvedCover = resolveArtworkUrl(currentTrack.coverUrl, 'track', currentTrack.title);
+  const externalPlaysFormatted = formatCompactNumber(currentTrack.ytPlays ?? currentTrack.streams);
+  const flontmiePlaysCount = typeof currentTrack.flontmiePlays === 'number' ? currentTrack.flontmiePlays : null;
 
   return (
     <div className="fixed inset-0 z-50 bg-[#070709] flex flex-col overflow-hidden animate-in fade-in slide-in-from-bottom-8 duration-200 select-none">
@@ -189,7 +193,7 @@ export const FullPlaybackScreen: React.FC<FullPlaybackScreenProps> = ({
       <div 
         className="absolute inset-0 opacity-25 filter blur-3xl pointer-events-none scale-125 transition-all duration-700"
         style={{
-          backgroundImage: `url(${currentTrack.coverUrl})`,
+          backgroundImage: `url(${resolvedCover})`,
           backgroundPosition: 'center',
           backgroundSize: 'cover',
         }}
@@ -287,7 +291,7 @@ export const FullPlaybackScreen: React.FC<FullPlaybackScreenProps> = ({
         {activeTab === 'player' && (
           <div className="flex-1 flex flex-col lg:flex-row items-center justify-center gap-6 lg:gap-12 min-h-0">
             {/* Visualizer Canvas or Big Artwork */}
-            <div className="w-full max-w-[340px] sm:max-w-[420px] lg:max-w-[460px] aspect-square relative rounded-3xl overflow-hidden shadow-2xl shadow-black/80 border border-white/10 group shrink-0">
+            <div className="w-full max-w-[340px] sm:max-w-[420px] lg:max-w-[460px] aspect-square relative rounded-3xl overflow-hidden shadow-2xl shadow-black/80 border border-white/10 group shrink-0 bg-neutral-900">
               {isVideoMode ? (
                 <div className="w-full h-full bg-black relative flex items-center justify-center">
                   <VideoModeCanvas currentTrack={currentTrack} isPlaying={isPlaying} />
@@ -299,9 +303,10 @@ export const FullPlaybackScreen: React.FC<FullPlaybackScreenProps> = ({
               ) : (
                 <>
                   <img
-                    src={currentTrack.coverUrl}
+                    src={resolvedCover}
                     alt={currentTrack.title}
                     referrerPolicy="no-referrer"
+                    onError={(e) => handleImageError(e, currentTrack.title, 'track')}
                     className="w-full h-full object-cover group-hover:scale-102 transition-transform duration-500"
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-5">
@@ -360,14 +365,25 @@ export const FullPlaybackScreen: React.FC<FullPlaybackScreenProps> = ({
                 </div>
               </div>
 
-              {/* Streaming & Metadata Badges */}
+              {/* Streaming & Metadata Badges (Distinguishing External YT Music vs Flontmie Plays) */}
               <div className="flex flex-wrap items-center justify-center lg:justify-start gap-2 pt-1">
-                <span className="px-2.5 py-1 rounded-lg bg-white/[0.05] border border-white/10 text-[11px] font-mono text-neutral-300">
-                  {(Number(currentTrack.streams) || 0).toLocaleString()} Streams
+                <span
+                  className="px-2.5 py-1 rounded-lg bg-white/[0.05] border border-white/10 text-[11px] font-mono text-neutral-300"
+                  title="Verified YouTube Music Global Plays"
+                >
+                  YT Music: {externalPlaysFormatted} {externalPlaysFormatted !== 'N/A' ? 'Plays' : ''}
                 </span>
-                <span className="px-2.5 py-1 rounded-lg bg-white/[0.05] border border-white/10 text-[11px] font-mono text-neutral-300">
-                  {currentTrack.bpm} BPM
+                <span
+                  className="px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-[11px] font-mono text-emerald-300"
+                  title="Actual Plays Recorded on Flontmie"
+                >
+                  Flontmie: {flontmiePlaysCount !== null ? formatCompactNumber(flontmiePlaysCount, true) : 'N/A'} Plays
                 </span>
+                {currentTrack.bpm ? (
+                  <span className="px-2.5 py-1 rounded-lg bg-white/[0.05] border border-white/10 text-[11px] font-mono text-neutral-300">
+                    {currentTrack.bpm} BPM
+                  </span>
+                ) : null}
                 {currentTrack.distributor && (
                   <span className="px-2.5 py-1 rounded-lg bg-purple-500/10 border border-purple-500/20 text-[11px] text-purple-300">
                     {currentTrack.distributor}
@@ -479,8 +495,14 @@ export const FullPlaybackScreen: React.FC<FullPlaybackScreenProps> = ({
             {/* Currently Playing Card */}
             <div className="p-3 rounded-2xl bg-white/[0.05] border border-white/10 flex items-center justify-between gap-3">
               <div className="flex items-center gap-3 min-w-0">
-                <div className="relative w-12 h-12 rounded-xl overflow-hidden shrink-0">
-                  <img src={currentTrack.coverUrl} alt={currentTrack.title} referrerPolicy="no-referrer" className="w-full h-full object-cover" />
+                <div className="relative w-12 h-12 rounded-xl overflow-hidden shrink-0 bg-neutral-800">
+                  <img
+                    src={resolvedCover}
+                    alt={currentTrack.title}
+                    referrerPolicy="no-referrer"
+                    onError={(e) => handleImageError(e, currentTrack.title, 'track')}
+                    className="w-full h-full object-cover"
+                  />
                   <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
                     <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" />
                   </div>
@@ -512,7 +534,13 @@ export const FullPlaybackScreen: React.FC<FullPlaybackScreenProps> = ({
                       </span>
                       <Play className="w-4 h-4 text-white hidden group-hover:block shrink-0" />
 
-                      <img src={track.coverUrl} alt={track.title} referrerPolicy="no-referrer" className="w-9 h-9 rounded-lg object-cover shrink-0" />
+                      <img
+                        src={resolveArtworkUrl(track.coverUrl, 'track', track.title)}
+                        alt={track.title}
+                        referrerPolicy="no-referrer"
+                        onError={(e) => handleImageError(e, track.title, 'track')}
+                        className="w-9 h-9 rounded-lg object-cover shrink-0 bg-neutral-800"
+                      />
                       <div className="min-w-0">
                         <p className="text-xs font-semibold text-white truncate group-hover:text-red-400 transition-colors">
                           {track.title}

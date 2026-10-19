@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Track } from '../../types/music';
+import { resolveArtworkUrl, handleImageError } from '../../utils/artwork';
 import { 
   Play, 
   Pause, 
@@ -157,9 +158,10 @@ export const BottomPlayer: React.FC<BottomPlayerProps> = ({
             title="Open Full Player"
           >
             <img
-              src={currentTrack.coverUrl}
+              src={resolveArtworkUrl(currentTrack.coverUrl, 'track', currentTrack.title)}
               alt={currentTrack.title}
               referrerPolicy="no-referrer"
+              onError={(e) => handleImageError(e, currentTrack.title, 'track')}
               className="w-full h-full object-cover group-hover:scale-105 transition-transform"
             />
             <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">

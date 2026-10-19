@@ -1,6 +1,7 @@
 import React from 'react';
 import { Track } from '../../types/music';
 import { X, Play, Trash2, ListMusic, Volume2, MoveUp, MoveDown } from 'lucide-react';
+import { resolveArtworkUrl, handleImageError } from '../../utils/artwork';
 
 interface QueueDrawerProps {
   isOpen: boolean;
@@ -59,11 +60,12 @@ export const QueueDrawer: React.FC<QueueDrawerProps> = ({
             Now Playing
           </span>
           <div className="flex items-center gap-3">
-            <div className="relative w-12 h-12 rounded overflow-hidden shrink-0">
+            <div className="relative w-12 h-12 rounded overflow-hidden shrink-0 bg-neutral-800">
               <img
-                src={currentTrack.coverUrl}
+                src={resolveArtworkUrl(currentTrack.coverUrl, 'track', currentTrack.title)}
                 alt={currentTrack.title}
                 referrerPolicy="no-referrer"
+                onError={(e) => handleImageError(e, currentTrack.title, 'track')}
                 className="w-full h-full object-cover"
               />
               <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
@@ -101,9 +103,10 @@ export const QueueDrawer: React.FC<QueueDrawerProps> = ({
                 className="w-9 h-9 rounded overflow-hidden shrink-0 relative flex items-center justify-center bg-neutral-800"
               >
                 <img
-                  src={track.coverUrl}
+                  src={resolveArtworkUrl(track.coverUrl, 'track', track.title)}
                   alt={track.title}
                   referrerPolicy="no-referrer"
+                  onError={(e) => handleImageError(e, track.title, 'track')}
                   className="w-full h-full object-cover"
                 />
                 <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">

@@ -1,8 +1,9 @@
 # Apache / LiteSpeed configuration for Flontmie PHP Backend
 <IfModule mod_rewrite.c>
     RewriteEngine On
-    # Pass Authorization Header to PHP environment
+    # Pass Authorization & CSRF Headers to PHP environment
     RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+    RewriteRule .* - [E=HTTP_X_CSRF_TOKEN:%{HTTP:X-CSRF-Token}]
 </IfModule>
 
 # Protect config.php from direct HTTP reading

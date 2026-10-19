@@ -430,6 +430,84 @@ export const INITIAL_TRACKS: Track[] = [
       { time: 34, text: "You'd have to stop the world just to stop the feeling" },
       { time: 48, text: "Good luck, babe!" }
     ]
+  },
+  {
+    id: 'trk_yt_Gs069dndIYk',
+    videoId: 'Gs069dndIYk',
+    title: 'September',
+    artist: 'Earth, Wind & Fire',
+    artistId: 'art_ewf',
+    album: 'The Best of Earth, Wind & Fire, Vol. 1',
+    duration: 215,
+    genre: 'oldschool',
+    coverUrl: 'https://i.ytimg.com/vi/Gs069dndIYk/maxresdefault.jpg',
+    audioUrl: 'https://music.youtube.com/watch?v=Gs069dndIYk',
+    streams: 1950000000,
+    likes: 15400000,
+    bpm: 126,
+    moods: ['oldschool', 'party', 'energize'],
+    releaseDate: '2024-09-21',
+    isrc: 'US-SM1-78-00921',
+    upc: '074643564724',
+    label: 'Columbia / Legacy',
+    distributor: 'Sony Music',
+    lyrics: [
+      { time: 8, text: "Do you remember the 21st night of September?" },
+      { time: 18, text: "Love was changin' the minds of pretenders" },
+      { time: 28, text: "While chasin' the clouds away" },
+      { time: 40, text: "Our hearts were ringin' in the key that our souls were singin'" }
+    ]
+  },
+  {
+    id: 'trk_yt_a5uQMwRMHcs',
+    videoId: 'a5uQMwRMHcs',
+    title: 'Instant Crush',
+    artist: 'Daft Punk',
+    artistId: 'art_daft_punk',
+    album: 'Random Access Memories',
+    duration: 337,
+    genre: 'synthwave',
+    coverUrl: 'https://i.ytimg.com/vi/a5uQMwRMHcs/maxresdefault.jpg',
+    audioUrl: 'https://music.youtube.com/watch?v=a5uQMwRMHcs',
+    streams: 1120000000,
+    likes: 9800000,
+    bpm: 110,
+    moods: ['focus', 'energize'],
+    releaseDate: '2024-05-17',
+    isrc: 'US-SM1-13-00105',
+    upc: '888837168625',
+    label: 'Columbia Records',
+    distributor: 'Sony Music',
+    lyrics: [
+      { time: 10, text: "I didn't want to be the one to forget" },
+      { time: 20, text: "I thought of everything I'd never regret" },
+      { time: 32, text: "A little time with you is all that I get" },
+      { time: 44, text: "That's all we need because it's all we can take" }
+    ]
+  },
+  {
+    id: 'trk_yt_RxabLA7UQ9k',
+    videoId: 'RxabLA7UQ9k',
+    title: 'Time (Official Orchestral Ambient)',
+    artist: 'Hans Zimmer',
+    artistId: 'art_hans_zimmer',
+    album: 'Inception (Original Motion Picture Soundtrack)',
+    duration: 275,
+    genre: 'ambient',
+    coverUrl: 'https://i.ytimg.com/vi/RxabLA7UQ9k/maxresdefault.jpg',
+    audioUrl: 'https://music.youtube.com/watch?v=RxabLA7UQ9k',
+    streams: 780000000,
+    likes: 6400000,
+    bpm: 68,
+    moods: ['focus', 'relax'],
+    releaseDate: '2024-07-13',
+    isrc: 'US-WT1-10-00112',
+    upc: '794043145421',
+    label: 'WaterTower Music',
+    distributor: 'Warner Music Group',
+    lyrics: [
+      { time: 0, text: "[Cinematic atmospheric orchestral score building from delicate piano harmonics to sweeping ambient crescendos]" }
+    ]
   }
 ];
 

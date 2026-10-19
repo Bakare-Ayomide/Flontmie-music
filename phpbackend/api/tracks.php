@@ -6,15 +6,23 @@
 require_once __DIR__ . '/../config.php';
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth_helper.php';
+require_once __DIR__ . '/../artist_enrichment.php';
 
 $method = $_SERVER['REQUEST_METHOD'];
 $action = $_GET['action'] ?? '';
 $id = $_GET['id'] ?? '';
 $pdo = Database::getConnection();
 
+try {
+    $colCheck = $pdo->query("SHOW COLUMNS FROM tracks LIKE 'flontmie_plays'")->fetch();
+    if (!$colCheck) {
+        $pdo->exec("ALTER TABLE tracks ADD COLUMN flontmie_plays BIGINT DEFAULT 0 AFTER stream_count");
+    }
+} catch (Throwable $e) {}
+
 // --- STREAM COUNT INCREMENT ---
 if ($method === 'POST' && $action === 'stream' && !empty($id)) {
-    $stmt = $pdo->prepare("UPDATE tracks SET stream_count = stream_count + 1 WHERE id = ?");
+    $stmt = $pdo->prepare("UPDATE tracks SET stream_count = stream_count + 1, flontmie_plays = COALESCE(flontmie_plays, 0) + 1 WHERE id = ?");
     $stmt->execute([$id]);
 
     // Record user history if logged in
@@ -66,7 +74,12 @@ if ($method === 'GET' && $action === 'liked') {
 
     foreach ($tracks as &$t) {
         $t['mood_tags'] = !empty($t['mood_tags_json']) ? json_decode($t['mood_tags_json'], true) : [];
+        $t['cover_art_url'] = ArtistEnrichment::resolveArtworkUrl($t['cover_art_url'] ?? '', $t['video_id'] ?? $t['id']);
+        $t['yt_plays'] = ArtistEnrichment::parseMetric((string)($t['stream_count'] ?? ''))['compact'];
+        $t['flontmie_plays'] = (int)($t['flontmie_plays'] ?? 0);
         $t['is_liked'] = true;
+        $t['audio_url'] = '/phpbackend/api/stream.php?id=' . urlencode($t['id']);
+        unset($t['local_audio_path'], $t['local_artwork_path']);
     }
     json_response(['status' => 'success', 'tracks' => $tracks]);
 }
@@ -82,6 +95,11 @@ if ($method === 'GET' && !empty($id)) {
     }
 
     $track['mood_tags'] = !empty($track['mood_tags_json']) ? json_decode($track['mood_tags_json'], true) : [];
+    $track['cover_art_url'] = ArtistEnrichment::resolveArtworkUrl($track['cover_art_url'] ?? '', $track['video_id'] ?? $track['id']);
+    $track['yt_plays'] = ArtistEnrichment::parseMetric((string)($track['stream_count'] ?? ''))['compact'];
+    $track['flontmie_plays'] = (int)($track['flontmie_plays'] ?? 0);
+    $track['audio_url'] = '/phpbackend/api/stream.php?id=' . urlencode($track['id']);
+    unset($track['local_audio_path'], $track['local_artwork_path']);
 
     // Check liked status if user logged in
     $user = Auth::getCurrentUser();
@@ -100,14 +118,16 @@ if ($method === 'GET') {
     $genre = $_GET['genre'] ?? '';
     $artistId = $_GET['artist_id'] ?? '';
     $albumId = $_GET['album_id'] ?? '';
+    $country = $_GET['country'] ?? '';
+    $year = $_GET['year'] ?? '';
     $search = $_GET['q'] ?? '';
     $limit = min(100, max(1, (int)($_GET['limit'] ?? 50)));
     $offset = max(0, (int)($_GET['offset'] ?? 0));
 
-    $sql = "SELECT * FROM tracks WHERE is_deleted = 0";
+    $sql = "SELECT * FROM tracks WHERE is_deleted = 0 AND (status IS NULL OR status = 'published' OR status = 'active') AND audio_url NOT LIKE '%soundhelix%'";
     $params = [];
 
-    if (!empty($genre)) {
+    if (!empty($genre) && strtolower($genre) !== 'all') {
         $sql .= " AND (genre = ? OR mood_tags_json LIKE ?)";
         $params[] = $genre;
         $params[] = '%' . $genre . '%';
@@ -123,6 +143,16 @@ if ($method === 'GET') {
         $params[] = $albumId;
     }
 
+    if (!empty($country) && strtolower($country) !== 'all') {
+        $sql .= " AND country = ?";
+        $params[] = strtoupper($country);
+    }
+
+    if (!empty($year) && strtolower($year) !== 'all' && is_numeric($year)) {
+        $sql .= " AND release_year = ?";
+        $params[] = (int)$year;
+    }
+
     if (!empty($search)) {
         $sql .= " AND (title LIKE ? OR artist_name LIKE ? OR album_name LIKE ?)";
         $searchTerm = '%' . $search . '%';
@@ -131,11 +161,24 @@ if ($method === 'GET') {
         $params[] = $searchTerm;
     }
 
-    $sql .= " ORDER BY stream_count DESC, created_at DESC LIMIT {$limit} OFFSET {$offset}";
+    $sql .= " ORDER BY featured_on_home DESC, stream_count DESC, created_at DESC LIMIT {$limit} OFFSET {$offset}";
 
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
     $tracks = $stmt->fetchAll();
+
+    if (!empty($search)) {
+        try {
+            $authUser = Auth::getCurrentUser();
+            $stmtLog = $pdo->prepare("INSERT INTO search_logs (user_id, query, results_count, ip_address) VALUES (?, ?, ?, ?)");
+            $stmtLog->execute([
+                $authUser['id'] ?? null,
+                substr($search, 0, 255),
+                count($tracks),
+                $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1'
+            ]);
+        } catch (Exception $e) {}
+    }
 
     // Check user liked tracks map
     $user = Auth::getCurrentUser();
@@ -150,11 +193,13 @@ if ($method === 'GET') {
 
     foreach ($tracks as &$t) {
         $t['mood_tags'] = !empty($t['mood_tags_json']) ? json_decode($t['mood_tags_json'], true) : [];
+        $t['cover_art_url'] = ArtistEnrichment::resolveArtworkUrl($t['cover_art_url'] ?? '', $t['video_id'] ?? $t['id']);
+        $t['yt_plays'] = ArtistEnrichment::parseMetric((string)($t['stream_count'] ?? ''))['compact'];
+        $t['flontmie_plays'] = (int)($t['flontmie_plays'] ?? 0);
         $t['is_liked'] = isset($likedMap[$t['id']]);
-        if (empty($t['video_id']) && strpos($t['id'], 'yt_') === 0) {
-            $t['video_id'] = substr($t['id'], 3);
-        }
-        $t['videoId'] = $t['video_id'] ?? null;
+        $t['audio_url'] = '/phpbackend/api/stream.php?id=' . urlencode($t['id']);
+        $t['has_local_audio'] = !empty($t['local_audio_path']);
+        unset($t['local_audio_path'], $t['local_artwork_path']);
     }
 
     json_response([

@@ -27,6 +27,8 @@ import {
 } from './data/mockCatalog';
 import { audioEngine } from './services/audioEngine';
 import { api } from './services/api';
+import { resolveArtworkUrl, handleImageError } from './utils/artwork';
+import { formatCompactNumber } from './utils/formatters';
 import { Navbar } from './components/layout/Navbar';
 import { Sidebar } from './components/layout/Sidebar';
 import { YouTubePlayerEmbed } from './components/player/YouTubePlayerEmbed';
@@ -57,30 +59,30 @@ export default function App() {
   // Navigation & Persona State
   const [currentPersona, setCurrentPersona] = useState<Persona>('listener');
   const [currentTab, setCurrentTab] = useState<string>('home');
+  const [isAdminRoute, setIsAdminRoute] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    const p = window.location.pathname.toLowerCase();
+    const h = window.location.hash.toLowerCase();
+    return p === '/admin' || p.startsWith('/admin/') || h === '#admin';
+  });
   const [selectedMood, setSelectedMood] = useState<MoodCategory>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
   const [selectedArtistId, setSelectedArtistId] = useState<string | null>(null);
   const [isLoadingPlaylist, setIsLoadingPlaylist] = useState<boolean>(false);
 
-  // Authentication & User Session State
-  const [currentUser, setCurrentUser] = useState<AuthUser | null>({
-    id: 'usr_admin_001',
-    username: 'admin',
-    email: 'admin@flontmie.com',
-    role: 'admin',
-    display_name: 'Flontmie Owner & Platform Admin',
-    avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
-    country: 'US',
-  });
+  // Authentication & User Session State (Hydrated from server-side session / token)
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
+  const [isAuthChecking, setIsAuthChecking] = useState<boolean>(true);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
   const [authInitialMode, setAuthInitialMode] = useState<'login' | 'signup'>('login');
 
   // Desktop sidebar collapse state
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
 
-  // Music Catalog & Hub State - Loaded from Real MySQL Backend & YouTube Music
+  // Music Catalog & Hub State - Loaded from Flontmie PHP/MySQL Backend
   const [tracks, setTracks] = useState<Track[]>(INITIAL_TRACKS);
+  const [albums, setAlbums] = useState<any[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>(INITIAL_PLAYLISTS);
   const [artistProfiles, setArtistProfiles] = useState<Record<string, ArtistProfile>>(ARTIST_PROFILES);
   const [likedTrackIds, setLikedTrackIds] = useState<string[]>([]);
@@ -123,9 +125,17 @@ export default function App() {
 
   // Client-side URL synchronization & Routing
   const navigateTab = useCallback((tab: string) => {
-    setCurrentTab(tab);
     setSelectedPlaylistId(null);
     setSelectedArtistId(null);
+    if (tab === 'admin') {
+      setIsAdminRoute(true);
+      try {
+        window.history.pushState(null, '', '/admin');
+      } catch {}
+      return;
+    }
+    setIsAdminRoute(false);
+    setCurrentTab(tab);
     try {
       if (tab === 'home') {
         window.history.pushState(null, '', '/');
@@ -136,6 +146,7 @@ export default function App() {
   }, []);
 
   const navigatePlaylist = useCallback((id: string) => {
+    setIsAdminRoute(false);
     setSelectedPlaylistId(id);
     setSelectedArtistId(null);
     setCurrentPersona('listener');
@@ -151,6 +162,15 @@ export default function App() {
         const hash = window.location.hash.toLowerCase();
         const search = new URLSearchParams(window.location.search);
         const plParam = search.get('playlist');
+
+        if (path === '/admin' || path.startsWith('/admin/') || hash === '#admin') {
+          setIsAdminRoute(true);
+          setSelectedPlaylistId(null);
+          setSelectedArtistId(null);
+          return;
+        }
+
+        setIsAdminRoute(false);
 
         if (plParam) {
           setSelectedPlaylistId(plParam);
@@ -249,14 +269,19 @@ export default function App() {
     }
   }, [selectedPlaylistId, playlists]);
 
-  // Load Live Catalog from MySQL Backend
-  useEffect(() => {
+  const refreshCatalogFromDatabase = useCallback(() => {
     api.getTracks().then((backendTracks) => {
       if (backendTracks && backendTracks.length > 0) {
         setTracks(backendTracks);
         setCurrentTrack((curr) => curr || backendTracks[0]);
         setDuration((dur) => (dur > 0 ? dur : (backendTracks[0]?.duration || 180)));
         setQueue((q) => (q.length > 0 ? q : backendTracks.slice(1)));
+      }
+    }).catch(() => {});
+
+    api.getAlbums().then((backendAlbums) => {
+      if (Array.isArray(backendAlbums)) {
+        setAlbums(backendAlbums);
       }
     }).catch(() => {});
 
@@ -275,15 +300,33 @@ export default function App() {
         setPlaylists(backendPlaylists);
       }
     }).catch(() => {});
+  }, []);
+
+  // Load Live Catalog from MySQL Backend
+  useEffect(() => {
+    refreshCatalogFromDatabase();
 
     // Hydrate current user session if token exists
-    api.getCurrentUser().then((res) => {
-      if (res && res.user) {
-        setCurrentUser(res.user);
-        setCurrentPersona(res.user.role);
-      }
-    }).catch(() => {});
-  }, []);
+    api.getCurrentUser()
+      .then((res) => {
+        if (res && res.user) {
+          setCurrentUser(res.user);
+          if (res.user.role !== 'admin') {
+            setCurrentPersona(res.user.role);
+          }
+          if (res.must_change_password || res.user.must_change_password) {
+            setIsAuthModalOpen(true);
+          }
+        }
+      })
+      .catch(() => {
+        api.setToken(null, null);
+        setCurrentUser(null);
+      })
+      .finally(() => {
+        setIsAuthChecking(false);
+      });
+  }, [refreshCatalogFromDatabase]);
 
   // Configure Audio Engine Listeners
   useEffect(() => {
@@ -302,7 +345,7 @@ export default function App() {
     setDuration(track.duration);
     setCurrentTime(startAt);
     setIsPlaying(true);
-    audioEngine.playTrack(track.genre, track.bpm, track.duration, startAt);
+    audioEngine.playTrack(track.genre, track.bpm, track.duration, startAt, track.audioUrl, track.id);
     // Report stream play to backend MySQL
     api.registerStream(track.id);
   };
@@ -324,7 +367,7 @@ export default function App() {
 
   const handleNextTrack = useCallback(() => {
     if (repeatMode === 'one' && currentTrack) {
-      audioEngine.playTrack(currentTrack.genre, currentTrack.bpm, currentTrack.duration, 0);
+      audioEngine.playTrack(currentTrack.genre, currentTrack.bpm, currentTrack.duration, 0, currentTrack.audioUrl, currentTrack.id);
       setCurrentTime(0);
       setIsPlaying(true);
       return;
@@ -576,35 +619,40 @@ export default function App() {
     let id = artistId;
     if (!artistProfiles[id]) {
       const foundEntry = Object.entries(artistProfiles).find(
-        ([k, v]) => v.name.toLowerCase() === artistId.toLowerCase() || k.toLowerCase() === artistId.toLowerCase()
+        ([k, v]) =>
+          v.name.toLowerCase() === artistId.toLowerCase() ||
+          k.toLowerCase() === artistId.toLowerCase() ||
+          v.ytBrowseId === artistId
       );
       if (foundEntry) {
         id = foundEntry[0];
       } else {
-        const newId = `artist-${artistId.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
         const fallbackProfile: ArtistProfile = {
-          id: newId,
-          name: artistId,
-          avatarUrl: IMAGES.partymix,
-          headerUrl: IMAGES.partymix,
-          bio: `${artistId} is an official recording artist streaming on Flontmie.`,
+          id: artistId,
+          name: artistId.startsWith('UC') ? 'Loading Artist...' : artistId,
+          avatarUrl: resolveArtworkUrl('', 'artist', artistId),
+          headerUrl: resolveArtworkUrl('', 'artist', artistId),
+          bio: '',
           verified: true,
-          monthlyListeners: 142000,
-          totalStreams: 920000,
-          followers: 18500,
-          label: 'Independent Flontmie Release',
+          monthlyListeners: null,
+          totalStreams: null,
+          followers: null,
+          label: 'Official Catalog',
           topTracks: [],
-          primaryGenre: 'Pop',
+          primaryGenre: 'Music',
           country: 'US',
           claimedStatus: 'Verified',
         };
-        setArtistProfiles((prev) => ({ ...prev, [newId]: fallbackProfile }));
-        id = newId;
+        setArtistProfiles((prev) => ({ ...prev, [artistId]: fallbackProfile }));
+        id = artistId;
       }
     }
     setSelectedArtistId(id);
     setSelectedPlaylistId(null);
     setCurrentPersona('listener');
+    try {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch {}
   };
 
   const handleCreateArtistProfile = (newProfile: ArtistProfile) => {
@@ -665,11 +713,16 @@ export default function App() {
     <div className="min-h-screen bg-[#030303] text-white flex flex-col font-sans selection:bg-red-600/30 overflow-x-hidden">
       {/* Top Bar Navigation */}
       <Navbar
-        currentPersona={currentPersona}
+        currentPersona={currentPersona === 'admin' ? 'listener' : currentPersona}
         onSelectPersona={(p) => {
+          if (p === 'admin') return;
+          setIsAdminRoute(false);
           setCurrentPersona(p);
           setSelectedPlaylistId(null);
           setSelectedArtistId(null);
+          try {
+            window.history.pushState(null, '', '/');
+          } catch {}
         }}
         selectedMood={selectedMood}
         onSelectMood={setSelectedMood}
@@ -686,8 +739,12 @@ export default function App() {
           setIsAuthModalOpen(true);
         }}
         onOpenProfile={() => {
+          setIsAdminRoute(false);
           setCurrentTab('profile');
           setCurrentPersona('listener');
+          try {
+            window.history.pushState(null, '', '/profile');
+          } catch {}
         }}
       />
 
@@ -700,8 +757,10 @@ export default function App() {
           selectedPlaylistId={selectedPlaylistId}
           onSelectPlaylist={navigatePlaylist}
           onCreatePlaylist={() => setIsCreatePlaylistOpen(true)}
-          currentPersona={currentPersona}
+          currentPersona={currentPersona === 'admin' ? 'listener' : currentPersona}
           onSelectPersona={(p) => {
+            if (p === 'admin') return;
+            setIsAdminRoute(false);
             setCurrentPersona(p);
             setSelectedPlaylistId(null);
             setSelectedArtistId(null);
@@ -713,6 +772,92 @@ export default function App() {
         {/* Main Workspace Viewport */}
         <main className="flex-1 min-w-0 overflow-y-auto px-3 sm:px-6 md:px-8 py-5 h-[calc(100vh-57px-72px)] pb-24 md:pb-8">
           <ErrorBoundary fallbackTitle="Unable to load this view" onReset={() => navigateTab('home')}>
+          {/* DEDICATED PROTECTED /admin ROUTE */}
+          {isAdminRoute ? (
+            isAuthChecking ? (
+              <div className="py-24 text-center space-y-4">
+                <div className="w-10 h-10 border-2 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto" />
+                <p className="text-xs text-neutral-400">Verifying administrator session and server permissions...</p>
+              </div>
+            ) : !currentUser ? (
+              <div className="max-w-md mx-auto my-16 p-8 rounded-3xl bg-neutral-900/70 border border-amber-500/30 text-center space-y-5 shadow-2xl">
+                <div className="w-14 h-14 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-amber-400 flex items-center justify-center mx-auto">
+                  <Sparkles className="w-7 h-7" />
+                </div>
+                <div className="space-y-1.5">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-amber-400">Protected Route · /admin</span>
+                  <h2 className="text-xl font-extrabold text-white">Administrator Authentication Required</h2>
+                  <p className="text-xs text-neutral-400">
+                    Sign in with an authorized Flontmie administrator account to access platform governance.
+                  </p>
+                </div>
+                <div className="flex flex-col gap-2.5 pt-2">
+                  <button
+                    onClick={() => {
+                      setAuthInitialMode('login');
+                      setIsAuthModalOpen(true);
+                    }}
+                    className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs uppercase tracking-wider transition-all cursor-pointer"
+                  >
+                    Sign In as Administrator
+                  </button>
+                  <button
+                    onClick={() => navigateTab('home')}
+                    className="w-full py-2.5 rounded-xl bg-white/[0.06] hover:bg-white/10 text-neutral-300 text-xs font-semibold transition-all cursor-pointer"
+                  >
+                    Return to Flontmie Streaming
+                  </button>
+                </div>
+              </div>
+            ) : currentUser.role !== 'admin' ? (
+              <div className="max-w-md mx-auto my-16 p-8 rounded-3xl bg-red-950/30 border border-red-500/30 text-center space-y-5 shadow-2xl">
+                <div className="w-14 h-14 rounded-2xl bg-red-500/20 border border-red-500/40 text-red-400 flex items-center justify-center mx-auto font-mono font-bold text-lg">
+                  403
+                </div>
+                <div className="space-y-1.5">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-red-400">Access Denied</span>
+                  <h2 className="text-xl font-extrabold text-white">Administrator Privileges Required</h2>
+                  <p className="text-xs text-neutral-300">
+                    Your account ({currentUser.email}) is registered with the <strong className="uppercase">{currentUser.role}</strong> role and does not have permission to access <code className="text-red-300">/admin</code>.
+                  </p>
+                </div>
+                <button
+                  onClick={() => navigateTab('home')}
+                  className="w-full py-3 rounded-xl bg-white text-black font-bold text-xs uppercase tracking-wider hover:bg-neutral-200 transition-all cursor-pointer"
+                >
+                  Return to Streaming Home
+                </button>
+              </div>
+            ) : (
+              <AdminDashboard
+                currentUser={currentUser}
+                tracks={tracks}
+                onToggleTrackFeatured={handleToggleTrackFeatured}
+                onUpdateTrackStatus={handleUpdateTrackStatus}
+                onDeleteTrack={handleDeleteTrack}
+                permissions={adminPermissions}
+                onUpdatePermission={handleUpdatePermission}
+                labelArtists={labelArtists}
+                onTrackImported={(newTrack) => {
+                  setTracks((prev) => {
+                    const exists = prev.some((t) => t.id === newTrack.id);
+                    return exists ? prev.map((t) => (t.id === newTrack.id ? newTrack : t)) : [newTrack, ...prev];
+                  });
+                  refreshCatalogFromDatabase();
+                }}
+                onExitAdmin={() => {
+                  refreshCatalogFromDatabase();
+                  navigateTab('home');
+                }}
+                onSignOut={async () => {
+                  await api.logout();
+                  setCurrentUser(null);
+                  navigateTab('home');
+                }}
+              />
+            )
+          ) : (
+          <>
           {/* Persona View 1: Consumer Streaming App (Flontmie) */}
           {currentPersona === 'listener' && (
             <>
@@ -732,6 +877,7 @@ export default function App() {
                   }}
                   onOpenShareModal={() => setIsShareModalOpen(true)}
                   onBack={() => setSelectedArtistId(null)}
+                  onSelectArtist={handleViewArtist}
                 />
               ) : selectedPlaylist ? (
                 <PlaylistView
@@ -786,25 +932,26 @@ export default function App() {
                   <div className="border-b border-white/[0.08] pb-5">
                     <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-red-500 mb-1">
                       <Compass className="w-4 h-4" />
-                      <span>Flontmie Music Discovery & Charts</span>
+                      <span>Flontmie Music Catalog & Charts</span>
                     </div>
                     <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">Explore</h1>
                     <p className="text-xs sm:text-sm text-neutral-400 mt-1">
-                      Discover music worldwide with the real-time YouTube Music API engine, genre spotlights, and certified charts
+                      Browse and stream songs, albums, verified artists, and editorial playlists hosted on Flontmie
                     </p>
                   </div>
 
-                  {/* YouTube Music Real-Time Discovery Engine */}
+                  {/* Flontmie Database-Driven Catalog Explorer */}
                   <YouTubeMusicDiscovery
+                    tracks={tracks}
+                    albums={albums}
+                    artists={Object.values(artistProfiles)}
+                    playlists={playlists}
+                    currentTrackId={currentTrack?.id}
+                    isPlaying={isPlaying}
                     onPlayTrack={handlePlayTrack}
-                    onImportTrack={(newTrack) => {
-                      setTracks((prev) => {
-                        const exists = prev.some((t) => t.id === newTrack.id);
-                        return exists ? prev : [newTrack, ...prev];
-                      });
-                    }}
-                    onSelectMood={(mood) => setSelectedMood(mood as any)}
-                    onViewArtist={handleViewArtist}
+                    onSelectArtist={handleViewArtist}
+                    onSelectPlaylist={navigatePlaylist}
+                    onToggleLike={handleToggleLike}
                   />
 
                   {/* Explore Genre Highlights Grid */}
@@ -856,9 +1003,10 @@ export default function App() {
                                   {i + 1}
                                 </span>
                                 <img
-                                  src={t.coverUrl || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600'}
+                                  src={resolveArtworkUrl(t.coverUrl, 'track', t.title)}
                                   alt={t.title}
                                   referrerPolicy="no-referrer"
+                                  onError={(e) => handleImageError(e, t.title, 'track')}
                                   className="w-9 h-9 rounded-lg object-cover shrink-0 bg-neutral-800"
                                 />
                                 <div className="min-w-0">
@@ -870,7 +1018,7 @@ export default function App() {
                               </div>
                               <div className="flex items-center gap-3 shrink-0 ml-2">
                                 <span className="font-mono tabular-nums text-neutral-400 text-[11px]">
-                                  {(Number(t.streams) || 0).toLocaleString()}
+                                  {formatCompactNumber(t.ytPlays ?? t.streams)} plays
                                 </span>
                                 <Play className="w-3.5 h-3.5 text-neutral-400 opacity-0 group-hover:opacity-100 fill-current hover:text-white transition-opacity" />
                               </div>
@@ -891,7 +1039,7 @@ export default function App() {
                       <div className="space-y-2">
                         {playlists.map((pl) => {
                           const trackCount = Array.isArray(pl.trackIds) ? pl.trackIds.length : 0;
-                          const followers = Number(pl.followers) || 1200;
+                          const savesFormatted = formatCompactNumber(pl.followers);
                           return (
                             <div
                               key={pl.id}
@@ -900,9 +1048,10 @@ export default function App() {
                             >
                               <div className="flex items-center gap-3 min-w-0">
                                 <img
-                                  src={pl.coverUrl || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600'}
+                                  src={resolveArtworkUrl(pl.coverUrl, 'playlist', pl.title)}
                                   alt={pl.title}
                                   referrerPolicy="no-referrer"
+                                  onError={(e) => handleImageError(e, pl.title, 'playlist')}
                                   className="w-10 h-10 rounded-lg object-cover shrink-0 bg-neutral-800"
                                 />
                                 <div className="min-w-0">
@@ -915,7 +1064,7 @@ export default function App() {
                                 </div>
                               </div>
                               <span className="text-neutral-400 font-mono text-[11px] shrink-0 ml-2">
-                                {followers.toLocaleString()} saves
+                                {savesFormatted !== 'N/A' ? `${savesFormatted} saves` : 'N/A'}
                               </span>
                             </div>
                           );
@@ -938,7 +1087,13 @@ export default function App() {
                         className="p-3 rounded-2xl bg-neutral-900/30 border border-white/[0.06] hover:border-white/20 transition-all cursor-pointer group"
                       >
                         <div className="aspect-square rounded-xl overflow-hidden bg-neutral-800 mb-2">
-                          <img src={pl.coverUrl} alt={pl.title} referrerPolicy="no-referrer" className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                          <img
+                            src={resolveArtworkUrl(pl.coverUrl, 'playlist', pl.title)}
+                            alt={pl.title}
+                            referrerPolicy="no-referrer"
+                            onError={(e) => handleImageError(e, pl.title, 'playlist')}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                          />
                         </div>
                         <h4 className="text-xs font-semibold text-white truncate">{pl.title}</h4>
                         <p className="text-[11px] text-neutral-400 truncate">{pl.curator}</p>
@@ -970,7 +1125,13 @@ export default function App() {
                         >
                           <div className="flex items-center gap-3 min-w-0">
                             <span className="font-mono text-neutral-500 w-4 shrink-0">{idx + 1}</span>
-                            <img src={t.coverUrl} alt={t.title} referrerPolicy="no-referrer" className="w-9 h-9 rounded-lg object-cover shrink-0" />
+                            <img
+                              src={resolveArtworkUrl(t.coverUrl, 'track', t.title)}
+                              alt={t.title}
+                              referrerPolicy="no-referrer"
+                              onError={(e) => handleImageError(e, t.title, 'track')}
+                              className="w-9 h-9 rounded-lg object-cover shrink-0"
+                            />
                             <div className="min-w-0">
                               <p className="font-semibold text-white truncate">{t.title}</p>
                               <p className="text-neutral-400 truncate">{t.artist}</p>
@@ -996,20 +1157,26 @@ export default function App() {
                   onUpdateProfile={(updated) => {
                     setCurrentUser((prev) => (prev ? { ...prev, ...updated } : null));
                   }}
-                  onSignOut={() => {
-                    api.setToken(null);
+                  onSignOut={async () => {
+                    await api.logout();
                     setCurrentUser(null);
                     setCurrentTab('home');
                   }}
                   onSwitchPortal={(role) => {
-                    setCurrentPersona(role);
-                    setCurrentTab('home');
+                    if (role === 'admin') {
+                      navigateTab('admin');
+                    } else {
+                      setIsAdminRoute(false);
+                      setCurrentPersona(role);
+                      setCurrentTab('home');
+                    }
                   }}
                   onBackToHome={() => setCurrentTab('home')}
                 />
               ) : (
                 <HomeFeed
                   tracks={tracks}
+                  albums={albums}
                   playlists={playlists}
                   currentTrack={currentTrack}
                   isPlaying={isPlaying}
@@ -1064,21 +1231,7 @@ export default function App() {
               onViewArtistPublicPage={handleViewArtist}
             />
           )}
-
-          {/* Persona View 5: Flontmie Owner Admin Console */}
-          {currentPersona === 'admin' && (
-            <AdminDashboard
-              tracks={tracks}
-              onToggleTrackFeatured={handleToggleTrackFeatured}
-              onUpdateTrackStatus={handleUpdateTrackStatus}
-              onDeleteTrack={handleDeleteTrack}
-              permissions={adminPermissions}
-              onUpdatePermission={handleUpdatePermission}
-              labelArtists={labelArtists}
-              onTrackImported={(newTrack) => {
-                setTracks((prev) => [newTrack, ...prev]);
-              }}
-            />
+          </>
           )}
           </ErrorBoundary>
         </main>
@@ -1088,8 +1241,10 @@ export default function App() {
       <MobileDock
         currentTab={currentTab}
         onSelectTab={navigateTab}
-        currentPersona={currentPersona}
+        currentPersona={currentPersona === 'admin' ? 'listener' : currentPersona}
         onSelectPersona={(p) => {
+          if (p === 'admin') return;
+          setIsAdminRoute(false);
           setCurrentPersona(p);
           setSelectedPlaylistId(null);
           setSelectedArtistId(null);
@@ -1252,9 +1407,9 @@ export default function App() {
         }}
       />
 
-      {/* Real YouTube Music Streaming & Video Playback Engine */}
+      {/* Fallback Embed Engine (only active if track has no local audioUrl) */}
       <YouTubePlayerEmbed
-        currentTrack={currentTrack}
+        currentTrack={currentTrack && !currentTrack.audioUrl ? currentTrack : null}
         isPlaying={isPlaying}
         volume={volume}
         isVideoMode={isVideoMode}

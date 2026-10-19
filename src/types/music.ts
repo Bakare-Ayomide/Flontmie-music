@@ -25,7 +25,10 @@ export interface Track {
   genre: MusicGenre;
   bpm: number;
   moods: MoodCategory[];
+  moodTags?: string[];
   streams: number;
+  ytPlays?: string | number | null;
+  flontmiePlays?: number;
   likes: number;
   isExplicit?: boolean;
   lyrics?: LyricLine[];
@@ -106,30 +109,72 @@ export interface AlbumRelease {
   audioFormat?: '24-bit FLAC (Lossless)' | 'WAV 48kHz / 24-bit' | 'MP3 320kbps CBR';
 }
 
+export interface ArtistDiscographyItem {
+  id: string;
+  browseId?: string;
+  collectionId?: string | number;
+  title: string;
+  artist: string;
+  artistId?: string;
+  year?: string;
+  releaseDate?: string;
+  type?: 'Album' | 'Single' | 'EP' | 'Playlist' | 'Compilation';
+  subtitle?: string;
+  coverUrl: string;
+  trackCount?: number;
+  explicit?: boolean;
+  tracks?: Track[];
+}
+
+export interface RelatedArtistItem {
+  id: string;
+  browseId?: string;
+  name: string;
+  avatarUrl: string;
+  subscribers?: string;
+  monthlyAudience?: string;
+}
+
 export interface ArtistProfile {
   id: string;
   name: string;
   avatarUrl: string;
   headerUrl: string;
   bio: string;
+  bioSource?: string;
+  bioUrl?: string;
+  wikidataId?: string;
+  ytBrowseId?: string;
   verified: boolean;
-  monthlyListeners: number;
-  totalStreams: number;
-  followers: number;
+  monthlyListeners: number | null;
+  ytMonthlyAudience?: string | null;
+  ytSubscribers?: string | null;
+  ytTotalViews?: string | null;
+  totalStreams: number | null;
+  flontmieStreams?: number;
+  followers: number | null;
+  flontmieFollowers?: number;
   label: string;
   topTracks: string[];
+  popularSongs?: Track[];
+  albums?: ArtistDiscographyItem[];
+  singlesEps?: ArtistDiscographyItem[];
+  featuredOn?: ArtistDiscographyItem[];
+  playlists?: ArtistDiscographyItem[];
+  relatedArtists?: RelatedArtistItem[];
   splitSheets?: SplitSheet[];
   country?: string;
   primaryGenre?: string;
   distributorId?: string;
   distributorName?: string;
-  claimedStatus?: 'Verified' | 'Pending Claim' | 'Claimed' | 'Official Ingestion';
+  claimedStatus?: 'Verified' | 'Pending Claim' | 'Claimed' | 'Official Ingestion' | string;
   socialLinks?: {
     instagram?: string;
     twitter?: string;
     spotify?: string;
     youtube?: string;
     website?: string;
+    wikipedia?: string;
   };
   associatedAlbums?: AlbumRelease[];
 }
@@ -195,27 +240,34 @@ export interface DistributorIngestionItem {
   isrc: string;
   upc: string;
   genre: MusicGenre;
-  releaseDate: string;
-  flontmieStatus: 'Live on Flontmie' | 'Ingestion QA' | 'Metadata Processing' | 'Pending Rights Review';
-  grantedUploadAccess: boolean;
-  uploadedByDistributor: string; // e.g., 'TuneCore Direct', 'CDBaby Gateway', 'Ditto Music Hub'
-  audioQuality: 'Lossless Hi-Res' | '24-bit Flac' | 'Standard 320kbps';
+  releaseDate?: string;
+  flontmieStatus?: 'Live on Flontmie' | 'Ingestion QA' | 'Metadata Processing' | 'Pending Rights Review';
+  grantedUploadAccess?: boolean;
+  uploadedByDistributor?: string; // e.g., 'TuneCore Direct', 'CDBaby Gateway', 'Ditto Music Hub'
+  audioQuality?: 'Lossless Hi-Res' | '24-bit Flac' | 'Standard 320kbps';
+  status?: string;
+  ingestionDate?: string;
+  distributorId?: string;
 }
 
 export interface DistributorAccessGrant {
   id: string;
-  entityName: string;
-  entityType: 'Artist' | 'Record Label';
+  entityName?: string;
+  entityType?: 'Artist' | 'Record Label';
   distributorName: string;
-  canUploadTracks: boolean;
-  canUploadAlbums: boolean;
-  canModifyLiveMetadata: boolean;
-  maxMonthlyReleases: number;
-  status: 'Active' | 'Pending' | 'Revoked';
+  canUploadTracks?: boolean;
+  canUploadAlbums?: boolean;
+  canModifyLiveMetadata?: boolean;
+  maxMonthlyReleases?: number;
+  status: 'Active' | 'Pending' | 'Revoked' | 'active';
+  contactEmail?: string;
+  grantedAt?: string;
+  allowedLabels?: string[];
+  ipAllowlist?: string[];
 }
 
 export interface AdminRolePermission {
-  role: 'artist' | 'label' | 'distributor' | 'listener';
+  role: 'admin' | 'artist' | 'label' | 'distributor' | 'listener';
   name: string;
   description: string;
   canDirectUpload: boolean;

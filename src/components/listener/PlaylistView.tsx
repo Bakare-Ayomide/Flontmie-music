@@ -1,5 +1,7 @@
 import React from 'react';
 import { Playlist, Track } from '../../types/music';
+import { resolveArtworkUrl, handleImageError } from '../../utils/artwork';
+import { formatCompactNumber } from '../../utils/formatters';
 import { 
   Play, 
   Shuffle, 
@@ -70,7 +72,7 @@ export const PlaylistView: React.FC<PlaylistViewProps> = ({
 
   const totalDuration = tracks.reduce((acc, t) => acc + (Number(t?.duration) || 0), 0);
   const totalMinutes = Math.floor(totalDuration / 60);
-  const followersCount = Number(playlist.followers) || 0;
+  const followersFormatted = formatCompactNumber(playlist.followers);
 
   return (
     <div className="space-y-6 pb-20 animate-in fade-in duration-200">
@@ -88,22 +90,13 @@ export const PlaylistView: React.FC<PlaylistViewProps> = ({
       {/* Playlist Hero Banner */}
       <div className="flex flex-col md:flex-row items-start md:items-end gap-6 p-6 md:p-8 bg-gradient-to-b from-neutral-800/50 to-transparent rounded-2xl border border-white/[0.06]">
         <div className="w-44 h-44 md:w-56 md:h-56 rounded-xl overflow-hidden shadow-2xl shrink-0 bg-neutral-800 border border-white/10 relative group">
-          {playlist.coverUrl ? (
-            <img
-              src={playlist.coverUrl}
-              alt={playlist.title || 'Playlist'}
-              referrerPolicy="no-referrer"
-              className="w-full h-full object-cover"
-              onError={(e) => {
-                // Fallback if image fails to load
-                (e.target as HTMLElement).style.display = 'none';
-              }}
-            />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center bg-neutral-900 text-neutral-600">
-              <Music className="w-16 h-16" />
-            </div>
-          )}
+          <img
+            src={resolveArtworkUrl(playlist.coverUrl, 'playlist', playlist.title)}
+            alt={playlist.title || 'Playlist'}
+            referrerPolicy="no-referrer"
+            onError={(e) => handleImageError(e, playlist.title, 'playlist')}
+            className="w-full h-full object-cover"
+          />
         </div>
 
         <div className="space-y-3 flex-1 min-w-0">
@@ -121,11 +114,11 @@ export const PlaylistView: React.FC<PlaylistViewProps> = ({
             {playlist.description || 'Curated music collection on Flontmie.'}
           </p>
 
-          {/* Clean metadata line with typographic separators (anti-slop rule) */}
+          {/* Clean metadata line with typographic separators */}
           <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-400 pt-1">
             <span className="font-semibold text-white">{playlist.curator || 'Flontmie Editorial'}</span>
             <span aria-hidden="true">·</span>
-            <span className="font-mono tabular-nums">{followersCount.toLocaleString()} followers</span>
+            <span className="font-mono tabular-nums">{followersFormatted !== 'N/A' ? `${followersFormatted} saves` : 'N/A saves'}</span>
             <span aria-hidden="true">·</span>
             <span className="font-mono tabular-nums">{tracks.length} songs</span>
             <span aria-hidden="true">·</span>
@@ -256,9 +249,10 @@ export const PlaylistView: React.FC<PlaylistViewProps> = ({
                 {/* Title & Artist */}
                 <div className="col-span-6 md:col-span-5 flex items-center gap-3 min-w-0">
                   <img
-                    src={track.coverUrl || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600'}
+                    src={resolveArtworkUrl(track.coverUrl, 'track', track.title)}
                     alt={track.title || 'Track'}
                     referrerPolicy="no-referrer"
+                    onError={(e) => handleImageError(e, track.title, 'track')}
                     className="w-10 h-10 rounded object-cover shrink-0 bg-neutral-800"
                   />
                   <div className="min-w-0">
@@ -285,7 +279,7 @@ export const PlaylistView: React.FC<PlaylistViewProps> = ({
 
                 {/* Stream count */}
                 <div className="col-span-3 md:col-span-2 text-right font-mono tabular-nums text-neutral-400">
-                  {streamCount.toLocaleString()}
+                  {formatCompactNumber(track.ytPlays ?? streamCount)}
                 </div>
 
                 {/* Duration & quick actions */}

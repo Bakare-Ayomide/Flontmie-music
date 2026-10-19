@@ -24,6 +24,8 @@ import {
 import { Track, Playlist, Persona } from '../../types/music';
 import { AuthUser } from '../auth/AuthModal';
 
+import { api } from '../../services/api';
+
 interface ProfilePageProps {
   currentUser: AuthUser | null;
   likedTracks: Track[];
@@ -54,12 +56,13 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
   const [avatarUrl, setAvatarUrl] = useState(currentUser?.avatar_url || '');
   const [bio, setBio] = useState('Passionate music creator and listener on Flontmie.');
   const [isSaved, setIsSaved] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passwordMsg, setPasswordMsg] = useState<string | null>(null);
 
   const roleMeta: Record<Persona, { label: string; color: string; icon: React.ReactNode }> = {
-    admin: { label: 'Platform Owner / Admin', color: 'bg-amber-500/20 text-amber-400 border-amber-500/30', icon: <ShieldCheck className="w-3.5 h-3.5" /> },
+    admin: { label: 'Platform Administrator', color: 'bg-amber-500/20 text-amber-400 border-amber-500/30', icon: <ShieldCheck className="w-3.5 h-3.5" /> },
     distributor: { label: 'Music Distributor', color: 'bg-purple-500/20 text-purple-400 border-purple-500/30', icon: <Network className="w-3.5 h-3.5" /> },
     label: { label: 'Record Label', color: 'bg-blue-500/20 text-blue-400 border-blue-500/30', icon: <Building2 className="w-3.5 h-3.5" /> },
     artist: { label: 'Artist / Creator', color: 'bg-red-500/20 text-red-400 border-red-500/30', icon: <Mic2 className="w-3.5 h-3.5" /> },
@@ -69,32 +72,58 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
   const userRole = currentUser?.role || 'listener';
   const roleInfo = roleMeta[userRole];
 
-  const handleSaveProfile = (e: React.FormEvent) => {
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    onUpdateProfile({
-      display_name: displayName,
-      email: email,
-      country: country,
-      avatar_url: avatarUrl
-    });
-    setIsSaved(true);
-    setTimeout(() => setIsSaved(false), 2500);
+    try {
+      const res = await api.updateProfile({
+        display_name: displayName,
+        country: country,
+        avatar_url: avatarUrl
+      });
+      if (res && res.user) {
+        onUpdateProfile(res.user);
+      } else {
+        onUpdateProfile({
+          display_name: displayName,
+          email: email,
+          country: country,
+          avatar_url: avatarUrl
+        });
+      }
+      setIsSaved(true);
+      setTimeout(() => setIsSaved(false), 2500);
+    } catch {
+      onUpdateProfile({
+        display_name: displayName,
+        email: email,
+        country: country,
+        avatar_url: avatarUrl
+      });
+      setIsSaved(true);
+      setTimeout(() => setIsSaved(false), 2500);
+    }
   };
 
-  const handleChangePassword = (e: React.FormEvent) => {
+  const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newPassword || newPassword.length < 6) {
-      setPasswordMsg('Password must be at least 6 characters.');
+    if (!newPassword || newPassword.length < 8) {
+      setPasswordMsg('New password must be at least 8 characters.');
       return;
     }
     if (newPassword !== confirmPassword) {
       setPasswordMsg('Passwords do not match.');
       return;
     }
-    setPasswordMsg('Password updated successfully!');
-    setNewPassword('');
-    setConfirmPassword('');
-    setTimeout(() => setPasswordMsg(null), 3000);
+    try {
+      const res = await api.changePassword(currentPassword, newPassword);
+      setPasswordMsg(res.message || 'Password updated successfully!');
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setTimeout(() => setPasswordMsg(null), 3000);
+    } catch (err: any) {
+      setPasswordMsg(err?.message || 'Failed to update password.');
+    }
   };
 
   return (

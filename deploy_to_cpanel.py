@@ -100,8 +100,9 @@ def prepare_root_htaccess():
   RewriteEngine On
   RewriteBase /
 
-  # Forward Authorization Header to PHP scripts
+  # Forward Authorization & CSRF Headers to PHP scripts
   RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+  RewriteRule .* - [E=HTTP_X_CSRF_TOKEN:%{HTTP:X-CSRF-Token}]
 
   # Never rewrite phpbackend API requests or uploads
   RewriteRule ^phpbackend/ - [L]
@@ -148,7 +149,7 @@ def main():
     print("[+] All files uploaded to cPanel successfully!")
 
     # 3. Trigger database migrations
-    print("\n--- Step 3: Triggering Live MySQL Database Migration ---")
+    print("\n--- Step 3: Triggering Live MySQL Database Migration & Mock Song Purge ---")
     mig_url = f"{TARGET_URL}/phpbackend/migrate.php?key={MIGRATION_KEY}"
     print(f"[*] Calling: {mig_url}")
     try:
@@ -159,6 +160,17 @@ def main():
             print(res_data)
     except Exception as e:
         print(f"[-] Migration HTTP error: {e}")
+
+    # 3b. Trigger YouTube Music Catalog Seeder
+    print("\n--- Step 3b: Verifying YouTube Music Catalog & Charts API ---")
+    yt_charts_url = f"{TARGET_URL}/phpbackend/api/youtube_music.php?action=charts"
+    try:
+        req = urllib.request.Request(yt_charts_url, headers={'User-Agent': 'FlontmieDeployer/1.0'})
+        with urllib.request.urlopen(req, timeout=20) as res:
+            yt_data = json.loads(res.read().decode('utf-8'))
+            print(f"[+] YouTube Music Charts API status: {yt_data.get('status')}, tracks returned: {yt_data.get('count')}")
+    except Exception as e:
+        print(f"[-] YouTube Music Charts API check error: {e}")
 
     # 4. Health Check
     print("\n--- Step 4: Verifying Live Health & Database Connectivity ---")

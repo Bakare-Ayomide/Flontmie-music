@@ -15,13 +15,22 @@
 require_once __DIR__ . '/../config.php';
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth_helper.php';
+require_once __DIR__ . '/../media_engine.php';
 
+// Strict Admin-Only Access Control: Only authenticated administrators can search, import, or synchronize from YT Music
+$adminUser = Auth::requireRole(['admin']);
 $method = $_SERVER['REQUEST_METHOD'];
 $action = $_GET['action'] ?? 'search';
+$input = get_json_input();
 $pdo = Database::getConnection();
 
-function call_ytmusic($endpoint, $payload = []) {
+if ($method === 'POST') {
+    Auth::verifyCsrf($adminUser, $input);
+}
+
+function call_ytmusic($endpoint, $payload = [], $country = 'US') {
     $url = "https://music.youtube.com/youtubei/v1/{$endpoint}?prettyPrint=false";
+    $gl = strtoupper(substr(preg_replace('/[^a-zA-Z]/', '', $country ?: 'US'), 0, 2)) ?: 'US';
     
     $defaultPayload = [
         'context' => [
@@ -29,7 +38,7 @@ function call_ytmusic($endpoint, $payload = []) {
                 'clientName' => 'WEB_REMIX',
                 'clientVersion' => '1.20231106.01.00',
                 'hl' => 'en',
-                'gl' => 'US'
+                'gl' => $gl
             ]
         ]
     ];
@@ -93,16 +102,48 @@ function get_runs_text($runsObj) {
     return $text;
 }
 
-// --- 1. SEARCH YOUTUBE MUSIC (Songs, Artists, Albums, Playlists) ---
+// Helper: Load existing catalog videoIds and normalized title+artist keys for fast duplicate detection
+function get_catalog_lookup(PDO $pdo): array {
+    $byVideo = [];
+    $byKey = [];
+    try {
+        $stmt = $pdo->query("SELECT id, video_id, title, artist_name, status FROM tracks WHERE is_deleted = 0");
+        while ($r = $stmt->fetch()) {
+            if (!empty($r['video_id'])) {
+                $byVideo[$r['video_id']] = $r['id'];
+            }
+            $k = strtolower(trim($r['title']) . '||' . trim($r['artist_name']));
+            $byKey[$k] = $r['id'];
+        }
+    } catch (Exception $e) {}
+    return ['video' => $byVideo, 'key' => $byKey];
+}
+
+// --- 1. ADMIN-ONLY SEARCH YOUTUBE MUSIC (Songs, Artists, Albums, Playlists + Year, Country, Genre Filters) ---
 if ($action === 'search') {
     $query = trim($_GET['q'] ?? '');
-    $filter = strtolower(trim($_GET['filter'] ?? '')); // 'songs', 'artists', 'albums', 'playlists'
+    $filter = strtolower(trim($_GET['filter'] ?? '')); // 'songs', 'artists', 'albums', 'playlists', 'all'
+    $country = strtoupper(substr(trim($_GET['country'] ?? 'US'), 0, 2)) ?: 'US';
+    $yearFilter = trim($_GET['year'] ?? '');
+    $genreFilter = trim($_GET['genre'] ?? '');
 
+    if (empty($query) && !empty($genreFilter) && $genreFilter !== 'All') {
+        $query = $genreFilter . ' Music';
+    }
     if (empty($query)) {
         json_response(['status' => 'error', 'message' => 'Search query is required'], 400);
     }
 
-    $searchPayload = ['query' => $query];
+    // Build effective query incorporating optional genre and release year criteria
+    $effectiveQuery = $query;
+    if (!empty($genreFilter) && $genreFilter !== 'All' && stripos($effectiveQuery, $genreFilter) === false) {
+        $effectiveQuery .= ' ' . $genreFilter;
+    }
+    if (!empty($yearFilter) && $yearFilter !== 'All' && stripos($effectiveQuery, $yearFilter) === false) {
+        $effectiveQuery .= ' ' . $yearFilter;
+    }
+
+    $searchPayload = ['query' => $effectiveQuery];
     if ($filter === 'songs') {
         $searchPayload['params'] = 'EgWKAQIIAWoQEAMQBBAJEAoQBRAREBAQFA%3D%3D';
     } elseif ($filter === 'artists') {
@@ -113,7 +154,8 @@ if ($action === 'search') {
         $searchPayload['params'] = 'EgWKAQIEAWoQEAMQBBAJEAoQBRAREBAQFA%3D%3D';
     }
 
-    $raw = call_ytmusic('search', $searchPayload);
+    $raw = call_ytmusic('search', $searchPayload, $country);
+    $catalogLookup = get_catalog_lookup($pdo);
     $songs = [];
     $artists = [];
     $albums = [];
@@ -202,6 +244,16 @@ if ($action === 'search') {
                         $artistName = trim($col1Text);
                     }
 
+                    $inferredYear = (int)($yearFilter && is_numeric($yearFilter) ? $yearFilter : date('Y'));
+                    if (preg_match('/\b(19\d\d|20[0-2]\d)\b/', $col1Text . ' ' . $col2Text, $ym)) {
+                        $inferredYear = (int)$ym[1];
+                    }
+                    $inferredGenre = (!empty($genreFilter) && $genreFilter !== 'All') ? $genreFilter : 'Pop';
+                    $lookupKey = strtolower(trim($col0Text) . '||' . trim($artistName));
+                    $existingTrackId = ($videoId && isset($catalogLookup['video'][$videoId]))
+                        ? $catalogLookup['video'][$videoId]
+                        : ($catalogLookup['key'][$lookupKey] ?? null);
+
                     $songs[] = [
                         'type' => 'song',
                         'id' => $videoId ? ('yt_' . $videoId) : ('yt_' . md5($col0Text . $artistName)),
@@ -210,28 +262,46 @@ if ($action === 'search') {
                         'artist' => $artistName,
                         'album' => count($parts) >= 3 ? trim($parts[2]) : ($col0Text . ' - Single'),
                         'duration' => 210,
-                        'genre' => 'Global Music',
+                        'genre' => $inferredGenre,
+                        'country' => $country,
+                        'release_year' => $inferredYear,
+                        'release_date' => "{$inferredYear}-" . date('m-d'),
                         'cover_url' => $thumbUrl ?: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600',
-                        'audio_url' => 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
-                        'plays' => $col2Text ?: 'Trending on YouTube Music',
-                        'youtube_url' => $videoId ? "https://music.youtube.com/watch?v={$videoId}" : null
+                        'plays' => $col2Text ?: 'YouTube Music Catalog',
+                        'already_imported' => !empty($existingTrackId),
+                        'catalog_track_id' => $existingTrackId
                     ];
                 }
             }
         }
     }
 
+    $totalResults = count($songs) + count($artists) + count($albums) + count($playlists);
+    try {
+        $stmtLog = $pdo->prepare("INSERT INTO search_logs (user_id, query, results_count, ip_address) VALUES (?, ?, ?, ?)");
+        $stmtLog->execute([
+            $adminUser['id'],
+            substr($effectiveQuery, 0, 255),
+            $totalResults,
+            $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1'
+        ]);
+    } catch (Exception $e) {}
+
     json_response([
         'status' => 'success',
         'query' => $query,
+        'effective_query' => $effectiveQuery,
         'filter' => $filter ?: 'all',
+        'country' => $country,
+        'year' => $yearFilter ?: 'All',
+        'genre' => $genreFilter ?: 'All',
         'results' => [
             'songs' => $songs,
             'artists' => $artists,
             'albums' => $albums,
             'playlists' => $playlists
         ],
-        'total_count' => count($songs) + count($artists) + count($albums) + count($playlists)
+        'total_count' => $totalResults
     ]);
 }
 
@@ -671,152 +741,361 @@ if ($action === 'playlist') {
     ]);
 }
 
-// --- 8. IMPORT YOUTUBE MUSIC TRACK INTO MYSQL CATALOG ---
+// --- 8. IMPORT SINGLE YOUTUBE MUSIC TRACK INTO MYSQL & LOCAL SERVER STORAGE ---
 if ($action === 'import' && $method === 'POST') {
-    $input = get_json_input();
-    
-    $title = trim($input['title'] ?? '');
-    $artistName = trim($input['artist'] ?? 'YouTube Music Artist');
-    $albumName = trim($input['album'] ?? ($title . ' - Single'));
-    $genre = trim($input['genre'] ?? 'Pop');
-    $duration = (int)($input['duration'] ?? 210);
-    $coverUrl = trim($input['cover_url'] ?? 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600');
-    $audioUrl = trim($input['audio_url'] ?? 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3');
-    $videoId = trim($input['videoId'] ?? '');
-    $lyrics = trim($input['lyrics'] ?? '');
-
-    if (empty($title)) {
-        json_response(['status' => 'error', 'message' => 'Track title is required'], 400);
-    }
-
     try {
-        // Ensure Artist
-        $artistSlug = strtolower(preg_replace('/[^a-zA-Z0-9]+/', '-', $artistName));
-        $stmt = $pdo->prepare("SELECT id FROM artists WHERE name = ? OR slug = ? LIMIT 1");
-        $stmt->execute([$artistName, $artistSlug]);
-        $existingArtist = $stmt->fetch();
-
-        if ($existingArtist) {
-            $artistId = $existingArtist['id'];
-        } else {
-            $artistId = 'art_' . substr(md5($artistName), 0, 12);
-            $insertArtist = $pdo->prepare("
-                INSERT INTO artists (id, name, stage_name, slug, avatar_url, header_url, bio, verified, monthly_listeners, total_streams, genres_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
-            ");
-            $insertArtist->execute([
-                $artistId,
-                $artistName,
-                $artistName,
-                $artistSlug,
-                $coverUrl,
-                $coverUrl,
-                "Official verified artist profile for {$artistName} on Flontmie.",
-                rand(100000, 2500000),
-                rand(500000, 9500000),
-                json_encode([$genre])
-            ]);
-        }
-
-        // Ensure Album
-        $albumId = 'alb_' . substr(md5($albumName . $artistId), 0, 12);
-        $stmt = $pdo->prepare("SELECT id FROM albums WHERE id = ? LIMIT 1");
-        $stmt->execute([$albumId]);
-        if (!$stmt->fetch()) {
-            $insertAlbum = $pdo->prepare("
-                INSERT INTO albums (id, title, artist_id, artist_name, cover_art_url, release_date, genre, release_type)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'single')
-            ");
-            $insertAlbum->execute([
-                $albumId,
-                $albumName,
-                $artistId,
-                $artistName,
-                $coverUrl,
-                date('Y-m-d'),
-                $genre
-            ]);
-        }
-
-        // Insert Track
-        $trackId = $videoId ? ('trk_yt_' . substr(md5($videoId), 0, 10)) : ('trk_' . substr(md5($title . $artistName . microtime()), 0, 12));
-        $isrc = 'US' . rand(100, 999) . rand(1000000, 9999999);
-        $streamCount = rand(50000, 350000);
-        $likesCount = rand(2500, 18000);
-        $moodTags = json_encode([$genre, 'Trending', 'YouTube Music Discovery']);
-
-        if (empty($lyrics)) {
-            $lyrics = "Verified lyrics for {$title} by {$artistName}\n\n[Verse 1]\nFeel the rhythm moving through the night\nMelodies echoing under neon lights\n\n[Chorus]\n{$title}\nEvery heartbeat singing along\nThis is Flontmie, this is our song";
-        }
-
-        // Ensure video_id column exists
-        try {
-            $pdo->exec("ALTER TABLE tracks ADD COLUMN video_id VARCHAR(64) NULL");
-            $pdo->exec("ALTER TABLE tracks ADD INDEX idx_track_video (video_id)");
-        } catch (Exception $e) {}
-
-        $insertTrack = $pdo->prepare("
-            INSERT INTO tracks (id, title, artist_id, artist_name, album_id, album_name, duration, genre, cover_art_url, audio_url, stream_count, likes_count, release_date, isrc, mood_tags_json, lyrics, video_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON DUPLICATE KEY UPDATE
-                title = VALUES(title),
-                video_id = VALUES(video_id),
-                cover_art_url = VALUES(cover_art_url),
-                stream_count = stream_count + 1
-        ");
-
-        $insertTrack->execute([
-            $trackId,
-            $title,
-            $artistId,
-            $artistName,
-            $albumId,
-            $albumName,
-            $duration,
-            $genre,
-            $coverUrl,
-            $audioUrl,
-            $streamCount,
-            $likesCount,
-            date('Y-m-d'),
-            $isrc,
-            $moodTags,
-            $lyrics,
-            $videoId ?: null
+        $result = MediaEngine::importTrackToCatalog($pdo, $input, $adminUser['id'], [
+            'genre' => $input['genre'] ?? 'Pop',
+            'country' => $input['country'] ?? 'US',
+            'license_status' => $input['license_status'] ?? 'verified_licensed',
+            'license_notes' => $input['license_notes'] ?? 'Imported via Admin YT Music Discovery',
+            'auto_publish' => isset($input['auto_publish']) ? (bool)$input['auto_publish'] : true,
+            'force_resync' => !empty($input['force_resync'])
         ]);
-
-        json_response([
-            'status' => 'success',
-            'message' => "Imported '{$title}' by {$artistName} into MySQL!",
-            'track' => [
-                'id' => $trackId,
-                'videoId' => $videoId,
-                'title' => $title,
-                'artist' => $artistName,
-                'artistId' => $artistId,
-                'album' => $albumName,
-                'duration' => $duration,
-                'genre' => $genre,
-                'coverUrl' => $coverUrl,
-                'audioUrl' => $audioUrl,
-                'lyrics' => $lyrics,
-                'streams' => $streamCount,
-                'likes' => $likesCount,
-                'releaseDate' => date('Y-m-d'),
-                'isrc' => $isrc,
-                'explicit' => false,
-                'scale' => 'C Major',
-                'bpm' => 120,
-                'moods' => ['trending', 'party'],
-                'moodTags' => [$genre, 'Trending', 'YouTube Music Discovery']
-            ]
-        ]);
+        json_response($result);
     } catch (Exception $e) {
         json_response([
             'status' => 'error',
-            'message' => 'Failed to import into database: ' . $e->getMessage()
+            'message' => 'Import failed: ' . $e->getMessage()
         ], 500);
     }
+}
+
+// --- 8b. BULK IMPORT SELECTED TRACKS ---
+if ($action === 'bulk_import' && $method === 'POST') {
+    $items = $input['items'] ?? [];
+    if (!is_array($items) || empty($items)) {
+        json_response(['status' => 'error', 'message' => 'Please select at least one item to bulk import.'], 400);
+    }
+
+    $batchId = 'batch_' . bin2hex(random_bytes(6));
+    $importedCount = 0;
+    $skippedCount = 0;
+    $failedCount = 0;
+    $results = [];
+
+    $options = [
+        'batch_id' => $batchId,
+        'genre' => $input['genre'] ?? 'Pop',
+        'country' => $input['country'] ?? 'US',
+        'license_status' => $input['license_status'] ?? 'verified_licensed',
+        'license_notes' => $input['license_notes'] ?? 'Bulk imported via Admin YT Music Sync Engine',
+        'auto_publish' => isset($input['auto_publish']) ? (bool)$input['auto_publish'] : true,
+        'force_resync' => !empty($input['force_resync'])
+    ];
+
+    foreach (array_slice($items, 0, 30) as $item) {
+        try {
+            $res = MediaEngine::importTrackToCatalog($pdo, $item, $adminUser['id'], $options);
+            if ($res['status'] === 'completed') {
+                $importedCount++;
+            } elseif ($res['status'] === 'duplicate_skipped') {
+                $skippedCount++;
+            }
+            $results[] = $res;
+        } catch (Exception $e) {
+            $failedCount++;
+            $results[] = [
+                'status' => 'failed',
+                'title' => $item['title'] ?? 'Unknown',
+                'message' => $e->getMessage()
+            ];
+        }
+    }
+
+    json_response([
+        'status' => 'success',
+        'batch_id' => $batchId,
+        'imported_count' => $importedCount,
+        'skipped_count' => $skippedCount,
+        'failed_count' => $failedCount,
+        'message' => "Bulk import finished: {$importedCount} synced to local storage, {$skippedCount} duplicates skipped, {$failedCount} failed.",
+        'results' => $results
+    ]);
+}
+
+// --- 8c. IMPORT ENTIRE ALBUM, ARTIST DISCOGRAPHY, OR PLAYLIST COLLECTION ---
+if ($action === 'import_collection' && $method === 'POST') {
+    $collectionType = strtolower(trim($input['collection_type'] ?? 'album')); // album, artist, playlist
+    $collectionTitle = trim($input['title'] ?? 'Imported Collection');
+    $collectionArtist = trim($input['artist'] ?? 'Various Artists');
+    $collectionCover = trim($input['cover_url'] ?? '');
+    $tracksList = $input['tracks'] ?? [];
+
+    if (!is_array($tracksList) || empty($tracksList)) {
+        json_response(['status' => 'error', 'message' => 'No tracks found in collection to import.'], 400);
+    }
+
+    $batchId = 'batch_' . $collectionType . '_' . bin2hex(random_bytes(4));
+    $importedTrackIds = [];
+    $importedCount = 0;
+    $skippedCount = 0;
+
+    foreach (array_slice($tracksList, 0, 25) as $trk) {
+        $trk['album'] = $trk['album'] ?? ($collectionType === 'album' ? $collectionTitle : ($trk['title'] . ' - Single'));
+        $trk['artist'] = $trk['artist'] ?? $collectionArtist;
+        $trk['cover_url'] = $trk['cover_url'] ?? $collectionCover;
+        try {
+            $res = MediaEngine::importTrackToCatalog($pdo, $trk, $adminUser['id'], [
+                'batch_id' => $batchId,
+                'genre' => $input['genre'] ?? 'Pop',
+                'country' => $input['country'] ?? 'US',
+                'license_status' => $input['license_status'] ?? 'verified_licensed',
+                'auto_publish' => true
+            ]);
+            if (!empty($res['track_id'])) {
+                $importedTrackIds[] = $res['track_id'];
+            }
+            if ($res['status'] === 'completed') {
+                $importedCount++;
+            } else {
+                $skippedCount++;
+            }
+        } catch (Exception $e) {}
+    }
+
+    // If importing a Playlist, also create/update the Playlist in MySQL
+    $createdPlaylistId = null;
+    if ($collectionType === 'playlist' && !empty($importedTrackIds)) {
+        $createdPlaylistId = 'ply_' . substr(md5($collectionTitle), 0, 12);
+        $pdo->prepare("
+            INSERT INTO playlists (id, user_id, title, description, cover_art_url, genre_category, is_public, is_featured, status, track_ids_json)
+            VALUES (?, ?, ?, ?, ?, 'all', 1, 1, 'published', ?)
+            ON DUPLICATE KEY UPDATE
+                title = VALUES(title),
+                cover_art_url = VALUES(cover_art_url),
+                track_ids_json = VALUES(track_ids_json),
+                status = 'published'
+        ")->execute([
+            $createdPlaylistId,
+            $adminUser['id'],
+            $collectionTitle,
+            $input['description'] ?? "Imported & curated via Flontmie Admin YT Music Engine ({$collectionArtist})",
+            $collectionCover ?: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600',
+            json_encode(array_values(array_unique($importedTrackIds)))
+        ]);
+    }
+
+    json_response([
+        'status' => 'success',
+        'batch_id' => $batchId,
+        'collection_type' => $collectionType,
+        'imported_count' => $importedCount,
+        'skipped_count' => $skippedCount,
+        'playlist_id' => $createdPlaylistId,
+        'message' => "Imported {$collectionType} '{$collectionTitle}': {$importedCount} tracks synced to local server, {$skippedCount} existing tracks linked."
+    ]);
+}
+
+// --- 8d. RETRY OR CANCEL IMPORT JOB ---
+if (($action === 'retry_job' || $action === 'cancel_job') && $method === 'POST') {
+    $jobId = trim($input['job_id'] ?? '');
+    if (empty($jobId)) {
+        json_response(['status' => 'error', 'message' => 'Missing job_id'], 400);
+    }
+
+    $stmt = $pdo->prepare("SELECT * FROM import_jobs WHERE id = ? LIMIT 1");
+    $stmt->execute([$jobId]);
+    $job = $stmt->fetch();
+    if (!$job) {
+        json_response(['status' => 'error', 'message' => 'Import job not found'], 404);
+    }
+
+    if ($action === 'cancel_job') {
+        $pdo->prepare("UPDATE import_jobs SET status = 'cancelled', error_message = 'Cancelled by administrator' WHERE id = ?")->execute([$jobId]);
+        Auth::logAudit($adminUser['id'], 'ADMIN_IMPORT_CANCELLED', 'IMPORT_JOB', $jobId, ['title' => $job['title']]);
+        json_response(['status' => 'success', 'message' => "Import job '{$job['title']}' cancelled."]);
+    }
+
+    // Retry job with force_resync = true
+    $payload = !empty($job['raw_payload_json']) ? json_decode($job['raw_payload_json'], true) : [];
+    if (!is_array($payload) || empty($payload['title'])) {
+        $payload = [
+            'title' => $job['title'],
+            'artist' => $job['artist_name'],
+            'album' => $job['album_name'],
+            'videoId' => $job['source_id'],
+            'genre' => $job['genre'],
+            'country' => $job['country'],
+            'release_year' => $job['release_year']
+        ];
+    }
+
+    try {
+        $res = MediaEngine::importTrackToCatalog($pdo, $payload, $adminUser['id'], [
+            'job_id' => $jobId,
+            'genre' => $job['genre'] ?: 'Pop',
+            'country' => $job['country'] ?: 'US',
+            'license_status' => $job['license_status'] ?: 'verified_licensed',
+            'force_resync' => true
+        ]);
+        json_response([
+            'status' => 'success',
+            'message' => "Retried & synced '{$job['title']}' successfully!",
+            'result' => $res
+        ]);
+    } catch (Exception $e) {
+        json_response(['status' => 'error', 'message' => 'Retry failed: ' . $e->getMessage()], 500);
+    }
+}
+
+// --- 8e. AUTOMATED IMPORT SCHEDULES (CREATE, TOGGLE, DELETE, RUN NOW) ---
+if ($action === 'create_schedule' && $method === 'POST') {
+    $name = trim($input['name'] ?? '');
+    $searchQuery = trim($input['search_query'] ?? '');
+    $filterType = in_array($input['filter_type'] ?? '', ['songs', 'albums', 'artists', 'playlists'], true) ? $input['filter_type'] : 'songs';
+    $genre = trim($input['genre'] ?? 'All');
+    $country = strtoupper(substr(trim($input['country'] ?? 'US'), 0, 2)) ?: 'US';
+    $releaseYear = trim($input['release_year'] ?? 'All');
+    $maxItems = max(1, min(25, (int)($input['max_items'] ?? 8)));
+    $autoPublish = !empty($input['auto_publish']) ? 1 : 0;
+    $licenseStatus = trim($input['license_status'] ?? 'verified_licensed');
+    $frequency = in_array($input['frequency'] ?? '', ['hourly', 'daily', 'weekly'], true) ? $input['frequency'] : 'daily';
+
+    if (empty($name) || empty($searchQuery)) {
+        json_response(['status' => 'error', 'message' => 'Schedule name and search query criteria are required.'], 400);
+    }
+
+    $schId = 'sch_' . bin2hex(random_bytes(5));
+    $pdo->prepare("
+        INSERT INTO import_schedules (id, name, search_query, filter_type, genre, country, release_year, max_items, auto_publish, license_status, frequency, is_active, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+    ")->execute([$schId, $name, $searchQuery, $filterType, $genre, $country, $releaseYear, $maxItems, $autoPublish, $licenseStatus, $frequency, $adminUser['id']]);
+
+    Auth::logAudit($adminUser['id'], 'ADMIN_SCHEDULE_CREATED', 'IMPORT_SCHEDULE', $schId, ['name' => $name, 'query' => $searchQuery]);
+    json_response(['status' => 'success', 'message' => "Created automated import rule '{$name}'.", 'schedule_id' => $schId]);
+}
+
+if ($action === 'toggle_schedule' && $method === 'POST') {
+    $schId = trim($input['schedule_id'] ?? '');
+    $pdo->prepare("UPDATE import_schedules SET is_active = CASE WHEN is_active = 1 THEN 0 ELSE 1 END WHERE id = ?")->execute([$schId]);
+    json_response(['status' => 'success', 'message' => 'Updated schedule active state.']);
+}
+
+if ($action === 'delete_schedule' && $method === 'POST') {
+    $schId = trim($input['schedule_id'] ?? '');
+    $pdo->prepare("DELETE FROM import_schedules WHERE id = ?")->execute([$schId]);
+    json_response(['status' => 'success', 'message' => 'Deleted automated import schedule.']);
+}
+
+if ($action === 'run_schedule' && $method === 'POST') {
+    $schId = trim($input['schedule_id'] ?? '');
+    $stmt = $pdo->prepare("SELECT * FROM import_schedules WHERE id = ? LIMIT 1");
+    $stmt->execute([$schId]);
+    $sch = $stmt->fetch();
+    if (!$sch) {
+        json_response(['status' => 'error', 'message' => 'Schedule not found'], 404);
+    }
+
+    $q = $sch['search_query'];
+    if ($sch['genre'] !== 'All' && stripos($q, $sch['genre']) === false) {
+        $q .= ' ' . $sch['genre'];
+    }
+    if ($sch['release_year'] !== 'All' && stripos($q, $sch['release_year']) === false) {
+        $q .= ' ' . $sch['release_year'];
+    }
+
+    $raw = call_ytmusic('search', [
+        'query' => $q,
+        'params' => 'EgWKAQIIAWoQEAMQBBAJEAoQBRAREBAQFA%3D%3D'
+    ], $sch['country'] ?: 'US');
+
+    $candidates = [];
+    $sections = $raw['contents']['tabbedSearchResultsRenderer']['tabs'][0]['tabRenderer']['content']['sectionListRenderer']['contents'] ?? [];
+    foreach ($sections as $sec) {
+        $items = $sec['musicShelfRenderer']['contents'] ?? $sec['itemSectionRenderer']['contents'] ?? [];
+        foreach ($items as $itemWrapper) {
+            $r = $itemWrapper['musicResponsiveListItemRenderer'] ?? null;
+            if (!$r) continue;
+            $flex = $r['flexColumns'] ?? [];
+            if (empty($flex)) continue;
+            $title = get_runs_text($flex[0]['musicResponsiveListItemFlexColumnRenderer']['text'] ?? null);
+            $col1 = count($flex) > 1 ? get_runs_text($flex[1]['musicResponsiveListItemFlexColumnRenderer']['text'] ?? null) : '';
+            $parts = explode('•', $col1);
+            $artist = count($parts) >= 2 ? trim($parts[1]) : ($col1 ?: 'Artist');
+            $album = count($parts) >= 3 ? trim($parts[2]) : ($title . ' - Single');
+            $videoId = $r['playlistItemData']['videoId'] ?? null;
+            $thumbs = $r['thumbnail']['musicThumbnailRenderer']['thumbnail']['thumbnails'] ?? [];
+            $thumbUrl = !empty($thumbs) ? preg_replace('/=w\d+-h\d+/', '=w600-h600', end($thumbs)['url'] ?? '') : '';
+
+            if (!empty($title)) {
+                $candidates[] = [
+                    'title' => $title,
+                    'artist' => $artist,
+                    'album' => $album,
+                    'videoId' => $videoId,
+                    'cover_url' => $thumbUrl,
+                    'genre' => $sch['genre'] !== 'All' ? $sch['genre'] : 'Pop',
+                    'country' => $sch['country'] ?: 'US',
+                    'release_year' => is_numeric($sch['release_year']) ? (int)$sch['release_year'] : (int)date('Y')
+                ];
+            }
+        }
+    }
+
+    $batchId = 'batch_sch_' . $schId . '_' . time();
+    $imported = 0;
+    $skipped = 0;
+    foreach (array_slice($candidates, 0, (int)$sch['max_items']) as $cand) {
+        try {
+            $res = MediaEngine::importTrackToCatalog($pdo, $cand, $adminUser['id'], [
+                'batch_id' => $batchId,
+                'genre' => $cand['genre'],
+                'country' => $cand['country'],
+                'license_status' => $sch['license_status'] ?: 'verified_licensed',
+                'auto_publish' => (bool)$sch['auto_publish']
+            ]);
+            if ($res['status'] === 'completed') {
+                $imported++;
+            } else {
+                $skipped++;
+            }
+        } catch (Exception $e) {}
+    }
+
+    $pdo->prepare("
+        UPDATE import_schedules 
+        SET last_run_at = NOW(), last_run_imported = ?, total_imported = total_imported + ?
+        WHERE id = ?
+    ")->execute([$imported, $imported, $schId]);
+
+    Auth::logAudit($adminUser['id'], 'ADMIN_SCHEDULE_EXECUTED', 'IMPORT_SCHEDULE', $schId, ['imported' => $imported, 'skipped' => $skipped]);
+
+    json_response([
+        'status' => 'success',
+        'imported_count' => $imported,
+        'skipped_count' => $skipped,
+        'message' => "Executed schedule '{$sch['name']}': {$imported} new tracks synced to local storage ({$skipped} existing skipped)."
+    ]);
+}
+
+// --- 8f. VERIFY & SYNC ALL CATALOG TRACKS TO LOCAL SERVER STORAGE ---
+if ($action === 'sync_all_storage' && $method === 'POST') {
+    $stmt = $pdo->query("SELECT id, video_id, title, artist_name, genre, country, cover_art_url FROM tracks WHERE is_deleted = 0");
+    $allTracks = $stmt->fetchAll();
+    $syncedCount = 0;
+
+    foreach ($allTracks as $t) {
+        try {
+            $aRes = MediaEngine::acquireAndStoreAudio($t['id'], $t['video_id'], $t['title'], $t['artist_name'], $t['genre'] ?: 'Pop', $t['country'] ?: 'US');
+            $artRes = MediaEngine::acquireAndStoreArtwork($t['id'], $t['cover_art_url'], $t['video_id']);
+            $streamUrl = "/phpbackend/api/stream.php?id=" . urlencode($t['id']);
+            $pdo->prepare("
+                UPDATE tracks 
+                SET local_audio_path = ?, local_artwork_path = COALESCE(?, local_artwork_path), audio_file_size = ?, audio_format = ?, audio_url = ?, import_status = 'synced', last_synced_at = NOW()
+                WHERE id = ?
+            ")->execute([$aRes['relative_path'], $artRes['relative_path'], $aRes['file_size'], $aRes['format'], $streamUrl, $t['id']]);
+            $syncedCount++;
+        } catch (Exception $e) {}
+    }
+
+    Auth::logAudit($adminUser['id'], 'ADMIN_STORAGE_RESYNC', 'SYSTEM', 'STORAGE_ENGINE', ['synced_tracks' => $syncedCount]);
+    json_response([
+        'status' => 'success',
+        'synced_count' => $syncedCount,
+        'storage' => MediaEngine::getStorageStats($pdo),
+        'message' => "Synchronized & verified local audio and artwork files for {$syncedCount} catalog tracks."
+    ]);
 }
 
 // --- 9. PURGE MOCK SONGS & SEED REAL YOUTUBE MUSIC CATALOG INTO MYSQL ---

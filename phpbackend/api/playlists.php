@@ -6,6 +6,7 @@
 require_once __DIR__ . '/../config.php';
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth_helper.php';
+require_once __DIR__ . '/../artist_enrichment.php';
 
 $method = $_SERVER['REQUEST_METHOD'];
 $id = $_GET['id'] ?? '';
@@ -21,6 +22,8 @@ if ($method === 'GET' && !empty($id)) {
         json_response(['status' => 'error', 'message' => 'Playlist not found'], 404);
     }
 
+    $playlist['cover_art_url'] = ArtistEnrichment::resolveArtworkUrl($playlist['cover_art_url'] ?? '', $playlist['id']);
+
     $trackIds = !empty($playlist['track_ids_json']) ? json_decode($playlist['track_ids_json'], true) : [];
     $tracks = [];
 
@@ -32,6 +35,9 @@ if ($method === 'GET' && !empty($id)) {
         $map = [];
         foreach ($fetched as $t) {
             $t['mood_tags'] = !empty($t['mood_tags_json']) ? json_decode($t['mood_tags_json'], true) : [];
+            $t['cover_art_url'] = ArtistEnrichment::resolveArtworkUrl($t['cover_art_url'] ?? '', $t['video_id'] ?? $t['id']);
+            $t['audio_url'] = '/phpbackend/api/stream.php?id=' . urlencode($t['id']);
+            unset($t['local_audio_path'], $t['local_artwork_path']);
             $map[$t['id']] = $t;
         }
         // Preserve order
@@ -44,7 +50,7 @@ if ($method === 'GET' && !empty($id)) {
 
     $playlist['track_ids'] = $trackIds;
     $playlist['track_count'] = count($tracks);
-    $playlist['followers'] = !empty($playlist['followers']) ? (int)$playlist['followers'] : 142000;
+    $playlist['followers'] = !empty($playlist['followers']) ? (int)$playlist['followers'] : null;
     $playlist['curator'] = $playlist['curator'] ?? 'Flontmie Editorial';
 
     if (empty($playlist['category'])) {
@@ -83,6 +89,7 @@ if ($method === 'GET') {
     $playlists = $stmt->fetchAll();
 
     foreach ($playlists as &$p) {
+        $p['cover_art_url'] = ArtistEnrichment::resolveArtworkUrl($p['cover_art_url'] ?? '', $p['id']);
         $trackIds = !empty($p['track_ids_json']) ? json_decode($p['track_ids_json'], true) : [];
         if (!is_array($trackIds)) {
             $trackIds = [];
@@ -111,7 +118,7 @@ if ($method === 'GET') {
                 $p['genre_category'] = 'all';
             }
         }
-        $p['followers'] = !empty($p['followers']) ? (int)$p['followers'] : 142000;
+        $p['followers'] = !empty($p['followers']) ? (int)$p['followers'] : null;
         $p['curator'] = $p['curator'] ?? 'Flontmie Editorial';
     }
 
