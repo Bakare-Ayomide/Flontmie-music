@@ -1,604 +1,859 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
-  Mic2, 
+  Upload, 
   TrendingUp, 
   Users, 
   DollarSign, 
-  ListMusic, 
+  Music, 
+  FileText, 
   Plus, 
-  Upload, 
-  Check, 
-  Calendar, 
-  Globe, 
-  Percent, 
-  Sparkles, 
-  FileText 
+  Trash2, 
+  CheckCircle2, 
+  AlertCircle, 
+  Play, 
+  ExternalLink,
+  Disc,
+  Loader2,
+  RefreshCw,
+  Video,
+  Save
 } from 'lucide-react';
-import { Track, ArtistProfile, SplitSheet, SplitMember, MusicGenre } from '../../types/music';
+import { ArtistProfile, Track, SplitMember, MusicGenre, AlbumRelease } from '../../types/music';
+import { api } from '../../services/api';
+import { resolveArtworkUrl, handleImageError } from '../../utils/artwork';
 
 interface ArtistDashboardProps {
-  artistProfile: ArtistProfile;
-  tracks: Track[];
-  onAddNewTrack: (newTrack: Partial<Track>) => void;
+  artist: ArtistProfile;
+  artistTracks: Track[];
+  onUploadTrack: (newTrack: Track) => void;
+  onUploadAlbum?: (album: AlbumRelease, generatedTracks: Track[]) => void;
+  onUpdateSplits: (trackId: string, members: SplitMember[]) => void;
+  onViewPublicProfile: () => void;
+  onPlayTrack: (track: Track) => void;
 }
 
 export const ArtistDashboard: React.FC<ArtistDashboardProps> = ({
-  artistProfile,
-  tracks,
-  onAddNewTrack,
+  artist: propArtist,
+  onUploadTrack,
+  onViewPublicProfile,
+  onPlayTrack,
 }) => {
-  const [activeTab, setActiveTab] = useState<'analytics' | 'splits' | 'catalog'>('analytics');
-  const [isNewReleaseModalOpen, setIsNewReleaseModalOpen] = useState(false);
-  
-  // New Release Form State
-  const [newTitle, setNewTitle] = useState('');
-  const [newGenre, setNewGenre] = useState<MusicGenre>('synthwave');
-  const [newBpm, setNewBpm] = useState(120);
-  const [newDuration, setNewDuration] = useState(195);
-  const [newIsExplicit, setNewIsExplicit] = useState(false);
-  const [releaseSuccessMessage, setReleaseSuccessMessage] = useState(false);
+  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'upload' | 'splits' | 'profile'>('overview');
+  const [loading, setLoading] = useState(true);
+  const [dbArtist, setDbArtist] = useState<any | null>(null);
+  const [dbTracks, setDbTracks] = useState<any[]>([]);
+  const [dbAlbums, setDbAlbums] = useState<any[]>([]);
+  const [dbSplits, setDbSplits] = useState<any[]>([]);
+  const [dbStats, setDbStats] = useState<{
+    total_streams: number;
+    flontmie_plays: number;
+    total_likes: number;
+    followers: number;
+    tracks_count: number;
+    albums_count: number;
+    estimated_royalties_usd: number;
+  } | null>(null);
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
-  // Split Sheets State
-  const [selectedSplitTrackId, setSelectedSplitTrackId] = useState(artistProfile.splitSheets?.[0]?.trackId || 'track-1');
-  const [collaborators, setCollaborators] = useState<SplitMember[]>(
-    artistProfile.splitSheets?.[0]?.members || []
-  );
-  const [newCollabName, setNewCollabName] = useState('');
-  const [newCollabRole, setNewCollabRole] = useState<SplitMember['role']>('Producer');
-  const [newCollabPercent, setNewCollabPercent] = useState<number>(10);
-  const [newCollabEmail, setNewCollabEmail] = useState('');
+  // Upload Form State
+  const [title, setTitle] = useState('');
+  const [albumName, setAlbumName] = useState('');
+  const [releaseType, setReleaseType] = useState<'single' | 'ep' | 'album'>('single');
+  const [genre, setGenre] = useState<MusicGenre>('Afrobeats');
+  const [bpm, setBpm] = useState(120);
+  const [isrc, setIsrc] = useState('');
+  const [upc, setUpc] = useState('');
+  const [lyricsText, setLyricsText] = useState('');
+  const [isExplicit, setIsExplicit] = useState(false);
+  const [audioFile, setAudioFile] = useState<File | null>(null);
+  const [coverFile, setCoverFile] = useState<File | null>(null);
+  const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [lyricsFile, setLyricsFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
 
-  const artistTracks = tracks.filter((t) => t.artistId === artistProfile.id || t.artist === artistProfile.name);
+  // Split Sheet Editor State
+  const [selectedSplitTrackId, setSelectedSplitTrackId] = useState<string>('');
+  const [splitMembers, setSplitMembers] = useState<SplitMember[]>([]);
+  const [savingSplits, setSavingSplits] = useState(false);
 
-  const totalArtistStreams = artistTracks.reduce((acc, t) => acc + t.streams, 0);
-  const estimatedRoyaltyUsd = totalArtistStreams * 0.0038; // standard stream royalty multiplier
+  // Artist Profile Edit State
+  const [editName, setEditName] = useState('');
+  const [editBio, setEditBio] = useState('');
+  const [editCountry, setEditCountry] = useState('US');
+  const [editGenre, setEditGenre] = useState('Afrobeats');
+  const [editAvatar, setEditAvatar] = useState('');
+  const [savingProfile, setSavingProfile] = useState(false);
 
-  const handleAddCollaborator = (e: React.FormEvent) => {
+  const notify = (type: 'success' | 'error', message: string) => {
+    setFeedback({ type, message });
+    setTimeout(() => setFeedback(null), 5000);
+  };
+
+  const fetchArtistDashboardData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await api.getArtistDashboard(propArtist?.id);
+      if (res && res.status === 'success') {
+        setDbArtist(res.artist || null);
+        const tracks = res.tracks || [];
+        setDbTracks(tracks);
+        setDbAlbums(res.albums || []);
+        setDbSplits(res.splits || []);
+        setDbStats(res.stats || null);
+
+        if (res.artist) {
+          setEditName(res.artist.name || '');
+          setEditBio(res.artist.bio || '');
+          setEditCountry(res.artist.country || 'US');
+          setEditGenre(res.artist.primary_genre || 'Afrobeats');
+          setEditAvatar(res.artist.avatar_url || '');
+        }
+        if (tracks.length > 0 && !selectedSplitTrackId) {
+          const firstTrackId = tracks[0].id;
+          setSelectedSplitTrackId(firstTrackId);
+          const existingSplit = (res.splits || []).find((s: any) => s.track_id === firstTrackId);
+          if (existingSplit && Array.isArray(existingSplit.members)) {
+            setSplitMembers(existingSplit.members);
+          } else {
+            setSplitMembers([
+              {
+                id: 'sm_1',
+                name: res.artist?.name || propArtist.name || 'Primary Artist',
+                role: 'Primary Artist',
+                percentage: 100,
+                payoutEmail: '',
+              },
+            ]);
+          }
+        }
+      }
+    } catch (err: any) {
+      notify('error', err?.message || 'Failed to load artist studio data.');
+    } finally {
+      setLoading(false);
+    }
+  }, [propArtist?.id, propArtist?.name, selectedSplitTrackId]);
+
+  useEffect(() => {
+    fetchArtistDashboardData();
+  }, [fetchArtistDashboardData]);
+
+  const handleTrackUpload = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newCollabName.trim() || newCollabPercent <= 0) return;
+    if (!title.trim()) {
+      notify('error', 'Track title is required.');
+      return;
+    }
+    if (!audioFile && !videoFile) {
+      notify('error', 'Please select a master audio file or video file to upload.');
+      return;
+    }
 
-    const newMember: SplitMember = {
-      id: `m-${Date.now()}`,
-      name: newCollabName.trim(),
-      role: newCollabRole,
-      percentage: Number(newCollabPercent),
-      payoutEmail: newCollabEmail.trim() || `${newCollabName.toLowerCase().replace(/\s+/g, '')}@payouts.io`,
-    };
+    setUploading(true);
+    setUploadProgress(0);
+    try {
+      const formData = new FormData();
+      formData.append('title', title.trim());
+      if (dbArtist?.id) formData.append('artist_id', dbArtist.id);
+      formData.append('artist_name', dbArtist?.name || propArtist.name || 'Artist');
+      formData.append('album_name', albumName.trim() || `${title.trim()} - Single`);
+      formData.append('release_type', releaseType);
+      formData.append('genre', genre);
+      formData.append('bpm', String(bpm || 120));
+      formData.append('isrc', isrc.trim());
+      formData.append('upc', upc.trim());
+      formData.append('explicit', isExplicit ? '1' : '0');
+      formData.append('lyrics', lyricsText.trim());
+      if (audioFile) formData.append('audio_file', audioFile);
+      if (coverFile) formData.append('cover_file', coverFile);
+      if (videoFile) formData.append('video_file', videoFile);
+      if (lyricsFile) formData.append('lyrics_file', lyricsFile);
 
-    setCollaborators([...collaborators, newMember]);
-    setNewCollabName('');
-    setNewCollabPercent(10);
-    setNewCollabEmail('');
+      const res = await api.uploadReleaseMultipartWithProgress(formData, (pct) => setUploadProgress(pct));
+      if (res && res.status === 'success' && res.track) {
+        const mapped = api.mapDbTrack(res.track);
+        onUploadTrack(mapped);
+        notify('success', res.message || `Uploaded "${mapped.title}" to catalog.`);
+        setTitle('');
+        setAlbumName('');
+        setIsrc('');
+        setUpc('');
+        setLyricsText('');
+        setAudioFile(null);
+        setCoverFile(null);
+        setVideoFile(null);
+        setLyricsFile(null);
+        fetchArtistDashboardData();
+      }
+    } catch (err: any) {
+      notify('error', err?.message || 'Upload failed.');
+    } finally {
+      setUploading(false);
+    }
   };
 
-  const handleRemoveCollaborator = (id: string) => {
-    setCollaborators(collaborators.filter((c) => c.id !== id));
+  const totalSplitPercentage = splitMembers.reduce((sum, m) => sum + Number(m.percentage || 0), 0);
+
+  const handleSaveSplits = async () => {
+    if (!selectedSplitTrackId || totalSplitPercentage !== 100) return;
+    setSavingSplits(true);
+    try {
+      const res = await api.saveArtistSplit({
+        track_id: selectedSplitTrackId,
+        artist_id: dbArtist?.id,
+        members: splitMembers,
+      });
+      notify('success', res.message || 'Royalty split sheet saved to database.');
+      fetchArtistDashboardData();
+    } catch (err: any) {
+      notify('error', err?.message || 'Failed to save split sheet.');
+    } finally {
+      setSavingSplits(false);
+    }
   };
 
-  const totalSplitPercent = collaborators.reduce((acc, c) => acc + c.percentage, 0);
-
-  const handleCreateRelease = (e: React.FormEvent) => {
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTitle.trim()) return;
-
-    const trackObj: Partial<Track> = {
-      title: newTitle.trim(),
-      artist: artistProfile.name,
-      artistId: artistProfile.id,
-      album: 'Neon Horizon (Expanded)',
-      duration: Number(newDuration),
-      genre: newGenre,
-      bpm: Number(newBpm),
-      moods: ['energize'],
-      streams: 0,
-      likes: 1,
-      isExplicit: newIsExplicit,
-      releaseDate: new Date().toISOString().split('T')[0],
-      isrc: `US-FLN-26-${Math.floor(10000 + Math.random() * 90000)}`,
-      upc: `840192837${Math.floor(100 + Math.random() * 900)}`,
-      label: artistProfile.label,
-      distributor: 'TuneCore Direct',
-    };
-
-    onAddNewTrack(trackObj);
-    setReleaseSuccessMessage(true);
-    setTimeout(() => {
-      setReleaseSuccessMessage(false);
-      setIsNewReleaseModalOpen(false);
-      setNewTitle('');
-    }, 1500);
+    if (!dbArtist?.id) return;
+    setSavingProfile(true);
+    try {
+      const res = await api.updateArtistProfile({
+        artist_id: dbArtist.id,
+        name: editName.trim(),
+        bio: editBio.trim(),
+        country: editCountry.trim().toUpperCase(),
+        primary_genre: editGenre,
+        avatar_url: editAvatar.trim(),
+      });
+      notify('success', res.message || 'Artist profile saved.');
+      fetchArtistDashboardData();
+    } catch (err: any) {
+      notify('error', err?.message || 'Failed to update profile.');
+    } finally {
+      setSavingProfile(false);
+    }
   };
+
+  const displayName = dbArtist?.name || propArtist?.name || 'Artist Studio';
+  const displayAvatar = resolveArtworkUrl(dbArtist?.avatar_url || propArtist?.avatarUrl, 'artist', displayName);
 
   return (
-    <div className="space-y-8 pb-28 animate-in fade-in duration-200">
-      {/* Header Profile Bar */}
-      <div className="p-6 md:p-8 rounded-2xl bg-neutral-900/60 border border-white/[0.08] flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
-        <div className="flex items-center gap-4">
-          <div className="w-16 h-16 rounded-full overflow-hidden shrink-0 border-2 border-red-500/50 shadow-xl">
-            <img
-              src={artistProfile.avatarUrl}
-              alt={artistProfile.name}
-              referrerPolicy="no-referrer"
-              className="w-full h-full object-cover"
-            />
-          </div>
-          <div>
+    <div className="space-y-8 pb-24 animate-in fade-in duration-200">
+      {/* Artist Studio Header */}
+      <div className="relative rounded-2xl overflow-hidden border border-white/[0.08] bg-neutral-900/60 p-6 md:p-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+        <div className="flex items-center gap-5">
+          <img
+            src={displayAvatar}
+            alt={displayName}
+            onError={(e) => handleImageError(e, displayName, 'artist')}
+            className="w-20 h-20 md:w-24 md:h-24 rounded-full object-cover border-2 border-red-500/40 shadow-xl bg-neutral-800"
+          />
+          <div className="space-y-1.5">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-red-400 uppercase tracking-wider">
-                Artist Studio
+              <span className="text-xs font-semibold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-red-500/15 text-red-400 border border-red-500/30">
+                Creator Studio
               </span>
-              <span aria-hidden="true" className="text-neutral-500">·</span>
-              <span className="text-xs text-neutral-400">{artistProfile.label}</span>
+              {Boolean(Number(dbArtist?.verified)) && (
+                <span className="text-xs text-blue-400 flex items-center gap-1 font-medium">
+                  <CheckCircle2 className="w-3.5 h-3.5" /> Verified Artist
+                </span>
+              )}
             </div>
-            <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight mt-0.5">
-              {artistProfile.name}
+            <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight">
+              {displayName}
             </h1>
-            <p className="text-xs text-neutral-400 mt-1 max-w-xl">
-              {artistProfile.bio}
+            <p className="text-xs text-neutral-400">
+              {dbArtist?.primary_genre || 'Music'} · {dbArtist?.country || 'US'}
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <button
-            onClick={() => setIsNewReleaseModalOpen(true)}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-semibold text-xs tracking-wide shadow-lg shadow-red-600/30 transition-all hover:scale-[1.02] active:scale-[0.98]"
+            onClick={fetchArtistDashboardData}
+            className="px-3.5 py-2.5 rounded-xl bg-white/[0.06] hover:bg-white/10 text-xs font-semibold text-white border border-white/10 flex items-center gap-1.5 cursor-pointer"
           >
-            <Upload className="w-4 h-4" />
-            <span>Drop New Release</span>
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-red-400' : ''}`} />
+            <span>Sync</span>
+          </button>
+          <button
+            onClick={onViewPublicProfile}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.14] text-xs font-semibold text-white border border-white/10 transition-all cursor-pointer"
+          >
+            <span>Public Artist Page</span>
+            <ExternalLink className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={() => setActiveSubTab('upload')}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-xs font-semibold text-white shadow-lg shadow-red-600/25 transition-all cursor-pointer"
+          >
+            <Upload className="w-3.5 h-3.5" />
+            <span>Upload Release</span>
           </button>
         </div>
       </div>
 
-      {/* High-Level Metric Tiles (Tabular Figures) */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="p-5 rounded-xl bg-neutral-900/40 border border-white/[0.06] space-y-2">
-          <div className="flex items-center justify-between text-neutral-400">
-            <span className="text-xs font-medium">Monthly Listeners</span>
-            <Users className="w-4 h-4 text-neutral-400" />
-          </div>
-          <p className="text-2xl font-bold font-mono tabular-nums text-white">
-            {(Number(artistProfile.monthlyListeners) || 0).toLocaleString()}
-          </p>
-          <div className="text-[11px] text-emerald-400 font-mono tabular-nums">
-            +14.2% from last 30 days
-          </div>
+      {feedback && (
+        <div
+          className={`p-4 rounded-xl border text-xs flex items-center justify-between ${
+            feedback.type === 'success'
+              ? 'bg-emerald-950/50 border-emerald-500/30 text-emerald-200'
+              : 'bg-red-950/50 border-red-500/30 text-red-200'
+          }`}
+        >
+          <span>{feedback.message}</span>
+          <button onClick={() => setFeedback(null)} className="text-neutral-400 hover:text-white">
+            ✕
+          </button>
         </div>
+      )}
 
-        <div className="p-5 rounded-xl bg-neutral-900/40 border border-white/[0.06] space-y-2">
-          <div className="flex items-center justify-between text-neutral-400">
-            <span className="text-xs font-medium">Lifetime Streams</span>
-            <TrendingUp className="w-4 h-4 text-neutral-400" />
-          </div>
-          <p className="text-2xl font-bold font-mono tabular-nums text-white">
-            {(Number(totalArtistStreams) || 0).toLocaleString()}
-          </p>
-          <div className="text-[11px] text-neutral-400">Across 220 countries</div>
-        </div>
-
-        <div className="p-5 rounded-xl bg-neutral-900/40 border border-white/[0.06] space-y-2">
-          <div className="flex items-center justify-between text-neutral-400">
-            <span className="text-xs font-medium">Estimated Master Net</span>
-            <DollarSign className="w-4 h-4 text-neutral-400" />
-          </div>
-          <p className="text-2xl font-bold font-mono tabular-nums text-emerald-400">
-            ${Math.round(estimatedRoyaltyUsd).toLocaleString()}
-          </p>
-          <div className="text-[11px] text-neutral-400 font-mono">Rate: $0.0038 / stream</div>
-        </div>
-
-        <div className="p-5 rounded-xl bg-neutral-900/40 border border-white/[0.06] space-y-2">
-          <div className="flex items-center justify-between text-neutral-400">
-            <span className="text-xs font-medium">Curated Playlist Adds</span>
-            <ListMusic className="w-4 h-4 text-neutral-400" />
-          </div>
-          <p className="text-2xl font-bold font-mono tabular-nums text-white">
-            1,420
-          </p>
-          <div className="text-[11px] text-neutral-400">Including 8 Editorial Frontpages</div>
-        </div>
+      {/* Sub-navigation tabs */}
+      <div className="flex items-center gap-2 border-b border-white/[0.08] pb-3 overflow-x-auto">
+        {[
+          { id: 'overview', label: 'Analytics & Releases', icon: <TrendingUp className="w-4 h-4" /> },
+          { id: 'upload', label: 'Upload Audio / Video / Lyrics', icon: <Upload className="w-4 h-4" /> },
+          { id: 'splits', label: 'Royalty Split Sheets', icon: <FileText className="w-4 h-4" /> },
+          { id: 'profile', label: 'Artist Profile Settings', icon: <Users className="w-4 h-4" /> },
+        ].map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setActiveSubTab(t.id as any)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all whitespace-nowrap cursor-pointer ${
+              activeSubTab === t.id
+                ? 'bg-white text-black'
+                : 'text-neutral-400 hover:text-white hover:bg-white/[0.05]'
+            }`}
+          >
+            {t.icon}
+            <span>{t.label}</span>
+          </button>
+        ))}
       </div>
 
-      {/* Section Tabs (Segmented functional controls) */}
-      <div className="flex items-center gap-2 border-b border-white/[0.08] pb-3">
-        <button
-          onClick={() => setActiveTab('analytics')}
-          className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors ${
-            activeTab === 'analytics'
-              ? 'bg-white text-black shadow-sm'
-              : 'text-neutral-400 hover:text-white hover:bg-white/[0.05]'
-          }`}
-        >
-          Track Analytics
-        </button>
-        <button
-          onClick={() => setActiveTab('splits')}
-          className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors ${
-            activeTab === 'splits'
-              ? 'bg-white text-black shadow-sm'
-              : 'text-neutral-400 hover:text-white hover:bg-white/[0.05]'
-          }`}
-        >
-          Collaborator Split Sheets
-        </button>
-        <button
-          onClick={() => setActiveTab('catalog')}
-          className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors ${
-            activeTab === 'catalog'
-              ? 'bg-white text-black shadow-sm'
-              : 'text-neutral-400 hover:text-white hover:bg-white/[0.05]'
-          }`}
-        >
-          Metadata & ISRC Registry
-        </button>
-      </div>
-
-      {/* Tab 1: Analytics */}
-      {activeTab === 'analytics' && (
-        <div className="space-y-6">
-          <div className="border border-white/[0.08] rounded-xl overflow-hidden bg-neutral-900/30">
-            <div className="p-4 border-b border-white/[0.06] flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-white">Music Performance</h3>
-                <p className="text-xs text-neutral-400">Individual track conversion & save rates</p>
+      {/* TAB 1: OVERVIEW & RELEASES */}
+      {activeSubTab === 'overview' && (
+        <div className="space-y-8">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="p-5 rounded-2xl bg-neutral-900/40 border border-white/[0.06] space-y-2">
+              <div className="flex items-center justify-between text-neutral-400">
+                <span className="text-xs font-medium">Total Catalog Streams</span>
+                <Music className="w-4 h-4 text-red-400" />
               </div>
-              <span className="text-xs text-neutral-500 font-mono">Updated 10m ago</span>
+              <div className="text-2xl font-extrabold font-mono text-white">
+                {(dbStats?.total_streams ?? 0).toLocaleString()}
+              </div>
+              <div className="text-xs text-neutral-400">
+                {dbStats?.flontmie_plays ?? 0} direct Flontmie plays
+              </div>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs text-left">
-                <thead className="bg-white/[0.02] text-neutral-400 uppercase tracking-wider text-[11px] border-b border-white/[0.06]">
-                  <tr>
-                    <th className="py-3 px-4">Track Title</th>
-                    <th className="py-3 px-4">ISRC Code</th>
-                    <th className="py-3 px-4 text-right">Streams</th>
-                    <th className="py-3 px-4 text-right">Save Rate</th>
-                    <th className="py-3 px-4 text-right">Playlist Adds</th>
-                    <th className="py-3 px-4 text-right">Est. Earnings</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/[0.04]">
-                  {artistTracks.map((t) => (
-                    <tr key={t.id} className="hover:bg-white/[0.03] transition-colors">
-                      <td className="py-3 px-4">
-                        <div className="flex items-center gap-3">
-                          <img
-                            src={t.coverUrl}
-                            alt={t.title}
-                            referrerPolicy="no-referrer"
-                            className="w-8 h-8 rounded object-cover"
-                          />
-                          <span className="font-semibold text-white truncate max-w-xs">{t.title}</span>
+            <div className="p-5 rounded-2xl bg-neutral-900/40 border border-white/[0.06] space-y-2">
+              <div className="flex items-center justify-between text-neutral-400">
+                <span className="text-xs font-medium">Followers</span>
+                <Users className="w-4 h-4 text-blue-400" />
+              </div>
+              <div className="text-2xl font-extrabold font-mono text-white">
+                {(dbStats?.followers ?? 0).toLocaleString()}
+              </div>
+              <div className="text-xs text-neutral-400">
+                {dbStats?.total_likes ?? 0} track likes
+              </div>
+            </div>
+
+            <div className="p-5 rounded-2xl bg-neutral-900/40 border border-white/[0.06] space-y-2">
+              <div className="flex items-center justify-between text-neutral-400">
+                <span className="text-xs font-medium">Published Tracks</span>
+                <Disc className="w-4 h-4 text-purple-400" />
+              </div>
+              <div className="text-2xl font-extrabold font-mono text-white">
+                {dbStats?.tracks_count ?? dbTracks.length}
+              </div>
+              <div className="text-xs text-neutral-400">
+                {dbStats?.albums_count ?? dbAlbums.length} albums / EPs
+              </div>
+            </div>
+
+            <div className="p-5 rounded-2xl bg-neutral-900/40 border border-white/[0.06] space-y-2">
+              <div className="flex items-center justify-between text-neutral-400">
+                <span className="text-xs font-medium">Estimated Royalties</span>
+                <DollarSign className="w-4 h-4 text-emerald-400" />
+              </div>
+              <div className="text-2xl font-extrabold font-mono text-white">
+                ${(dbStats?.estimated_royalties_usd ?? 0).toLocaleString()}
+              </div>
+              <div className="text-xs text-neutral-400">Based on verified stream count</div>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <h2 className="text-lg font-bold text-white">Your Catalog Releases ({dbTracks.length})</h2>
+            {dbTracks.length === 0 ? (
+              <div className="p-12 rounded-2xl bg-neutral-900/30 border border-white/[0.06] text-center space-y-2">
+                <Music className="w-8 h-8 text-neutral-600 mx-auto" />
+                <p className="text-sm font-bold text-white">No Tracks Uploaded Yet</p>
+                <p className="text-xs text-neutral-400">
+                  Switch to the "Upload Audio / Video / Lyrics" tab to publish your first song.
+                </p>
+              </div>
+            ) : (
+              <div className="border border-white/[0.06] rounded-2xl overflow-hidden bg-neutral-900/30">
+                <div className="divide-y divide-white/[0.04]">
+                  {dbTracks.map((track) => (
+                    <div
+                      key={track.id}
+                      className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-white/[0.03] transition-colors"
+                    >
+                      <div className="flex items-center gap-3.5">
+                        <img
+                          src={resolveArtworkUrl(track.cover_art_url, 'track', track.title)}
+                          alt={track.title}
+                          onError={(e) => handleImageError(e, track.title, 'track')}
+                          className="w-12 h-12 rounded-lg object-cover bg-neutral-800"
+                        />
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h3 className="font-bold text-sm text-white">{track.title}</h3>
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/[0.06] text-neutral-400">
+                              {track.isrc || track.id}
+                            </span>
+                          </div>
+                          <p className="text-xs text-neutral-400">
+                            {track.album_name || 'Single'} · {track.genre} · {track.release_date}
+                          </p>
                         </div>
-                      </td>
-                      <td className="py-3 px-4 font-mono text-neutral-400">{t.isrc}</td>
-                      <td className="py-3 px-4 text-right font-mono tabular-nums text-white">
-                        {(Number(t.streams) || 0).toLocaleString()}
-                      </td>
-                      <td className="py-3 px-4 text-right font-mono tabular-nums text-emerald-400">
-                        {(((Number(t.likes) || 0) / (Number(t.streams) || 1)) * 100).toFixed(1)}%
-                      </td>
-                      <td className="py-3 px-4 text-right font-mono tabular-nums text-neutral-300">
-                        {Math.floor((Number(t.streams) || 0) / 3200).toLocaleString()}
-                      </td>
-                      <td className="py-3 px-4 text-right font-mono tabular-nums text-white font-medium">
-                        ${Math.round((Number(t.streams) || 0) * 0.0038).toLocaleString()}
-                      </td>
-                    </tr>
+                      </div>
+
+                      <div className="flex items-center gap-6 text-xs">
+                        <div>
+                          <span className="text-neutral-400 block">Streams</span>
+                          <span className="font-mono font-bold text-white">
+                            {Number(track.stream_count || 0).toLocaleString()}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-neutral-400 block">Likes</span>
+                          <span className="font-mono font-bold text-white">
+                            {Number(track.likes_count || 0).toLocaleString()}
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => onPlayTrack(api.mapDbTrack(track))}
+                          className="p-2.5 rounded-full bg-white text-black hover:scale-105 transition-transform cursor-pointer"
+                          title="Play Track"
+                        >
+                          <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
+                        </button>
+                      </div>
+                    </div>
                   ))}
-                </tbody>
-              </table>
-            </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* TAB 2: UPLOAD AUDIO / VIDEO / LYRICS */}
+      {activeSubTab === 'upload' && (
+        <div className="max-w-3xl p-6 rounded-2xl bg-neutral-900/40 border border-white/[0.08] space-y-5">
+          <div>
+            <h2 className="text-lg font-bold text-white">Upload New Release</h2>
+            <p className="text-xs text-neutral-400">
+              Upload your master audio file, cover artwork, optional music video, and synced lyrics.
+            </p>
           </div>
 
-          {/* Top Audience Geographies */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="p-5 rounded-xl bg-neutral-900/30 border border-white/[0.08] space-y-3">
-              <div className="flex items-center justify-between">
-                <h4 className="text-sm font-bold text-white">Top Geographic Markets</h4>
-                <Globe className="w-4 h-4 text-neutral-400" />
+          <form onSubmit={handleTrackUpload} className="space-y-4 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block font-semibold text-neutral-300 mb-1">Track Title *</label>
+                <input
+                  type="text"
+                  required
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-white"
+                />
               </div>
-              <div className="space-y-2.5">
-                {[
-                  { country: 'United States', listeners: '682,000', share: 37 },
-                  { country: 'Germany', listeners: '312,000', share: 17 },
-                  { country: 'United Kingdom', listeners: '240,000', share: 13 },
-                  { country: 'Japan', listeners: '185,000', share: 10 },
-                  { country: 'Brazil', listeners: '142,000', share: 8 },
-                ].map((c) => (
-                  <div key={c.country} className="space-y-1">
-                    <div className="flex justify-between text-xs">
-                      <span className="text-neutral-300">{c.country}</span>
-                      <span className="font-mono tabular-nums text-neutral-400">{c.listeners} ({c.share}%)</span>
+              <div>
+                <label className="block font-semibold text-neutral-300 mb-1">Album / EP / Single Title</label>
+                <input
+                  type="text"
+                  value={albumName}
+                  onChange={(e) => setAlbumName(e.target.value)}
+                  placeholder="Defaults to Single"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-white"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div>
+                <label className="block font-semibold text-neutral-300 mb-1">Release Format</label>
+                <select
+                  value={releaseType}
+                  onChange={(e) => setReleaseType(e.target.value as any)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-white"
+                >
+                  <option value="single">Single</option>
+                  <option value="ep">EP</option>
+                  <option value="album">Album</option>
+                </select>
+              </div>
+              <div>
+                <label className="block font-semibold text-neutral-300 mb-1">Primary Genre</label>
+                <select
+                  value={genre}
+                  onChange={(e) => setGenre(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-white"
+                >
+                  <option value="Afrobeats">Afrobeats</option>
+                  <option value="Pop">Pop</option>
+                  <option value="Rap">Rap & Hip-Hop</option>
+                  <option value="R&B">R&B & Soul</option>
+                  <option value="Electronic">Electronic</option>
+                  <option value="Lo-Fi">Lo-Fi</option>
+                </select>
+              </div>
+              <div>
+                <label className="block font-semibold text-neutral-300 mb-1">ISRC Code (Optional)</label>
+                <input
+                  type="text"
+                  value={isrc}
+                  onChange={(e) => setIsrc(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-white font-mono"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="p-3 rounded-xl bg-neutral-950 border border-white/10 space-y-1.5">
+                <label className="font-bold text-white flex items-center gap-1.5">
+                  <Music className="w-3.5 h-3.5 text-red-400" />
+                  <span>Audio File *</span>
+                </label>
+                <input
+                  type="file"
+                  accept=".mp3,.wav,.flac,.m4a,.aac,.ogg,audio/*"
+                  onChange={(e) => setAudioFile(e.target.files?.[0] || null)}
+                  className="w-full text-[11px] text-neutral-300"
+                />
+              </div>
+
+              <div className="p-3 rounded-xl bg-neutral-950 border border-white/10 space-y-1.5">
+                <label className="font-bold text-white flex items-center gap-1.5">
+                  <Disc className="w-3.5 h-3.5 text-pink-400" />
+                  <span>Artwork</span>
+                </label>
+                <input
+                  type="file"
+                  accept=".jpg,.jpeg,.png,.webp,image/*"
+                  onChange={(e) => setCoverFile(e.target.files?.[0] || null)}
+                  className="w-full text-[11px] text-neutral-300"
+                />
+              </div>
+
+              <div className="p-3 rounded-xl bg-neutral-950 border border-white/10 space-y-1.5">
+                <label className="font-bold text-white flex items-center gap-1.5">
+                  <Video className="w-3.5 h-3.5 text-sky-400" />
+                  <span>Video (.mp4)</span>
+                </label>
+                <input
+                  type="file"
+                  accept=".mp4,.webm,.mov,video/*"
+                  onChange={(e) => setVideoFile(e.target.files?.[0] || null)}
+                  className="w-full text-[11px] text-neutral-300"
+                />
+              </div>
+
+              <div className="p-3 rounded-xl bg-neutral-950 border border-white/10 space-y-1.5">
+                <label className="font-bold text-white flex items-center gap-1.5">
+                  <FileText className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Lyrics (.lrc/.txt)</span>
+                </label>
+                <input
+                  type="file"
+                  accept=".lrc,.txt,.srt"
+                  onChange={(e) => setLyricsFile(e.target.files?.[0] || null)}
+                  className="w-full text-[11px] text-neutral-300"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block font-semibold text-neutral-300 mb-1">Lyrics Text (Optional)</label>
+              <textarea
+                rows={4}
+                value={lyricsText}
+                onChange={(e) => setLyricsText(e.target.value)}
+                placeholder="Paste song lyrics or timed [mm:ss.xx] LRC lines..."
+                className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-white font-mono"
+              />
+            </div>
+
+            {uploading && (
+              <div className="w-full h-2 rounded-full bg-neutral-800 overflow-hidden">
+                <div className="h-full bg-red-500 transition-all" style={{ width: `${uploadProgress}%` }} />
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={uploading}
+              className="px-6 py-3 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold flex items-center gap-2 cursor-pointer"
+            >
+              {uploading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Uploading ({uploadProgress}%)...</span>
+                </>
+              ) : (
+                <>
+                  <Upload className="w-4 h-4" />
+                  <span>Publish Track</span>
+                </>
+              )}
+            </button>
+          </form>
+        </div>
+      )}
+
+      {/* TAB 3: ROYALTY SPLIT SHEETS */}
+      {activeSubTab === 'splits' && (
+        <div className="max-w-3xl p-6 rounded-2xl bg-neutral-900/40 border border-white/[0.08] space-y-5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-bold text-white">Royalty Split Sheet</h2>
+              <p className="text-xs text-neutral-400">
+                Persist collaborator revenue splits directly to the database.
+              </p>
+            </div>
+            {dbTracks.length > 0 && (
+              <select
+                value={selectedSplitTrackId}
+                onChange={(e) => {
+                  const tid = e.target.value;
+                  setSelectedSplitTrackId(tid);
+                  const found = dbSplits.find((s: any) => s.track_id === tid);
+                  if (found && Array.isArray(found.members)) {
+                    setSplitMembers(found.members);
+                  } else {
+                    setSplitMembers([
+                      {
+                        id: 'sm_1',
+                        name: displayName,
+                        role: 'Primary Artist',
+                        percentage: 100,
+                        payoutEmail: '',
+                      },
+                    ]);
+                  }
+                }}
+                className="px-3.5 py-2 rounded-xl bg-neutral-950 border border-white/15 text-xs text-white"
+              >
+                {dbTracks.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.title}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          {dbTracks.length === 0 ? (
+            <p className="text-xs text-neutral-500 py-8 text-center">
+              Upload a track first to configure collaborator royalty splits.
+            </p>
+          ) : (
+            <>
+              <div className="space-y-3">
+                {splitMembers.map((member) => (
+                  <div
+                    key={member.id}
+                    className="grid grid-cols-1 sm:grid-cols-12 gap-3 p-3.5 rounded-xl bg-neutral-950/70 border border-white/[0.06] items-center text-xs"
+                  >
+                    <div className="sm:col-span-4">
+                      <input
+                        type="text"
+                        value={member.name}
+                        onChange={(e) =>
+                          setSplitMembers((prev) =>
+                            prev.map((m) => (m.id === member.id ? { ...m, name: e.target.value } : m))
+                          )
+                        }
+                        placeholder="Collaborator Name"
+                        className="w-full px-2.5 py-1.5 rounded-lg bg-neutral-900 border border-white/10 text-white"
+                      />
                     </div>
-                    <div className="w-full h-1.5 rounded-full bg-white/10 overflow-hidden">
-                      <div className="h-full bg-red-500 rounded-full" style={{ width: `${c.share}%` }} />
+                    <div className="sm:col-span-3">
+                      <select
+                        value={member.role}
+                        onChange={(e) =>
+                          setSplitMembers((prev) =>
+                            prev.map((m) => (m.id === member.id ? { ...m, role: e.target.value as any } : m))
+                          )
+                        }
+                        className="w-full px-2.5 py-1.5 rounded-lg bg-neutral-900 border border-white/10 text-white"
+                      >
+                        <option value="Primary Artist">Primary Artist</option>
+                        <option value="Featured Artist">Featured Artist</option>
+                        <option value="Producer">Producer</option>
+                        <option value="Songwriter">Songwriter</option>
+                        <option value="Mix Engineer">Mix Engineer</option>
+                      </select>
+                    </div>
+                    <div className="sm:col-span-3">
+                      <input
+                        type="email"
+                        value={member.payoutEmail}
+                        onChange={(e) =>
+                          setSplitMembers((prev) =>
+                            prev.map((m) => (m.id === member.id ? { ...m, payoutEmail: e.target.value } : m))
+                          )
+                        }
+                        placeholder="Payout Email"
+                        className="w-full px-2.5 py-1.5 rounded-lg bg-neutral-900 border border-white/10 text-white"
+                      />
+                    </div>
+                    <div className="sm:col-span-2 flex items-center gap-2">
+                      <input
+                        type="number"
+                        min={1}
+                        max={100}
+                        value={member.percentage}
+                        onChange={(e) =>
+                          setSplitMembers((prev) =>
+                            prev.map((m) =>
+                              m.id === member.id ? { ...m, percentage: Number(e.target.value) } : m
+                            )
+                          )
+                        }
+                        className="w-16 px-2 py-1.5 rounded-lg bg-neutral-900 border border-white/10 text-white font-mono text-right"
+                      />
+                      <span>%</span>
+                      {splitMembers.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => setSplitMembers((prev) => prev.filter((m) => m.id !== member.id))}
+                          className="text-neutral-500 hover:text-red-400"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
               </div>
-            </div>
 
-            <div className="p-5 rounded-xl bg-neutral-900/30 border border-white/[0.08] space-y-3">
-              <h4 className="text-sm font-bold text-white">Active Discovery Sources</h4>
-              <div className="space-y-3 text-xs">
-                <div className="flex justify-between p-2.5 rounded-lg bg-white/[0.02] border border-white/[0.04]">
-                  <span className="text-neutral-300">Algorithmic Radios & Next Up</span>
-                  <span className="font-mono tabular-nums font-semibold text-white">48.2%</span>
-                </div>
-                <div className="flex justify-between p-2.5 rounded-lg bg-white/[0.02] border border-white/[0.04]">
-                  <span className="text-neutral-300">Editorial Frontpage Playlists</span>
-                  <span className="font-mono tabular-nums font-semibold text-white">28.5%</span>
-                </div>
-                <div className="flex justify-between p-2.5 rounded-lg bg-white/[0.02] border border-white/[0.04]">
-                  <span className="text-neutral-300">Listener Personal Libraries</span>
-                  <span className="font-mono tabular-nums font-semibold text-white">16.1%</span>
-                </div>
-                <div className="flex justify-between p-2.5 rounded-lg bg-white/[0.02] border border-white/[0.04]">
-                  <span className="text-neutral-300">Social Jams & Shared Links</span>
-                  <span className="font-mono tabular-nums font-semibold text-white">7.2%</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Tab 2: Split Sheets Builder */}
-      {activeTab === 'splits' && (
-        <div className="space-y-6">
-          <div className="p-6 rounded-xl bg-neutral-900/40 border border-white/[0.08] space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/[0.08] pb-4">
-              <div>
-                <h3 className="text-base font-bold text-white">Automated Royalty Split Sheets</h3>
-                <p className="text-xs text-neutral-400">
-                  Configure real-time gross revenue distribution for primary artists, producers, and writers
-                </p>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-neutral-400">Select Track:</span>
-                <select
-                  value={selectedSplitTrackId}
-                  onChange={(e) => setSelectedSplitTrackId(e.target.value)}
-                  className="px-3 py-1.5 text-xs bg-neutral-800 border border-white/10 rounded-lg text-white focus:outline-none"
-                >
-                  {artistTracks.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.title}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            {/* Split Members List */}
-            <div className="space-y-3">
-              <div className="grid grid-cols-12 gap-3 text-xs font-semibold text-neutral-400 uppercase tracking-wider px-2">
-                <div className="col-span-4">Collaborator Name</div>
-                <div className="col-span-3">Role</div>
-                <div className="col-span-3">Payout Destination</div>
-                <div className="col-span-2 text-right">Split %</div>
-              </div>
-
-              {collaborators.map((c) => (
-                <div
-                  key={c.id}
-                  className="grid grid-cols-12 gap-3 items-center p-3 rounded-lg bg-white/[0.02] border border-white/[0.06] text-xs"
-                >
-                  <div className="col-span-4 font-semibold text-white flex items-center gap-2">
-                    <span className="w-6 h-6 rounded-full bg-red-600/20 text-red-400 flex items-center justify-center text-[10px] font-bold">
-                      {c.name[0]}
-                    </span>
-                    <span className="truncate">{c.name}</span>
-                  </div>
-                  <div className="col-span-3 text-neutral-300">{c.role}</div>
-                  <div className="col-span-3 font-mono text-neutral-400 truncate">{c.payoutEmail}</div>
-                  <div className="col-span-2 flex items-center justify-end gap-3">
-                    <span className="font-mono tabular-nums font-bold text-white">{c.percentage}%</span>
-                    <button
-                      onClick={() => handleRemoveCollaborator(c.id)}
-                      className="text-neutral-500 hover:text-red-400"
-                    >
-                      ×
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Total Percentage Status */}
-            <div className="flex items-center justify-between p-3 rounded-lg bg-neutral-900 border border-white/10 text-xs">
-              <span className="text-neutral-300">Total Royalty Allocation:</span>
-              <div className="flex items-center gap-2">
-                <span className={`font-mono tabular-nums font-bold ${totalSplitPercent === 100 ? 'text-emerald-400' : 'text-amber-400'}`}>
-                  {totalSplitPercent}% {totalSplitPercent === 100 ? '(Balanced)' : '(Must equal 100%)'}
-                </span>
-              </div>
-            </div>
-
-            {/* Add New Collaborator Form */}
-            <form onSubmit={handleAddCollaborator} className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06] space-y-3">
-              <h4 className="text-xs font-bold text-white uppercase tracking-wider">
-                Add Collaborator to Split Sheet
-              </h4>
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                <input
-                  type="text"
-                  placeholder="Collaborator legal name"
-                  value={newCollabName}
-                  onChange={(e) => setNewCollabName(e.target.value)}
-                  className="px-3 py-2 text-xs bg-neutral-900 border border-white/10 rounded-lg text-white placeholder-neutral-500"
-                />
-                <select
-                  value={newCollabRole}
-                  onChange={(e) => setNewCollabRole(e.target.value as SplitMember['role'])}
-                  className="px-3 py-2 text-xs bg-neutral-900 border border-white/10 rounded-lg text-white"
-                >
-                  <option value="Primary Artist">Primary Artist</option>
-                  <option value="Producer">Producer</option>
-                  <option value="Songwriter">Songwriter</option>
-                  <option value="Mix Engineer">Mix Engineer</option>
-                  <option value="Featured Artist">Featured Artist</option>
-                </select>
-                <input
-                  type="number"
-                  min="1"
-                  max="100"
-                  placeholder="Share %"
-                  value={newCollabPercent}
-                  onChange={(e) => setNewCollabPercent(Number(e.target.value))}
-                  className="px-3 py-2 text-xs bg-neutral-900 border border-white/10 rounded-lg text-white"
-                />
+              <div className="flex items-center justify-between pt-2">
                 <button
-                  type="submit"
-                  className="px-4 py-2 bg-white text-black font-semibold text-xs rounded-lg hover:bg-neutral-200 transition-colors"
+                  type="button"
+                  onClick={() =>
+                    setSplitMembers((prev) => [
+                      ...prev,
+                      {
+                        id: `sm_${Date.now()}`,
+                        name: '',
+                        role: 'Producer',
+                        percentage: 0,
+                        payoutEmail: '',
+                      },
+                    ])
+                  }
+                  className="px-4 py-2 rounded-xl bg-white/[0.06] hover:bg-white/10 text-xs font-semibold text-white flex items-center gap-1.5 cursor-pointer"
                 >
-                  Add to Split
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add Collaborator</span>
                 </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
 
-      {/* Tab 3: Catalog & Metadata Registry */}
-      {activeTab === 'catalog' && (
-        <div className="space-y-4">
-          <div className="border border-white/[0.08] rounded-xl overflow-hidden bg-neutral-900/30">
-            <div className="p-4 border-b border-white/[0.06]">
-              <h3 className="text-sm font-bold text-white">Registered Master Recordings</h3>
-              <p className="text-xs text-neutral-400">ISRC, UPC, and Distributor status</p>
-            </div>
-            <div className="divide-y divide-white/[0.04] text-xs">
-              {artistTracks.map((t) => (
-                <div key={t.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-white/[0.02]">
-                  <div className="space-y-1">
-                    <p className="font-semibold text-white">{t.title}</p>
-                    <div className="flex items-center gap-3 text-neutral-400">
-                      <span>ISRC: <strong className="font-mono text-neutral-300">{t.isrc}</strong></span>
-                      <span aria-hidden="true">·</span>
-                      <span>UPC: <strong className="font-mono text-neutral-300">{t.upc}</strong></span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-4 text-neutral-400">
-                    <span>Label: <strong className="text-neutral-300">{t.label}</strong></span>
-                    <span aria-hidden="true">·</span>
-                    <span className="font-mono">Tempo: {t.bpm}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal: Drop New Release */}
-      {isNewReleaseModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-in fade-in">
-          <div className="w-full max-w-lg bg-[#141416] border border-white/10 rounded-2xl shadow-2xl overflow-hidden p-6 space-y-5">
-            <div className="flex items-center justify-between border-b border-white/[0.08] pb-3">
-              <div className="flex items-center gap-2">
-                <Upload className="w-5 h-5 text-red-500" />
-                <h3 className="text-base font-bold text-white">Drop New Master Track</h3>
-              </div>
-              <button
-                onClick={() => setIsNewReleaseModalOpen(false)}
-                className="text-neutral-400 hover:text-white"
-              >
-                ×
-              </button>
-            </div>
-
-            {releaseSuccessMessage ? (
-              <div className="py-12 text-center space-y-3">
-                <div className="w-12 h-12 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto">
-                  <Check className="w-6 h-6" />
-                </div>
-                <h4 className="text-base font-bold text-white">Track Registered & Live!</h4>
-                <p className="text-xs text-neutral-400">Added to streaming and published directly.</p>
-              </div>
-            ) : (
-              <form onSubmit={handleCreateRelease} className="space-y-4 text-xs">
-                <div className="space-y-1">
-                  <label className="font-medium text-neutral-300">Track Title</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. Neon Horizon Pt. II"
-                    value={newTitle}
-                    onChange={(e) => setNewTitle(e.target.value)}
-                    className="w-full px-3 py-2 bg-neutral-900 border border-white/10 rounded-lg text-white"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <label className="font-medium text-neutral-300">Genre</label>
-                    <select
-                      value={newGenre}
-                      onChange={(e) => setNewGenre(e.target.value as MusicGenre)}
-                      className="w-full px-3 py-2 bg-neutral-900 border border-white/10 rounded-lg text-white"
-                    >
-                      <option value="afrobeat">Afrobeat</option>
-                      <option value="pop">Pop</option>
-                      <option value="rap">Rap & Hip-Hop</option>
-                      <option value="oldschool">Old School & Funk</option>
-                      <option value="r&b">R&B & Neo-Soul</option>
-                      <option value="synthwave">Synthwave / Retrowave</option>
-                      <option value="lo-fi">Lo-Fi / Chillhop</option>
-                      <option value="ambient">Ambient / Deep Focus</option>
-                    </select>
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="font-medium text-neutral-300">Tempo (Pace)</label>
-                    <input
-                      type="number"
-                      value={newBpm}
-                      onChange={(e) => setNewBpm(Number(e.target.value))}
-                      className="w-full px-3 py-2 bg-neutral-900 border border-white/10 rounded-lg text-white"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 pt-1">
-                  <input
-                    type="checkbox"
-                    id="explicit"
-                    checked={newIsExplicit}
-                    onChange={(e) => setNewIsExplicit(e.target.checked)}
-                    className="accent-red-500 rounded"
-                  />
-                  <label htmlFor="explicit" className="text-neutral-300">
-                    Explicit Lyrics Tag (Parental Advisory)
-                  </label>
-                </div>
-
-                <div className="p-3 rounded-lg bg-neutral-900 border border-dashed border-white/20 text-center space-y-1">
-                  <Upload className="w-5 h-5 mx-auto text-neutral-400" />
-                  <p className="font-medium text-neutral-200">WAV Stem & Artwork Linked</p>
-                  <p className="text-[10px] text-neutral-500">24-bit / 48kHz uncompressed audio preset ready</p>
-                </div>
-
-                <div className="flex justify-end gap-2 pt-2 border-t border-white/[0.08]">
+                <div className="flex items-center gap-4">
+                  <span
+                    className={`text-xs font-mono font-bold ${
+                      totalSplitPercentage === 100 ? 'text-emerald-400' : 'text-amber-400'
+                    }`}
+                  >
+                    Total: {totalSplitPercentage}%
+                  </span>
                   <button
                     type="button"
-                    onClick={() => setIsNewReleaseModalOpen(false)}
-                    className="px-4 py-2 rounded-lg text-neutral-400 hover:text-white"
+                    disabled={totalSplitPercentage !== 100 || savingSplits}
+                    onClick={handleSaveSplits}
+                    className="px-5 py-2.5 rounded-xl bg-white text-black font-bold text-xs disabled:opacity-40 cursor-pointer"
                   >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-5 py-2 bg-red-600 hover:bg-red-500 text-white font-semibold rounded-lg shadow-md"
-                  >
-                    Submit & Dispatch Track
+                    {savingSplits ? 'Saving...' : 'Save Split Sheet'}
                   </button>
                 </div>
-              </form>
-            )}
-          </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* TAB 4: PROFILE SETTINGS */}
+      {activeSubTab === 'profile' && (
+        <div className="max-w-xl p-6 rounded-2xl bg-neutral-900/40 border border-white/[0.08] space-y-4">
+          <h2 className="text-lg font-bold text-white">Edit Public Artist Profile</h2>
+          <form onSubmit={handleSaveProfile} className="space-y-4 text-xs">
+            <div>
+              <label className="block text-neutral-300 font-semibold mb-1">Artist Name</label>
+              <input
+                type="text"
+                required
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-white"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-neutral-300 font-semibold mb-1">Primary Genre</label>
+                <input
+                  type="text"
+                  value={editGenre}
+                  onChange={(e) => setEditGenre(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-white"
+                />
+              </div>
+              <div>
+                <label className="block text-neutral-300 font-semibold mb-1">Country (ISO)</label>
+                <input
+                  type="text"
+                  maxLength={2}
+                  value={editCountry}
+                  onChange={(e) => setEditCountry(e.target.value.toUpperCase())}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-white uppercase font-mono"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-neutral-300 font-semibold mb-1">Avatar URL</label>
+              <input
+                type="url"
+                value={editAvatar}
+                onChange={(e) => setEditAvatar(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-white"
+              />
+            </div>
+            <div>
+              <label className="block text-neutral-300 font-semibold mb-1">Biography</label>
+              <textarea
+                rows={4}
+                value={editBio}
+                onChange={(e) => setEditBio(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-white"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={savingProfile}
+              className="px-6 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold flex items-center gap-2 cursor-pointer"
+            >
+              <Save className="w-4 h-4" />
+              <span>{savingProfile ? 'Saving...' : 'Save Artist Profile'}</span>
+            </button>
+          </form>
         </div>
       )}
     </div>

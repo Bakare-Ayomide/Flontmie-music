@@ -314,9 +314,6 @@ export default function App() {
           if (res.user.role !== 'admin') {
             setCurrentPersona(res.user.role);
           }
-          if (res.must_change_password || res.user.must_change_password) {
-            setIsAuthModalOpen(true);
-          }
         }
       })
       .catch(() => {
@@ -713,9 +710,12 @@ export default function App() {
     <div className="min-h-screen bg-[#030303] text-white flex flex-col font-sans selection:bg-red-600/30 overflow-x-hidden">
       {/* Top Bar Navigation */}
       <Navbar
-        currentPersona={currentPersona === 'admin' ? 'listener' : currentPersona}
+        currentPersona={isAdminRoute ? 'admin' : (currentPersona === 'admin' ? 'listener' : currentPersona)}
         onSelectPersona={(p) => {
-          if (p === 'admin') return;
+          if (p === 'admin') {
+            navigateTab('admin');
+            return;
+          }
           setIsAdminRoute(false);
           setCurrentPersona(p);
           setSelectedPlaylistId(null);
@@ -764,7 +764,10 @@ export default function App() {
           onCreatePlaylist={() => setIsCreatePlaylistOpen(true)}
           currentPersona={currentPersona === 'admin' ? 'listener' : currentPersona}
           onSelectPersona={(p) => {
-            if (p === 'admin') return;
+            if (p === 'admin') {
+              navigateTab('admin');
+              return;
+            }
             setIsAdminRoute(false);
             setCurrentPersona(p);
             setSelectedPlaylistId(null);
@@ -772,6 +775,7 @@ export default function App() {
           }}
           isCollapsed={isSidebarCollapsed}
           onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+          currentUser={currentUser}
         />
 
         {/* Main Workspace Viewport */}
@@ -945,20 +949,25 @@ export default function App() {
                     </p>
                   </div>
 
-                  {/* Database-Driven Explorer */}
+                  {/* Unified App-Wide + YouTube Music Explorer */}
                   <YouTubeMusicDiscovery
-                    tracks={tracks}
-                    albums={albums}
-                    artists={Object.values(artistProfiles)}
-                    playlists={playlists}
-                    currentTrackId={currentTrack?.id}
+                    currentTrack={currentTrack}
                     isPlaying={isPlaying}
-                    searchQuery={searchQuery}
-                    onSearchChange={setSearchQuery}
+                    likedTrackIds={likedTrackIds}
                     onPlayTrack={handlePlayTrack}
+                    onToggleLike={handleToggleLike}
+                    onAddToQueue={handleAddToQueue}
+                    onOpenAddToPlaylist={(track) => {
+                      setCurrentTrack(track);
+                      setIsAddToPlaylistOpen(true);
+                    }}
                     onSelectArtist={handleViewArtist}
                     onSelectPlaylist={navigatePlaylist}
-                    onToggleLike={handleToggleLike}
+                    searchQuery={searchQuery}
+                    catalogTracks={tracks}
+                    catalogAlbums={albums}
+                    catalogArtists={Object.values(artistProfiles)}
+                    catalogPlaylists={playlists}
                   />
 
                   {/* Explore Genre Highlights Grid */}
@@ -995,42 +1004,46 @@ export default function App() {
                         <span className="text-[11px] text-neutral-500 font-mono">Trending Releases</span>
                       </div>
                       <div className="space-y-1.5">
-                        {tracks
-                          .slice()
-                          .sort((a, b) => (Number(b.streams) || 0) - (Number(a.streams) || 0))
-                          .slice(0, 8)
-                          .map((t, i) => (
-                            <div
-                              key={t.id || i}
-                              onClick={() => handlePlayTrack(t)}
-                              className="flex items-center justify-between p-2 sm:p-2.5 rounded-xl hover:bg-white/[0.06] cursor-pointer text-xs transition-colors group"
-                            >
-                              <div className="flex items-center gap-3 min-w-0">
-                                <span className={`font-mono w-5 text-center shrink-0 font-bold ${i < 3 ? 'text-red-400' : 'text-neutral-500'}`}>
-                                  {i + 1}
-                                </span>
-                                <img
-                                  src={resolveArtworkUrl(t.coverUrl, 'track', t.title)}
-                                  alt={t.title}
-                                  referrerPolicy="no-referrer"
-                                  onError={(e) => handleImageError(e, t.title, 'track')}
-                                  className="w-9 h-9 rounded-lg object-cover shrink-0 bg-neutral-800"
-                                />
-                                <div className="min-w-0">
-                                  <p className="font-semibold text-white truncate group-hover:text-red-400 transition-colors">
-                                    {t.title || 'Untitled'}
-                                  </p>
-                                  <p className="text-[11px] text-neutral-400 truncate">{t.artist || 'Unknown'}</p>
+                        {tracks.length === 0 ? (
+                          <p className="py-6 text-center text-xs text-neutral-500">No catalog tracks published yet.</p>
+                        ) : (
+                          tracks
+                            .slice()
+                            .sort((a, b) => (Number(b.streams) || 0) - (Number(a.streams) || 0))
+                            .slice(0, 8)
+                            .map((t, i) => (
+                              <div
+                                key={t.id || i}
+                                onClick={() => handlePlayTrack(t)}
+                                className="flex items-center justify-between p-2 sm:p-2.5 rounded-xl hover:bg-white/[0.06] cursor-pointer text-xs transition-colors group"
+                              >
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <span className={`font-mono w-5 text-center shrink-0 font-bold ${i < 3 ? 'text-red-400' : 'text-neutral-500'}`}>
+                                    {i + 1}
+                                  </span>
+                                  <img
+                                    src={resolveArtworkUrl(t.coverUrl, 'track', t.title)}
+                                    alt={t.title}
+                                    referrerPolicy="no-referrer"
+                                    onError={(e) => handleImageError(e, t.title, 'track')}
+                                    className="w-9 h-9 rounded-lg object-cover shrink-0 bg-neutral-800"
+                                  />
+                                  <div className="min-w-0">
+                                    <p className="font-semibold text-white truncate group-hover:text-red-400 transition-colors">
+                                      {t.title || 'Untitled'}
+                                    </p>
+                                    <p className="text-[11px] text-neutral-400 truncate">{t.artist || 'Unknown'}</p>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-3 shrink-0 ml-2">
+                                  <span className="font-mono tabular-nums text-neutral-400 text-[11px]">
+                                    {formatCompactNumber(t.ytPlays ?? t.streams)} plays
+                                  </span>
+                                  <Play className="w-3.5 h-3.5 text-neutral-400 opacity-0 group-hover:opacity-100 fill-current hover:text-white transition-opacity" />
                                 </div>
                               </div>
-                              <div className="flex items-center gap-3 shrink-0 ml-2">
-                                <span className="font-mono tabular-nums text-neutral-400 text-[11px]">
-                                  {formatCompactNumber(t.ytPlays ?? t.streams)} plays
-                                </span>
-                                <Play className="w-3.5 h-3.5 text-neutral-400 opacity-0 group-hover:opacity-100 fill-current hover:text-white transition-opacity" />
-                              </div>
-                            </div>
-                          ))}
+                            ))
+                        )}
                       </div>
                     </div>
 
@@ -1044,38 +1057,42 @@ export default function App() {
                         <span className="text-[11px] text-neutral-500 font-mono">{playlists.length} Collections</span>
                       </div>
                       <div className="space-y-2">
-                        {playlists.map((pl) => {
-                          const trackCount = Array.isArray(pl.trackIds) ? pl.trackIds.length : 0;
-                          const savesFormatted = formatCompactNumber(pl.followers);
-                          return (
-                            <div
-                              key={pl.id}
-                              onClick={() => navigatePlaylist(pl.id)}
-                              className="flex items-center justify-between p-2.5 rounded-xl hover:bg-white/[0.06] cursor-pointer text-xs transition-colors group"
-                            >
-                              <div className="flex items-center gap-3 min-w-0">
-                                <img
-                                  src={resolveArtworkUrl(pl.coverUrl, 'playlist', pl.title)}
-                                  alt={pl.title}
-                                  referrerPolicy="no-referrer"
-                                  onError={(e) => handleImageError(e, pl.title, 'playlist')}
-                                  className="w-10 h-10 rounded-lg object-cover shrink-0 bg-neutral-800"
-                                />
-                                <div className="min-w-0">
-                                  <p className="font-semibold text-white truncate group-hover:text-blue-400 transition-colors">
-                                    {pl.title || 'Curated Playlist'}
-                                  </p>
-                                  <p className="text-[11px] text-neutral-400 truncate">
-                                    {pl.curator || 'Editorial'} · {trackCount} songs
-                                  </p>
+                        {playlists.length === 0 ? (
+                          <p className="py-6 text-center text-xs text-neutral-500">No curated playlists published yet.</p>
+                        ) : (
+                          playlists.map((pl) => {
+                            const trackCount = Array.isArray(pl.trackIds) ? pl.trackIds.length : 0;
+                            const savesFormatted = formatCompactNumber(pl.followers);
+                            return (
+                              <div
+                                key={pl.id}
+                                onClick={() => navigatePlaylist(pl.id)}
+                                className="flex items-center justify-between p-2.5 rounded-xl hover:bg-white/[0.06] cursor-pointer text-xs transition-colors group"
+                              >
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <img
+                                    src={resolveArtworkUrl(pl.coverUrl, 'playlist', pl.title)}
+                                    alt={pl.title}
+                                    referrerPolicy="no-referrer"
+                                    onError={(e) => handleImageError(e, pl.title, 'playlist')}
+                                    className="w-10 h-10 rounded-lg object-cover shrink-0 bg-neutral-800"
+                                  />
+                                  <div className="min-w-0">
+                                    <p className="font-semibold text-white truncate group-hover:text-blue-400 transition-colors">
+                                      {pl.title || 'Curated Playlist'}
+                                    </p>
+                                    <p className="text-[11px] text-neutral-400 truncate">
+                                      {pl.curator || 'Editorial'} · {trackCount} songs
+                                    </p>
+                                  </div>
                                 </div>
+                                <span className="text-neutral-400 font-mono text-[11px] shrink-0 ml-2">
+                                  {savesFormatted !== 'N/A' ? `${savesFormatted} saves` : '0 saves'}
+                                </span>
                               </div>
-                              <span className="text-neutral-400 font-mono text-[11px] shrink-0 ml-2">
-                                {savesFormatted !== 'N/A' ? `${savesFormatted} saves` : 'N/A'}
-                              </span>
-                            </div>
-                          );
-                        })}
+                            );
+                          })
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1086,27 +1103,40 @@ export default function App() {
                     <h1 className="text-xl md:text-2xl font-bold text-white">Your Streaming Library</h1>
                     <p className="text-xs text-neutral-400 mt-1">Your saved playlists, liked tracks, and listening history</p>
                   </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 sm:gap-4">
-                    {playlists.map((pl) => (
-                      <div
-                        key={pl.id}
-                        onClick={() => navigatePlaylist(pl.id)}
-                        className="p-3 rounded-2xl bg-neutral-900/30 border border-white/[0.06] hover:border-white/20 transition-all cursor-pointer group"
+                  {playlists.length === 0 ? (
+                    <div className="py-16 text-center rounded-2xl bg-neutral-900/30 border border-white/[0.06] space-y-3">
+                      <p className="text-sm font-semibold text-neutral-300">No playlists in your library yet</p>
+                      <p className="text-xs text-neutral-500">Create a playlist to organize your favorite tracks.</p>
+                      <button
+                        onClick={() => setIsCreatePlaylistOpen(true)}
+                        className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-semibold transition-colors cursor-pointer"
                       >
-                        <div className="aspect-square rounded-xl overflow-hidden bg-neutral-800 mb-2">
-                          <img
-                            src={resolveArtworkUrl(pl.coverUrl, 'playlist', pl.title)}
-                            alt={pl.title}
-                            referrerPolicy="no-referrer"
-                            onError={(e) => handleImageError(e, pl.title, 'playlist')}
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                          />
+                        Create New Playlist
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 sm:gap-4">
+                      {playlists.map((pl) => (
+                        <div
+                          key={pl.id}
+                          onClick={() => navigatePlaylist(pl.id)}
+                          className="p-3 rounded-2xl bg-neutral-900/30 border border-white/[0.06] hover:border-white/20 transition-all cursor-pointer group"
+                        >
+                          <div className="aspect-square rounded-xl overflow-hidden bg-neutral-800 mb-2">
+                            <img
+                              src={resolveArtworkUrl(pl.coverUrl, 'playlist', pl.title)}
+                              alt={pl.title}
+                              referrerPolicy="no-referrer"
+                              onError={(e) => handleImageError(e, pl.title, 'playlist')}
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                            />
+                          </div>
+                          <h4 className="text-xs font-semibold text-white truncate">{pl.title}</h4>
+                          <p className="text-[11px] text-neutral-400 truncate">{pl.curator}</p>
                         </div>
-                        <h4 className="text-xs font-semibold text-white truncate">{pl.title}</h4>
-                        <p className="text-[11px] text-neutral-400 truncate">{pl.curator}</p>
-                      </div>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ) : currentTab === 'liked' ? (
                 <div className="space-y-6 pb-20">
@@ -1122,33 +1152,39 @@ export default function App() {
                   </div>
 
                   <div className="border border-white/[0.06] rounded-2xl overflow-hidden bg-neutral-900/30">
-                    {tracks
-                      .filter((t) => likedTrackIds.includes(t.id))
-                      .map((t, idx) => (
-                        <div
-                          key={t.id}
-                          onClick={() => handlePlayTrack(t)}
-                          className="flex items-center justify-between p-3 border-b border-white/[0.03] hover:bg-white/[0.04] cursor-pointer text-xs transition-colors"
-                        >
-                          <div className="flex items-center gap-3 min-w-0">
-                            <span className="font-mono text-neutral-500 w-4 shrink-0">{idx + 1}</span>
-                            <img
-                              src={resolveArtworkUrl(t.coverUrl, 'track', t.title)}
-                              alt={t.title}
-                              referrerPolicy="no-referrer"
-                              onError={(e) => handleImageError(e, t.title, 'track')}
-                              className="w-9 h-9 rounded-lg object-cover shrink-0"
-                            />
-                            <div className="min-w-0">
-                              <p className="font-semibold text-white truncate">{t.title}</p>
-                              <p className="text-neutral-400 truncate">{t.artist}</p>
+                    {tracks.filter((t) => likedTrackIds.includes(t.id)).length === 0 ? (
+                      <p className="py-12 text-center text-xs text-neutral-500">
+                        You haven't liked any tracks yet. Tap the heart icon on any song to save it here.
+                      </p>
+                    ) : (
+                      tracks
+                        .filter((t) => likedTrackIds.includes(t.id))
+                        .map((t, idx) => (
+                          <div
+                            key={t.id}
+                            onClick={() => handlePlayTrack(t)}
+                            className="flex items-center justify-between p-3 border-b border-white/[0.03] hover:bg-white/[0.04] cursor-pointer text-xs transition-colors"
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <span className="font-mono text-neutral-500 w-4 shrink-0">{idx + 1}</span>
+                              <img
+                                src={resolveArtworkUrl(t.coverUrl, 'track', t.title)}
+                                alt={t.title}
+                                referrerPolicy="no-referrer"
+                                onError={(e) => handleImageError(e, t.title, 'track')}
+                                className="w-9 h-9 rounded-lg object-cover shrink-0"
+                              />
+                              <div className="min-w-0">
+                                <p className="font-semibold text-white truncate">{t.title}</p>
+                                <p className="text-neutral-400 truncate">{t.artist}</p>
+                              </div>
                             </div>
+                            <span className="font-mono tabular-nums text-neutral-400 shrink-0 ml-2">
+                              {Math.floor(t.duration / 60)}:{String(Math.floor(t.duration % 60)).padStart(2, '0')}
+                            </span>
                           </div>
-                          <span className="font-mono tabular-nums text-neutral-400 shrink-0 ml-2">
-                            {Math.floor(t.duration / 60)}:{String(Math.floor(t.duration % 60)).padStart(2, '0')}
-                          </span>
-                        </div>
-                      ))}
+                        ))
+                    )}
                   </div>
                 </div>
               ) : currentTab === 'profile' ? (
@@ -1208,35 +1244,68 @@ export default function App() {
 
           {/* Persona View 2: Artist Studio Dashboard */}
           {currentPersona === 'artist' && (
-            <ArtistDashboard
-              artistProfile={artistProfiles['artist-nova'] || Object.values(artistProfiles)[0]}
-              tracks={tracks}
-              onAddNewTrack={handleAddNewArtistTrack}
-            />
+            currentUser && (currentUser.role === 'artist' || currentUser.role === 'admin') ? (
+              <ArtistDashboard
+                currentUser={currentUser}
+                artistProfile={
+                  Object.values(artistProfiles).find(
+                    (a) => a.name.toLowerCase() === (currentUser.display_name || '').toLowerCase()
+                  ) || Object.values(artistProfiles)[0]
+                }
+                tracks={tracks}
+                onAddNewTrack={handleAddNewArtistTrack}
+              />
+            ) : (
+              <div className="max-w-md mx-auto my-16 p-8 rounded-3xl bg-neutral-900/70 border border-red-500/30 text-center space-y-4">
+                <h2 className="text-lg font-bold text-white">Artist Studio Access Required</h2>
+                <p className="text-xs text-neutral-400">Only accounts assigned the Artist or Administrator role can access the Artist Studio.</p>
+                <button onClick={() => setCurrentPersona('listener')} className="px-5 py-2.5 rounded-xl bg-white text-black text-xs font-bold">Return to Listener View</button>
+              </div>
+            )
           )}
 
           {/* Persona View 3: Record Label Hub Dashboard */}
           {currentPersona === 'label' && (
-            <LabelDashboard
-              labelArtists={labelArtists}
-              upcomingReleases={upcomingReleases}
-            />
+            currentUser && (currentUser.role === 'label' || currentUser.role === 'admin') ? (
+              <LabelDashboard
+                currentUser={currentUser}
+                labelArtists={labelArtists}
+                upcomingReleases={upcomingReleases}
+                onRefreshCatalog={refreshCatalogFromDatabase}
+              />
+            ) : (
+              <div className="max-w-md mx-auto my-16 p-8 rounded-3xl bg-neutral-900/70 border border-blue-500/30 text-center space-y-4">
+                <h2 className="text-lg font-bold text-white">Record Label Access Required</h2>
+                <p className="text-xs text-neutral-400">Only accounts assigned the Record Label or Administrator role can access the Record Label Hub.</p>
+                <button onClick={() => setCurrentPersona('listener')} className="px-5 py-2.5 rounded-xl bg-white text-black text-xs font-bold">Return to Listener View</button>
+              </div>
+            )
           )}
 
-          {/* Persona View 4: Distributor Portal (TuneCore, CD Baby, Ditto distributing onto Flontmie) */}
+          {/* Persona View 4: Distributor Portal */}
           {currentPersona === 'distributor' && (
-            <DistributorDashboard
-              ingestions={distributorIngestions}
-              accessGrants={distributorAccessGrants}
-              onUploadSongToFlontmie={handleUploadSongToFlontmie}
-              onModifySongOnFlontmie={handleModifySongOnFlontmie}
-              onDeleteSongFromFlontmie={handleDeleteSong}
-              tracks={tracks}
-              artistProfiles={artistProfiles}
-              onCreateArtistProfile={handleCreateArtistProfile}
-              onUpdateArtistProfile={handleUpdateArtistProfile}
-              onViewArtistPublicPage={handleViewArtist}
-            />
+            currentUser && (currentUser.role === 'distributor' || currentUser.role === 'admin') ? (
+              <DistributorDashboard
+                currentUser={currentUser}
+                ingestions={distributorIngestions}
+                accessGrants={distributorAccessGrants}
+                onUploadSongToFlontmie={handleUploadSongToFlontmie}
+                onModifySongOnFlontmie={handleModifySongOnFlontmie}
+                onDeleteSongFromFlontmie={handleDeleteSong}
+                tracks={tracks}
+                artistProfiles={artistProfiles}
+                onCreateArtistProfile={handleCreateArtistProfile}
+                onUpdateArtistProfile={handleUpdateArtistProfile}
+                onViewArtistPublicPage={handleViewArtist}
+                onRefreshCatalog={refreshCatalogFromDatabase}
+              />
+            ) : (
+              <div className="max-w-md mx-auto my-16 p-8 rounded-3xl bg-neutral-900/70 border border-purple-500/30 text-center space-y-4">
+                <h2 className="text-lg font-bold text-white">Distributor Portal Access Required</h2>
+                <p className="text-xs text-neutral-400">Only accounts assigned the Distributor or Administrator role can access the Distributor Portal.</p>
+                <button onClick={() => setCurrentPersona('listener')} className="px-5 py-2.5 rounded-xl bg-white text-black text-xs font-bold">Return to Listener View</button>
+              </div>
+            )
           )}
           </>
           )}
@@ -1250,7 +1319,10 @@ export default function App() {
         onSelectTab={navigateTab}
         currentPersona={currentPersona === 'admin' ? 'listener' : currentPersona}
         onSelectPersona={(p) => {
-          if (p === 'admin') return;
+          if (p === 'admin') {
+            navigateTab('admin');
+            return;
+          }
           setIsAdminRoute(false);
           setCurrentPersona(p);
           setSelectedPlaylistId(null);
@@ -1407,9 +1479,14 @@ export default function App() {
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
         initialMode={authInitialMode}
-        onAuthSuccess={(user) => {
+        onAuthenticated={(user) => {
           setCurrentUser(user);
-          setCurrentPersona(user.role);
+          if (user.role === 'admin') {
+            setCurrentPersona('listener');
+            navigateTab('admin');
+          } else {
+            setCurrentPersona(user.role);
+          }
           setIsAuthModalOpen(false);
         }}
       />

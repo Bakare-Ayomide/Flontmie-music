@@ -194,7 +194,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
           <div className="flex-1 text-center sm:text-left">
             <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 mb-1.5">
               <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
-                {currentUser?.display_name || 'Alex Chen'}
+                {currentUser?.display_name || 'Guest Listener'}
               </h1>
               <div className={`flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold border ${roleInfo.color}`}>
                 {roleInfo.icon}
@@ -202,13 +202,19 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
               </div>
             </div>
 
-            <p className="text-xs text-neutral-400 font-mono flex items-center justify-center sm:justify-start gap-2">
-              <span>@{currentUser?.username || 'alex_listener'}</span>
-              <span>•</span>
-              <span>{currentUser?.email || 'listener@music.app'}</span>
-              <span>•</span>
-              <span className="uppercase">{currentUser?.country || 'US'} 🌍</span>
-            </p>
+            {currentUser ? (
+              <p className="text-xs text-neutral-400 font-mono flex items-center justify-center sm:justify-start gap-2">
+                <span>@{currentUser.username}</span>
+                <span>•</span>
+                <span>{currentUser.email}</span>
+                <span>•</span>
+                <span className="uppercase">{currentUser.country || 'US'} 🌍</span>
+              </p>
+            ) : (
+              <p className="text-xs text-neutral-400">
+                Sign in to save your profile, playlists, and favorite tracks across devices.
+              </p>
+            )}
 
             <p className="text-xs text-neutral-300 mt-2 max-w-xl">
               {bio}
@@ -254,39 +260,30 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
         {activeTab === 'overview' && (
           <div className="mt-6 space-y-8 animate-in fade-in duration-150">
             {/* Quick Metrics */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/5">
-                <p className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider">Streams Logged</p>
-                <p className="text-xl sm:text-2xl font-black text-white mt-1">1,420</p>
-                <p className="text-[10px] text-emerald-400 mt-1 flex items-center gap-1">
-                  <Radio className="w-3 h-3" />
-                  <span>Real-time tracking</span>
-                </p>
-              </div>
-
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/5">
                 <p className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider">Favorite Tracks</p>
                 <p className="text-xl sm:text-2xl font-black text-white mt-1">{likedTracks.length}</p>
                 <p className="text-[10px] text-red-400 mt-1 flex items-center gap-1">
                   <Heart className="w-3 h-3 fill-red-500 text-red-500" />
-                  <span>Curated list</span>
+                  <span>Saved to library</span>
                 </p>
               </div>
 
               <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/5">
-                <p className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider">Playlists Created</p>
+                <p className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider">Playlists</p>
                 <p className="text-xl sm:text-2xl font-black text-white mt-1">{userPlaylists.length}</p>
                 <p className="text-[10px] text-blue-400 mt-1 flex items-center gap-1">
                   <ListMusic className="w-3 h-3" />
-                  <span>Personal collections</span>
+                  <span>Curated collections</span>
                 </p>
               </div>
 
-              <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/5">
-                <p className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider">Membership</p>
-                <p className="text-xl sm:text-2xl font-black text-amber-400 mt-1">Pro Studio</p>
+              <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/5 col-span-2 sm:col-span-1">
+                <p className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider">Account Role</p>
+                <p className="text-xl sm:text-2xl font-black text-amber-400 mt-1 capitalize">{userRole}</p>
                 <p className="text-[10px] text-neutral-400 mt-1">
-                  Verified Member
+                  {roleInfo.label}
                 </p>
               </div>
             </div>
@@ -495,13 +492,28 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
 
               <div>
                 <label className="block text-xs font-semibold text-neutral-300 mb-1">
-                  New Password (min 6 characters)
+                  Current Password
+                </label>
+                <input
+                  type="password"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  placeholder="••••••••"
+                  required
+                  className="w-full px-3 py-2 rounded-xl bg-neutral-900 border border-white/10 text-white text-xs focus:outline-none focus:border-red-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                  New Password (min 8 characters)
                 </label>
                 <input
                   type="password"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
                   placeholder="••••••••"
+                  required
                   className="w-full px-3 py-2 rounded-xl bg-neutral-900 border border-white/10 text-white text-xs focus:outline-none focus:border-red-500"
                 />
               </div>
@@ -515,6 +527,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   placeholder="••••••••"
+                  required
                   className="w-full px-3 py-2 rounded-xl bg-neutral-900 border border-white/10 text-white text-xs focus:outline-none focus:border-red-500"
                 />
               </div>

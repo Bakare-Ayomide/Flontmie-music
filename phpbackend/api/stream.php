@@ -1,290 +1,57 @@
 <?php
 /**
- * Flontmie Authorized Media Streaming Endpoint (HTTP 206 Range Support)
- * Streams locally stored audio and video media from Flontmie's private storage
- * without exposing server filesystem paths or external API credentials.
+ * Flontmie API - Authorized Local Media & Artwork Streaming Endpoint
+ * Serves audio, video, and artwork files directly from Flontmie's cPanel storage
+ * with full HTTP 206 Partial Content byte-range support.
  */
 
 require_once __DIR__ . '/../config.php';
 require_once __DIR__ . '/../db.php';
-require_once __DIR__ . '/../auth_helper.php';
 require_once __DIR__ . '/../media_engine.php';
-require_once __DIR__ . '/../artist_enrichment.php';
 
-$type = strtolower(trim($_GET['type'] ?? 'audio'));
-$rawId = trim($_GET['id'] ?? '');
+$type = $_GET['type'] ?? 'audio';
+$trackId = trim($_GET['id'] ?? '');
 $scanFileId = trim($_GET['scan_file_id'] ?? '');
+
+if (empty($trackId) && empty($scanFileId)) {
+    http_response_code(400);
+    header('Content-Type: application/json');
+    echo json_encode(['status' => 'error', 'message' => 'Missing media id or scan_file_id']);
+    exit;
+}
+
 $pdo = Database::getConnection();
+MediaEngine::ensureStorageSecured();
 
-// --- Helper: Safely resolve relative file path within allowed roots ---
-function resolveSafeServerFile(string $relPath): ?string {
-    if (empty($relPath)) return null;
-
-    $cleanRel = ltrim(str_replace('\\', '/', $relPath), '/');
-
-    // Possible root anchors
-    $anchors = [
-        defined('STORAGE_ROOT') ? realpath(STORAGE_ROOT) : null,
-        defined('UPLOAD_DIR') ? realpath(UPLOAD_DIR) : null,
-        realpath(__DIR__ . '/..'),          // phpbackend dir
-        realpath(__DIR__ . '/../..'),       // project root dir
-        realpath(__DIR__ . '/../storage')   // storage dir
-    ];
-    $anchors = array_filter(array_unique($anchors));
-
-    foreach ($anchors as $anchor) {
-        // Try direct anchor + relative path
-        $candidate = realpath($anchor . '/' . $cleanRel);
-        if ($candidate && is_file($candidate) && filesize($candidate) > 256) {
-            // Verify path traversal constraint: candidate must be within anchor
-            if (strpos($candidate, $anchor) === 0) {
-                return $candidate;
-            }
-        }
-
-        // If relPath starts with phpbackend/ or storage/, try stripping prefix
-        $stripped = preg_replace('#^(phpbackend/|storage/)+#', '', $cleanRel);
-        $candidate2 = realpath($anchor . '/' . $stripped);
-        if ($candidate2 && is_file($candidate2) && filesize($candidate2) > 256) {
-            if (strpos($candidate2, $anchor) === 0) {
-                return $candidate2;
-            }
-        }
-    }
-
-    return null;
-}
-
-// --- 0. ADMIN PREVIEW OF ANY SCANNED MEDIA FILE ---
-if (!empty($scanFileId)) {
-    $currentUser = Auth::getCurrentUser();
-    // Allow admin preview or check if admin session/token exists
-    if (!$currentUser || ($currentUser['role'] ?? '') !== 'admin') {
-        // Also check if valid admin token in Authorization header or query param
-        $token = $_GET['token'] ?? null;
-        if ($token) {
-            $userByToken = Auth::getUserFromToken($token);
-            if (!$userByToken || ($userByToken['role'] ?? '') !== 'admin') {
-                json_response(['status' => 'error', 'message' => 'Admin privileges required for media preview.'], 403);
-            }
-        } else {
-            json_response(['status' => 'error', 'message' => 'Admin privileges required for media preview.'], 403);
-        }
-    }
-
-    $fileStmt = $pdo->prepare("SELECT * FROM media_scan_files WHERE id = ?");
-    $fileStmt->execute([$scanFileId]);
-    $scanFile = $fileStmt->fetch();
-
-    if (!$scanFile) {
-        json_response(['status' => 'error', 'message' => 'Scanned media file not found.'], 404);
-    }
-
-    $fullMedia = resolveSafeServerFile($scanFile['file_path']);
-    if (!$fullMedia || !is_file($fullMedia)) {
-        json_response(['status' => 'error', 'message' => 'Media file missing on server storage.'], 404);
-    }
-
-    serveMediaStream($fullMedia);
-    exit;
-}
-
-if (empty($rawId)) {
-    json_response(['status' => 'error', 'message' => 'Media identifier is required.'], 400);
-}
-
-$safeId = MediaEngine::safeId($rawId);
-
-// Lookup track in MySQL
-$stmt = $pdo->prepare("
-    SELECT id, video_id, title, artist_name, genre, country, cover_art_url, local_audio_path, local_artwork_path, audio_format, status, is_deleted
-    FROM tracks
-    WHERE id = ? OR video_id = ?
-    LIMIT 1
-");
-$stmt->execute([$safeId, $safeId]);
-$track = $stmt->fetch();
-
-if (!$track || (int)($track['is_deleted'] ?? 0) === 1) {
-    json_response(['status' => 'error', 'message' => 'Requested catalog media not found.'], 404);
-}
-
-// Enforce publication status for non-admins
-$trackStatus = $track['status'] ?? 'published';
-if ($trackStatus !== 'published') {
-    $currentUser = Auth::getCurrentUser();
-    if (!$currentUser || ($currentUser['role'] ?? '') !== 'admin') {
-        json_response(['status' => 'error', 'message' => 'This track is currently unpublished or restricted.'], 403);
-    }
-}
-
-// --- 1. SERVE LOCAL ARTWORK ---
-if ($type === 'artwork') {
-    $resolvedRemoteCover = ArtistEnrichment::resolveArtworkUrl($track['cover_art_url'] ?? '', $track['video_id'] ?? $track['id']);
-    $relArt = $track['local_artwork_path'] ?? '';
-    $fullArt = resolveSafeServerFile($relArt);
-
-    if (empty($fullArt)) {
-        $artRes = MediaEngine::acquireAndStoreArtwork($track['id'], $resolvedRemoteCover, $track['video_id'] ?? null);
-        if (!empty($artRes['relative_path'])) {
-            $pdo->prepare("UPDATE tracks SET local_artwork_path = ?, cover_art_url = ? WHERE id = ?")
-                ->execute([$artRes['relative_path'], $resolvedRemoteCover, $track['id']]);
-            $fullArt = resolveSafeServerFile($artRes['relative_path']);
-        }
-    }
-
-    if (!empty($fullArt) && is_file($fullArt)) {
-        header('Content-Type: image/jpeg');
-        header('Content-Length: ' . filesize($fullArt));
-        header('Cache-Control: public, max-age=604800');
-        readfile($fullArt);
+function serveBinaryWithRange(string $filePath, string $mimeType, string $downloadName): void {
+    if (!is_file($filePath) || !is_readable($filePath)) {
+        http_response_code(404);
         exit;
     }
 
-    // Fallback redirect only if remote artwork URL is standard HTTPS image
-    if (!empty($resolvedRemoteCover) && preg_match('/^https?:\/\//i', $resolvedRemoteCover)) {
-        header('Location: ' . $resolvedRemoteCover, true, 302);
-        exit;
-    }
-    http_response_code(404);
-    exit;
-}
-
-// --- 2. VIDEO STREAM & VIDEO INFO ---
-if ($type === 'video' || $type === 'video_info') {
-    $relVideo = '';
-    try {
-        $vidStmt = $pdo->prepare("
-            SELECT file_path FROM media_scan_files 
-            WHERE (matched_track_id = ? OR matched_track_id = ?) AND is_video = 1 AND match_status = 'matched' 
-            LIMIT 1
-        ");
-        $vidStmt->execute([$track['id'], $track['video_id'] ?? '']);
-        $relVideo = $vidStmt->fetchColumn() ?: '';
-    } catch (Throwable $e) {}
-
-    if (empty($relVideo)) {
-        $ext = strtolower(pathinfo($track['local_audio_path'] ?? '', PATHINFO_EXTENSION));
-        if (in_array($ext, ['mp4', 'webm', 'mkv', 'm4v'], true)) {
-            $relVideo = $track['local_audio_path'];
-        }
-    }
-
-    $fullVideo = resolveSafeServerFile($relVideo);
-    $hasLocalVideo = !empty($fullVideo) && is_file($fullVideo);
-
-    if ($type === 'video_info') {
-        json_response([
-            'status'          => 'success',
-            'track_id'        => $track['id'],
-            'video_id'        => $track['video_id'],
-            'has_local_video' => $hasLocalVideo,
-            'has_video'       => $hasLocalVideo || !empty($track['video_id']),
-            'video_url'       => $hasLocalVideo ? ('/phpbackend/api/stream.php?type=video&id=' . urlencode($track['id'])) : null
-        ]);
-    }
-
-    if ($hasLocalVideo) {
-        serveMediaStream($fullVideo);
-        exit;
-    }
-
-    json_response(['status' => 'error', 'message' => 'No local video file available for this track.'], 404);
-}
-
-// --- 3. STREAM LOCAL AUDIO FILE (HTTP 206 PARTIAL CONTENT SUPPORT) ---
-$relAudio = $track['local_audio_path'] ?? '';
-$fullAudio = resolveSafeServerFile($relAudio);
-
-// On-demand local audio acquisition if track doesn't have its local file cached yet
-if (empty($fullAudio)) {
-    $audioRes = MediaEngine::acquireAndStoreAudio(
-        $track['id'],
-        $track['video_id'] ?? null,
-        $track['title'] ?? 'Track',
-        $track['artist_name'] ?? 'Artist',
-        $track['genre'] ?? 'Pop',
-        $track['country'] ?? 'US'
-    );
-
-    if (!empty($audioRes['relative_path'])) {
-        $streamUrl = "/phpbackend/api/stream.php?id=" . urlencode($track['id']);
-        $pdo->prepare("
-            UPDATE tracks 
-            SET local_audio_path = ?, audio_file_size = ?, audio_format = ?, audio_url = ?, import_status = 'synced', last_synced_at = NOW()
-            WHERE id = ?
-        ")->execute([
-            $audioRes['relative_path'],
-            $audioRes['file_size'],
-            $audioRes['format'],
-            $streamUrl,
-            $track['id']
-        ]);
-
-        $fullAudio = resolveSafeServerFile($audioRes['relative_path']);
-    }
-}
-
-if (empty($fullAudio) || !is_file($fullAudio)) {
-    json_response(['status' => 'error', 'message' => 'Audio stream file unavailable on server storage.'], 404);
-}
-
-serveMediaStream($fullAudio);
-
-/**
- * Universal media streaming function supporting HTTP Range requests and seeking
- */
-function serveMediaStream(string $filePath): void {
-    $fileSize = filesize($filePath);
-    $ext = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
-
-    $mimeMap = [
-        'mp3'  => 'audio/mpeg',
-        'm4a'  => 'audio/mp4',
-        'aac'  => 'audio/aac',
-        'wav'  => 'audio/wav',
-        'ogg'  => 'audio/ogg',
-        'opus' => 'audio/opus',
-        'flac' => 'audio/flac',
-        'webm' => 'video/webm',
-        'mp4'  => 'video/mp4',
-        'm4v'  => 'video/mp4',
-        'mkv'  => 'video/x-matroska',
-        'wma'  => 'audio/x-ms-wma',
-        'aiff' => 'audio/x-aiff'
-    ];
-    $contentType = $mimeMap[$ext] ?? 'audio/mp4';
-
+    $size = (int)filesize($filePath);
     $start = 0;
-    $end = $fileSize - 1;
-    $length = $fileSize;
+    $end = $size - 1;
+    $length = $size;
 
-    header("Content-Type: {$contentType}");
-    header('Accept-Ranges: bytes');
-    header('Cache-Control: public, max-age=86400');
-    header('X-Content-Type-Options: nosniff');
+    header("Access-Control-Allow-Origin: *");
+    header("Access-Control-Allow-Methods: GET, HEAD, OPTIONS");
+    header("Access-Control-Allow-Headers: Range, Authorization, Content-Type");
+    header("Accept-Ranges: bytes");
+    header("Content-Type: {$mimeType}");
+    header('Content-Disposition: inline; filename="' . addslashes($downloadName) . '"');
+    header("Cache-Control: public, max-age=86400");
 
-    if (!empty($_SERVER['HTTP_RANGE'])) {
-        if (preg_match('/bytes=(\d*)-(\d*)/i', $_SERVER['HTTP_RANGE'], $matches)) {
-            $rangeStart = $matches[1];
-            $rangeEnd = $matches[2];
+    if (isset($_SERVER['HTTP_RANGE']) && preg_match('/bytes=(\d*)-(\d*)/i', $_SERVER['HTTP_RANGE'], $matches)) {
+        $rangeStart = $matches[1] !== '' ? (int)$matches[1] : 0;
+        $rangeEnd = $matches[2] !== '' ? (int)$matches[2] : $end;
 
-            if ($rangeStart !== '') {
-                $start = (int)$rangeStart;
-            }
-            if ($rangeEnd !== '') {
-                $end = min($fileSize - 1, (int)$rangeEnd);
-            }
-
-            if ($start > $end || $start >= $fileSize) {
-                header("Content-Range: bytes */{$fileSize}");
-                http_response_code(416);
-                exit;
-            }
-
-            $length = ($end - $start) + 1;
+        if ($rangeStart >= 0 && $rangeStart <= $end && $rangeEnd >= $rangeStart) {
+            $start = $rangeStart;
+            $end = min($end, $rangeEnd);
+            $length = $end - $start + 1;
             http_response_code(206);
-            header("Content-Range: bytes {$start}-{$end}/{$fileSize}");
+            header("Content-Range: bytes {$start}-{$end}/{$size}");
         }
     } else {
         http_response_code(200);
@@ -292,22 +59,234 @@ function serveMediaStream(string $filePath): void {
 
     header("Content-Length: {$length}");
 
+    if ($_SERVER['REQUEST_METHOD'] === 'HEAD') {
+        exit;
+    }
+
     $fp = fopen($filePath, 'rb');
     if ($fp) {
         if ($start > 0) {
             fseek($fp, $start);
         }
-        $bytesRemaining = $length;
+        $remaining = $length;
         $chunkSize = 65536;
-        while (!feof($fp) && $bytesRemaining > 0 && connection_status() === 0) {
-            $readLen = min($chunkSize, $bytesRemaining);
-            $buffer = fread($fp, $readLen);
+        while (!feof($fp) && $remaining > 0) {
+            $read = min($chunkSize, $remaining);
+            $buffer = fread($fp, $read);
             if ($buffer === false) break;
             echo $buffer;
             flush();
-            $bytesRemaining -= strlen($buffer);
+            $remaining -= strlen($buffer);
         }
         fclose($fp);
     }
     exit;
 }
+
+function resolveMimeType(string $ext): string {
+    $map = [
+        'm4a'  => 'audio/mp4',
+        'aac'  => 'audio/aac',
+        'mp3'  => 'audio/mpeg',
+        'wav'  => 'audio/wav',
+        'flac' => 'audio/flac',
+        'ogg'  => 'audio/ogg',
+        'opus' => 'audio/opus',
+        'webm' => 'audio/webm',
+        'mp4'  => 'video/mp4',
+        'm4v'  => 'video/mp4',
+        'mov'  => 'video/quicktime',
+        'mkv'  => 'video/x-matroska',
+        'jpg'  => 'image/jpeg',
+        'jpeg' => 'image/jpeg',
+        'png'  => 'image/png',
+        'webp' => 'image/webp'
+    ];
+    return $map[strtolower($ext)] ?? 'application/octet-stream';
+}
+
+// --- 0. STREAM SCANNED MEDIA FILE BY ID ---
+if (!empty($scanFileId)) {
+    $stmtScan = $pdo->prepare("SELECT * FROM media_scan_files WHERE id = ? LIMIT 1");
+    $stmtScan->execute([$scanFileId]);
+    $scanFile = $stmtScan->fetch();
+
+    if (!$scanFile) {
+        http_response_code(404);
+        header('Content-Type: application/json');
+        echo json_encode(['status' => 'error', 'message' => 'Scanned media file not found']);
+        exit;
+    }
+
+    $projectRoot = realpath(__DIR__ . '/../..') ?: dirname(__DIR__, 2);
+    $relPath = ltrim($scanFile['file_path'], '/');
+    $candidates = [
+        $projectRoot . '/' . $relPath,
+        dirname(__DIR__) . '/' . $relPath,
+        STORAGE_ROOT . '/' . $relPath
+    ];
+
+    foreach ($candidates as $cand) {
+        if (is_file($cand) && is_readable($cand)) {
+            $ext = strtolower(pathinfo($cand, PATHINFO_EXTENSION));
+            serveBinaryWithRange($cand, resolveMimeType($ext), basename($cand));
+        }
+    }
+
+    http_response_code(404);
+    header('Content-Type: application/json');
+    echo json_encode(['status' => 'error', 'message' => 'Media file not found on disk']);
+    exit;
+}
+
+// --- 1. SERVE ARTWORK ---
+if ($type === 'artwork') {
+    $stmt = $pdo->prepare("SELECT id, video_id, cover_art_url, local_artwork_path FROM tracks WHERE id = ? OR video_id = ? LIMIT 1");
+    $stmt->execute([$trackId, $trackId]);
+    $track = $stmt->fetch();
+
+    if ($track && !empty($track['local_artwork_path'])) {
+        $fullArtPath = STORAGE_ROOT . '/' . ltrim($track['local_artwork_path'], '/');
+        if (is_file($fullArtPath)) {
+            $ext = strtolower(pathinfo($fullArtPath, PATHINFO_EXTENSION));
+            serveBinaryWithRange($fullArtPath, resolveMimeType($ext), basename($fullArtPath));
+        }
+    }
+
+    if ($track) {
+        $artRes = MediaEngine::acquireAndStoreArtwork($track['id'], $track['cover_art_url'], $track['video_id']);
+        if (!empty($artRes['relative_path'])) {
+            $pdo->prepare("UPDATE tracks SET local_artwork_path = ? WHERE id = ?")->execute([$artRes['relative_path'], $track['id']]);
+            $fullArtPath = STORAGE_ROOT . '/' . ltrim($artRes['relative_path'], '/');
+            if (is_file($fullArtPath)) {
+                $ext = strtolower(pathinfo($fullArtPath, PATHINFO_EXTENSION));
+                serveBinaryWithRange($fullArtPath, resolveMimeType($ext), basename($fullArtPath));
+            }
+        }
+        if (!empty($track['cover_art_url']) && preg_match('/^https?:\/\//i', $track['cover_art_url'])) {
+            header("Location: " . $track['cover_art_url'], true, 302);
+            exit;
+        }
+    }
+
+    http_response_code(404);
+    exit;
+}
+
+// --- 2. SERVE VIDEO STREAM ---
+if ($type === 'video') {
+    $stmt = $pdo->prepare("SELECT id, local_video_path, local_audio_path FROM tracks WHERE (id = ? OR video_id = ?) AND is_deleted = 0 LIMIT 1");
+    $stmt->execute([$trackId, $trackId]);
+    $track = $stmt->fetch();
+
+    if ($track) {
+        $vidPath = $track['local_video_path'] ?: $track['local_audio_path'];
+        if (!empty($vidPath)) {
+            $projectRoot = realpath(__DIR__ . '/../..') ?: dirname(__DIR__, 2);
+            $rel = ltrim($vidPath, '/');
+            $candidates = [
+                STORAGE_ROOT . '/' . $rel,
+                $projectRoot . '/' . $rel,
+                dirname(__DIR__) . '/' . $rel
+            ];
+            foreach ($candidates as $cand) {
+                if (is_file($cand) && is_readable($cand)) {
+                    $ext = strtolower(pathinfo($cand, PATHINFO_EXTENSION));
+                    serveBinaryWithRange($cand, resolveMimeType($ext), basename($cand));
+                }
+            }
+        }
+    }
+    http_response_code(404);
+    exit;
+}
+
+// --- 3. SERVE AUDIO STREAM ---
+$cleanVid = preg_replace('/^(trk_yt_|yt_)/', '', $trackId);
+$stmt = $pdo->prepare("
+    SELECT id, video_id, title, artist_name, genre, country, cover_art_url, local_audio_path, audio_format, status 
+    FROM tracks 
+    WHERE (id = ? OR video_id = ? OR video_id = ?) AND is_deleted = 0 
+    LIMIT 1
+");
+$stmt->execute([$trackId, $trackId, $cleanVid]);
+$track = $stmt->fetch();
+
+if (!$track) {
+    http_response_code(404);
+    header('Content-Type: application/json');
+    echo json_encode(['status' => 'error', 'message' => 'Track not found in catalog']);
+    exit;
+}
+
+if (!isset($_SERVER['HTTP_RANGE']) || strpos($_SERVER['HTTP_RANGE'], 'bytes=0-') === 0) {
+    try {
+        $pdo->prepare("UPDATE tracks SET stream_count = stream_count + 1, flontmie_plays = COALESCE(flontmie_plays, 0) + 1 WHERE id = ?")->execute([$track['id']]);
+    } catch (Exception $e) {}
+}
+
+if (!empty($track['local_audio_path'])) {
+    $projectRoot = realpath(__DIR__ . '/../..') ?: dirname(__DIR__, 2);
+    $rel = ltrim($track['local_audio_path'], '/');
+    $candidates = [
+        STORAGE_ROOT . '/' . $rel,
+        $projectRoot . '/' . $rel,
+        dirname(__DIR__) . '/' . $rel
+    ];
+    foreach ($candidates as $fullAudioPath) {
+        if (is_file($fullAudioPath) && filesize($fullAudioPath) > 1024) {
+            $ext = strtolower(pathinfo($fullAudioPath, PATHINFO_EXTENSION));
+            serveBinaryWithRange($fullAudioPath, resolveMimeType($ext), basename($fullAudioPath));
+        }
+    }
+}
+
+try {
+    $scanMatchStmt = $pdo->prepare("SELECT file_path FROM media_scan_files WHERE matched_track_id = ? AND match_status = 'matched' LIMIT 1");
+    $scanMatchStmt->execute([$track['id']]);
+    $scanRow = $scanMatchStmt->fetch();
+    if ($scanRow && !empty($scanRow['file_path'])) {
+        $projectRoot = realpath(__DIR__ . '/../..') ?: dirname(__DIR__, 2);
+        $rel = ltrim($scanRow['file_path'], '/');
+        foreach ([$projectRoot . '/' . $rel, STORAGE_ROOT . '/' . $rel, dirname(__DIR__) . '/' . $rel] as $candPath) {
+            if (is_file($candPath) && filesize($candPath) > 1024) {
+                $ext = strtolower(pathinfo($candPath, PATHINFO_EXTENSION));
+                $pdo->prepare("UPDATE tracks SET local_audio_path = ?, audio_format = ? WHERE id = ?")->execute([$rel, $ext, $track['id']]);
+                serveBinaryWithRange($candPath, resolveMimeType($ext), basename($candPath));
+            }
+        }
+    }
+} catch (Exception $e) {}
+
+$audioRes = MediaEngine::acquireAndStoreAudio(
+    $track['id'],
+    $track['video_id'],
+    $track['title'],
+    $track['artist_name'],
+    $track['genre'] ?: 'Pop',
+    $track['country'] ?: 'US'
+);
+
+if (!empty($audioRes['relative_path'])) {
+    $pdo->prepare("
+        UPDATE tracks 
+        SET local_audio_path = ?, audio_file_size = ?, audio_format = ?, import_status = 'synced', last_synced_at = NOW() 
+        WHERE id = ?
+    ")->execute([
+        $audioRes['relative_path'],
+        $audioRes['file_size'],
+        $audioRes['format'],
+        $track['id']
+    ]);
+
+    $fullAudioPath = STORAGE_ROOT . '/' . ltrim($audioRes['relative_path'], '/');
+    if (is_file($fullAudioPath)) {
+        $ext = strtolower(pathinfo($fullAudioPath, PATHINFO_EXTENSION));
+        serveBinaryWithRange($fullAudioPath, resolveMimeType($ext), basename($fullAudioPath));
+    }
+}
+
+http_response_code(404);
+header('Content-Type: application/json');
+echo json_encode(['status' => 'error', 'message' => 'Audio stream unavailable']);
+exit;

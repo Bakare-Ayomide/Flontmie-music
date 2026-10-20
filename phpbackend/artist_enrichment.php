@@ -409,7 +409,7 @@ class ArtistEnrichment {
 
             $ins = $pdo->prepare("
                 INSERT INTO artists (id, name, stage_name, slug, avatar_url, header_url, bio, verified, monthly_listeners, total_streams, followers, label_name, distributor_name, distributor_id, genres_json, claimed_status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, 'Official Catalog', 'YouTube Music Global Feed', 'dist_tunecore', ?, 'claimed')
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, NULL, NULL, NULL, ?, 'unclaimed')
                 ON DUPLICATE KEY UPDATE
                     avatar_url = VALUES(avatar_url),
                     header_url = VALUES(header_url),

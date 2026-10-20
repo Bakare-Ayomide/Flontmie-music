@@ -182,7 +182,7 @@ class Auth {
             }
 
             $stmt = $pdo->prepare("
-                SELECT id, username, email, role, status, display_name, avatar_url, country, distributor_id, label_id, email_verified, must_change_password, last_login_at, created_at 
+                SELECT id, username, email, role, status, display_name, avatar_url, bio, country, distributor_id, label_id, artist_id, email_verified, must_change_password, last_login_at, created_at 
                 FROM users 
                 WHERE id = ? 
                 LIMIT 1
@@ -260,26 +260,102 @@ class Auth {
     }
 
     /**
-     * Enforce IP-based rate limiting using security_events table
+     * Check account & IP rate limiting for login attempts
      */
-    public static function checkRateLimit(string $eventType, int $maxAttempts = 15, int $windowSeconds = 300): void {
-        $ip = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
+    public static function checkRateLimit(string $identifier, int $maxAttempts = 10, int $windowSeconds = 300): bool {
         try {
             $pdo = Database::getConnection();
-            $stmt = $pdo->prepare("
-                SELECT COUNT(*) FROM security_events 
-                WHERE ip_address = ? AND event_type = ? AND created_at > DATE_SUB(NOW(), INTERVAL ? SECOND)
-            ");
-            $stmt->execute([$ip, $eventType, $windowSeconds]);
-            $count = (int)$stmt->fetchColumn();
-            if ($count >= $maxAttempts) {
-                json_response([
-                    'status' => 'error',
-                    'message' => 'Too many requests from your IP address. Please wait a few minutes before trying again.'
-                ], 429);
+            $stmt = $pdo->prepare("SELECT failed_login_attempts, locked_until FROM users WHERE email = ? OR username = ? LIMIT 1");
+            $stmt->execute([$identifier, $identifier]);
+            $u = $stmt->fetch();
+            if ($u && !empty($u['locked_until']) && strtotime($u['locked_until']) > time()) {
+                return false;
             }
         } catch (Exception $e) {
             // Proceed if table not yet migrated
+        }
+        return true;
+    }
+
+    /**
+     * Record a failed login attempt and lock account after max attempts
+     */
+    public static function recordFailedLogin(string $identifier): void {
+        try {
+            $pdo = Database::getConnection();
+            $maxAttempts = (int)self::getSetting('max_login_attempts', '8');
+            if ($maxAttempts < 3) {
+                $maxAttempts = 8;
+            }
+            $stmt = $pdo->prepare("SELECT id, email, failed_login_attempts FROM users WHERE email = ? OR username = ? LIMIT 1");
+            $stmt->execute([$identifier, $identifier]);
+            $u = $stmt->fetch();
+            if ($u) {
+                $attempts = ((int)($u['failed_login_attempts'] ?? 0)) + 1;
+                if ($attempts >= $maxAttempts) {
+                    $pdo->prepare("UPDATE users SET failed_login_attempts = ?, locked_until = DATE_ADD(NOW(), INTERVAL 15 MINUTE) WHERE id = ?")
+                        ->execute([$attempts, $u['id']]);
+                } else {
+                    $pdo->prepare("UPDATE users SET failed_login_attempts = ? WHERE id = ?")
+                        ->execute([$attempts, $u['id']]);
+                }
+                self::logSecurityEvent($u['id'], $u['email'], 'LOGIN_FAILED', 'warning', "Failed login attempt #{$attempts}");
+            } else {
+                self::logSecurityEvent(null, $identifier, 'LOGIN_FAILED', 'warning', "Failed login attempt for unknown identifier");
+            }
+        } catch (Exception $e) {}
+    }
+
+    /**
+     * Clear failed login counter and record last login timestamp/IP
+     */
+    public static function clearFailedLogins(string $userId): void {
+        try {
+            $pdo = Database::getConnection();
+            $ip = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
+            $pdo->prepare("UPDATE users SET failed_login_attempts = 0, locked_until = NULL, last_login_at = NOW(), last_login_ip = ? WHERE id = ?")
+                ->execute([$ip, $userId]);
+        } catch (Exception $e) {}
+    }
+
+    /**
+     * Read a system setting with fallback default
+     */
+    public static function getSetting(string $key, string $default = ''): string {
+        try {
+            $pdo = Database::getConnection();
+            $stmt = $pdo->prepare("SELECT setting_value FROM system_settings WHERE setting_key = ? LIMIT 1");
+            $stmt->execute([$key]);
+            $val = $stmt->fetchColumn();
+            if ($val !== false && $val !== null) {
+                return (string)$val;
+            }
+        } catch (Exception $e) {}
+        return $default;
+    }
+
+    /**
+     * Revoke the current user session in DB and clear PHP session
+     */
+    public static function revokeCurrentSession(): void {
+        self::startSession();
+        $token = self::getBearerToken();
+        $sid = $_SESSION['flontmie_sid'] ?? null;
+        if ($token) {
+            $payload = self::verifyToken($token);
+            if ($payload && !empty($payload['sid'])) {
+                $sid = $payload['sid'];
+            }
+        }
+        if ($sid) {
+            try {
+                $pdo = Database::getConnection();
+                $pdo->prepare("UPDATE user_sessions SET is_revoked = 1 WHERE id = ?")->execute([$sid]);
+            } catch (Exception $e) {}
+        }
+        $_SESSION = [];
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            @session_destroy();
         }
     }
 

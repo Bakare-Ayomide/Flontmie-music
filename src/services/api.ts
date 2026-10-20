@@ -1,82 +1,49 @@
 /**
  * Flontmie Production API Client
- * Connects frontend directly to the PHP / MySQL backend
+ * Connects the React SPA directly to the live PHP + MySQL backend (`phpbackend/api/*`).
+ * Zero mock data fallbacks: all data is fetched from and persisted to real database records.
  */
 
-import { Track, Playlist, ArtistProfile, LyricLine, ArtistDiscographyItem, RelatedArtistItem } from '../types/music';
+import { Track, Playlist, ArtistProfile, ArtistDiscographyItem, RelatedArtistItem } from '../types/music';
 import { resolveArtworkUrl } from '../utils/artwork';
 
-function parseLyricsToLines(raw: any, duration: number = 180): LyricLine[] {
-  if (!raw) return [];
-  if (Array.isArray(raw)) return raw;
-  if (typeof raw === 'string') {
-    const trimmed = raw.trim();
-    if (!trimmed) return [];
-    if (trimmed.startsWith('[')) {
-      try {
-        const parsed = JSON.parse(trimmed);
-        if (Array.isArray(parsed)) return parsed;
-      } catch {}
+const getApiBaseUrl = (): string => {
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname;
+    if (host === 'flontmie.ticketplaster.com' || host.endsWith('ticketplaster.com')) {
+      return '/phpbackend/api';
     }
-    const lines = trimmed
-      .split(/\r?\n/)
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0);
-    const step = Math.max(4, Math.floor((duration - 10) / Math.max(1, lines.length)));
-    return lines.map((text, idx) => ({
-      time: 4 + idx * step,
-      text,
-    }));
   }
-  return [];
-}
+  return 'https://flontmie.ticketplaster.com/phpbackend/api';
+};
 
-function extractVideoId(t: any): string | undefined {
-  if (t.video_id && String(t.video_id).length >= 8) return String(t.video_id);
-  if (t.videoId && String(t.videoId).length >= 8) return String(t.videoId);
-  const id = String(t.id || '');
-  if (id.startsWith('trk_yt_')) {
-    const candidate = id.replace('trk_yt_', '');
-    if (candidate.length >= 8) return candidate;
-  }
-  if (id.startsWith('yt_')) {
-    const candidate = id.replace('yt_', '');
-    if (candidate.length >= 8) return candidate;
-  }
-  const audioUrl = String(t.audio_url || t.audioUrl || '');
-  const match = audioUrl.match(/[?&]v=([a-zA-Z0-9_-]{8,15})/);
-  if (match) return match[1];
-  return undefined;
-}
+const API_BASE = getApiBaseUrl();
 
-// In production on flontmie.ticketplaster.com, use relative /phpbackend/api.
-// In dev or preview environments, connect directly to the live backend with full CORS support.
-const API_BASE = typeof window !== 'undefined' && window.location.hostname !== 'flontmie.ticketplaster.com'
-  ? 'https://flontmie.ticketplaster.com/phpbackend/api'
-  : '/phpbackend/api';
-
-class ApiService {
+class FlontmieApiService {
   private token: string | null = null;
   private csrfToken: string | null = null;
 
   constructor() {
-    this.token = typeof window !== 'undefined' ? localStorage.getItem('flontmie_token') : null;
-    this.csrfToken = typeof window !== 'undefined' ? localStorage.getItem('flontmie_csrf') : null;
+    if (typeof window !== 'undefined') {
+      this.token = localStorage.getItem('flontmie_jwt');
+      this.csrfToken = localStorage.getItem('flontmie_csrf');
+    }
   }
 
   public setToken(token: string | null, csrfToken?: string | null) {
     this.token = token;
-    if (token) {
-      localStorage.setItem('flontmie_token', token);
-    } else {
-      localStorage.removeItem('flontmie_token');
-    }
-
     if (csrfToken !== undefined) {
       this.csrfToken = csrfToken;
+    }
+    if (typeof window !== 'undefined') {
+      if (token) {
+        localStorage.setItem('flontmie_jwt', token);
+      } else {
+        localStorage.removeItem('flontmie_jwt');
+      }
       if (csrfToken) {
         localStorage.setItem('flontmie_csrf', csrfToken);
-      } else {
+      } else if (token === null) {
         localStorage.removeItem('flontmie_csrf');
       }
     }
@@ -93,7 +60,7 @@ class ApiService {
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      ...(options.headers as Record<string, string> || {})
+      ...(options.headers as Record<string, string> || {}),
     };
 
     if (this.token) {
@@ -103,215 +70,415 @@ class ApiService {
       headers['X-CSRF-Token'] = this.csrfToken;
     }
 
-    const response = await fetch(`${API_BASE}${endpoint}`, {
+    const response = await fetch(`${API_BASE}/${endpoint}`, {
       ...options,
-      headers
+      headers,
     });
 
+    const data = await response.json().catch(() => null);
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.message || `API request failed: ${response.status}`);
+      throw new Error((data && data.message) || `API Error: ${response.status}`);
     }
 
-    return response.json();
+    return data as T;
   }
 
-  // --- HEALTH & STATUS ---
-  public async getHealth() {
-    return this.request<{ status: string; db_status: string; table_counts: Record<string, number> }>('/health.php');
-  }
+  // --- Map DB Track to Frontend Track Interface ---
+  public mapDbTrack(dbTrack: any): Track {
+    const rawLyrics = dbTrack.lyrics || '';
+    const parsedLyrics = rawLyrics
+      ? String(rawLyrics)
+          .split(/\r?\n/)
+          .filter((l: string) => l.trim().length > 0)
+          .map((line: string, index: number) => {
+            const lrcMatch = line.match(/^\[(\d{1,2}):(\d{2})(?:\.\d{1,3})?\](.*)$/);
+            if (lrcMatch) {
+              const mins = parseInt(lrcMatch[1], 10);
+              const secs = parseInt(lrcMatch[2], 10);
+              return { time: mins * 60 + secs, text: lrcMatch[3].trim() || '♪' };
+            }
+            return { time: index * 6, text: line.trim() };
+          })
+      : [];
 
-  // --- TRACKS ---
-  public async getTracks(params?: { genre?: string; q?: string; artist_id?: string }): Promise<Track[]> {
-    try {
-      const query = new URLSearchParams();
-      if (params?.genre) query.append('genre', params.genre);
-      if (params?.q) query.append('q', params.q);
-      if (params?.artist_id) query.append('artist_id', params.artist_id);
+    const moods = Array.isArray(dbTrack.mood_tags) && dbTrack.mood_tags.length > 0
+      ? dbTrack.mood_tags
+      : ['all'];
 
-      const res = await this.request<{ status: string; tracks: any[] }>(`/tracks.php?${query.toString()}`);
-      if (res && Array.isArray(res.tracks) && res.tracks.length > 0) {
-        return res.tracks
-          .filter(t => !String(t.audio_url || '').includes('soundhelix'))
-          .map(t => this.mapBackendTrack(t));
-      }
-    } catch (e) {
-      console.warn('Backend tracks fetch error, falling back:', e);
+    let resolvedAudioUrl = dbTrack.audio_url || '';
+    if (
+      resolvedAudioUrl.startsWith('/phpbackend/') &&
+      typeof window !== 'undefined' &&
+      !window.location.hostname.endsWith('ticketplaster.com')
+    ) {
+      resolvedAudioUrl = `https://flontmie.ticketplaster.com${resolvedAudioUrl}`;
     }
-    return [];
-  }
 
-  private mapBackendTrack(t: any): Track {
-    const dur = Number(t.duration) || 180;
-    const vid = extractVideoId(t);
-    const rawCover = String(t.cover_art_url || t.coverUrl || '').startsWith('/phpbackend/api/')
-      ? `${API_BASE}${String(t.cover_art_url || t.coverUrl).replace('/phpbackend/api', '')}`
-      : (t.cover_art_url || t.coverUrl || `${API_BASE}/stream.php?type=artwork&id=${encodeURIComponent(t.id)}`);
+    let resolvedVideoUrl = dbTrack.video_url || '';
+    if (
+      resolvedVideoUrl.startsWith('/phpbackend/') &&
+      typeof window !== 'undefined' &&
+      !window.location.hostname.endsWith('ticketplaster.com')
+    ) {
+      resolvedVideoUrl = `https://flontmie.ticketplaster.com${resolvedVideoUrl}`;
+    }
+
+    const rawCover = dbTrack.cover_art_url || dbTrack.cover_url || '';
+    let resolvedCoverUrl = resolveArtworkUrl(rawCover, 'track', dbTrack.title || 'Track');
+    if (
+      resolvedCoverUrl.startsWith('/phpbackend/') &&
+      typeof window !== 'undefined' &&
+      !window.location.hostname.endsWith('ticketplaster.com')
+    ) {
+      resolvedCoverUrl = `https://flontmie.ticketplaster.com${resolvedCoverUrl}`;
+    }
+
+    const rawId = String(dbTrack.id || '');
+    const explicitVid = dbTrack.video_id || dbTrack.videoId || (rawId.startsWith('trk_yt_') ? rawId.replace('trk_yt_', '') : (rawId.startsWith('yt_') ? rawId.replace('yt_', '') : undefined));
+
     return {
-      id: t.id,
-      title: t.title,
-      artist: t.artist_name || t.artist || 'Artist',
-      artistId: t.artist_id || t.artistId || '',
-      album: t.album_name || t.album || 'Single',
-      duration: dur,
-      genre: t.genre || 'Pop',
-      coverUrl: resolveArtworkUrl(rawCover, 'track', t.title),
-      audioUrl: `${API_BASE}/stream.php?id=${encodeURIComponent(t.id)}`,
-      videoId: vid,
-      streams: Number(t.stream_count ?? t.streams) || 0,
-      ytPlays: t.yt_plays ?? t.ytPlays ?? null,
-      flontmiePlays: typeof t.flontmie_plays === 'number' ? t.flontmie_plays : (Number(t.flontmie_plays) || 0),
-      likes: Number(t.likes_count ?? t.likes) || 0,
-      releaseDate: t.release_date || new Date().toISOString().split('T')[0],
-      lyrics: parseLyricsToLines(t.lyrics, dur),
-      isrc: t.isrc || 'USFLM2026001',
-      upc: t.upc || '012345678901',
-      label: t.label_name || 'Flontmie Records',
-      distributor: 'Flontmie Direct',
-      isExplicit: Boolean(Number(t.explicit ?? t.isExplicit ?? 0)),
-      bpm: Number(t.bpm) || 120,
-      moods: ['trending', 'party'] as any[],
-      moodTags: t.mood_tags || [t.genre || 'Pop']
+      id: rawId,
+      videoId: explicitVid,
+      title: dbTrack.title || 'Untitled Track',
+      artist: dbTrack.artist_name || dbTrack.artist || 'Unknown Artist',
+      artistId: dbTrack.artist_id || 'art_unknown',
+      album: dbTrack.album_name || dbTrack.album || 'Single',
+      duration: Number(dbTrack.duration) || 180,
+      genre: (dbTrack.genre || 'Pop') as any,
+      coverUrl: resolvedCoverUrl,
+      audioUrl: resolvedAudioUrl,
+      videoUrl: resolvedVideoUrl || undefined,
+      streams: Number(dbTrack.stream_count ?? dbTrack.streams) || 0,
+      ytPlays: dbTrack.yt_plays ?? dbTrack.ytPlays ?? null,
+      flontmiePlays: Number(dbTrack.flontmie_plays ?? dbTrack.flontmiePlays) || 0,
+      likes: Number(dbTrack.likes_count ?? dbTrack.likes) || 0,
+      dislikes: Number(dbTrack.dislikes_count ?? dbTrack.dislikes) || 0,
+      isExplicit: Boolean(Number(dbTrack.explicit)),
+      releaseDate: dbTrack.release_date || '2026-01-01',
+      lyrics: parsedLyrics,
+      bpm: Number(dbTrack.bpm) || 120,
+      moods: moods as any,
+      isrc: dbTrack.isrc || '',
+      upc: dbTrack.upc || '',
+      label: dbTrack.label_name || dbTrack.label || '',
+      distributor: dbTrack.distributor_name || dbTrack.distributor || '',
+      country: dbTrack.country || 'US',
+      status: dbTrack.status === 'published' ? 'active' : (dbTrack.status || 'active'),
+      featuredOnHome: dbTrack.featured_on_home !== undefined ? Boolean(Number(dbTrack.featured_on_home)) : true,
+      source: dbTrack.source || (dbTrack.source_type ? 'catalog' : undefined)
     };
   }
 
-  public async registerStream(trackId: string): Promise<void> {
-    try {
-      await this.request(`/tracks.php?action=stream&id=${encodeURIComponent(trackId)}`, {
-        method: 'POST'
-      });
-    } catch (e) {
-      console.warn('Stream count API register error:', e);
-    }
+  public mapDiscographyItem(raw: any): ArtistDiscographyItem {
+    const title = raw.title || raw.name || 'Untitled Release';
+    return {
+      id: String(raw.id || raw.browse_id || raw.browseId || `rel_${Math.random().toString(36).slice(2, 8)}`),
+      browseId: raw.browse_id || raw.browseId || undefined,
+      collectionId: raw.collection_id || raw.collectionId || undefined,
+      title,
+      artist: raw.artist || raw.artist_name || '',
+      artistId: raw.artist_id || raw.artistId || undefined,
+      year: raw.year ? String(raw.year) : undefined,
+      releaseDate: raw.release_date || raw.releaseDate || undefined,
+      type: raw.type || 'Album',
+      subtitle: raw.subtitle || undefined,
+      coverUrl: resolveArtworkUrl(raw.cover_url || raw.coverUrl || raw.cover_art_url, 'album', title),
+      trackCount: raw.track_count ? Number(raw.track_count) : undefined,
+      explicit: Boolean(raw.explicit),
+      tracks: Array.isArray(raw.tracks) ? raw.tracks.map((t: any) => this.mapDbTrack(t)) : undefined,
+    };
   }
 
-  public async toggleLike(trackId: string): Promise<{ liked: boolean }> {
-    try {
-      const res = await this.request<{ liked: boolean }>(`/tracks.php?action=like&id=${encodeURIComponent(trackId)}`, {
-        method: 'POST'
-      });
-      return res;
-    } catch (e) {
-      return { liked: false };
-    }
+  public mapRelatedArtist(raw: any): RelatedArtistItem {
+    const name = raw.name || 'Artist';
+    return {
+      id: String(raw.id || raw.browse_id || raw.browseId || `art_${name.toLowerCase().replace(/[^a-z0-9]/g, '_')}`),
+      browseId: raw.browse_id || raw.browseId || undefined,
+      name,
+      avatarUrl: resolveArtworkUrl(raw.avatar_url || raw.avatarUrl, 'artist', name),
+      subscribers: raw.subscribers || undefined,
+      monthlyAudience: raw.monthly_audience || undefined,
+    };
   }
 
-  // --- ARTISTS ---
-  private mapBackendArtist(a: any): ArtistProfile {
-    const popularSongs: Track[] = Array.isArray(a.popular_songs || a.tracks)
-      ? (a.popular_songs || a.tracks).map((t: any) => this.mapBackendTrack(t))
+  public mapDbArtist(a: any): ArtistProfile {
+    const name = a.name || 'Artist';
+    const rawTracks = Array.isArray(a.popular_songs)
+      ? a.popular_songs
+      : Array.isArray(a.tracks)
+      ? a.tracks
       : [];
 
-    const mapDiscItem = (item: any, defaultType: ArtistDiscographyItem['type'] = 'Album'): ArtistDiscographyItem => ({
-      id: item.id || item.browse_id || `rel_${Math.random().toString(36).slice(2, 8)}`,
-      browseId: item.browse_id || item.browseId,
-      collectionId: item.collection_id || item.collectionId,
-      title: item.title || 'Release',
-      artist: item.artist || a.name || 'Artist',
-      artistId: item.artist_id || a.id,
-      year: item.year ? String(item.year) : (item.release_date ? String(item.release_date).slice(0, 4) : undefined),
-      releaseDate: item.release_date,
-      type: item.type || defaultType,
-      subtitle: item.subtitle,
-      coverUrl: resolveArtworkUrl(item.cover_url || item.cover_art_url || item.coverUrl, 'album', item.title),
-      trackCount: item.track_count ? Number(item.track_count) : undefined,
-      explicit: Boolean(item.explicit)
-    });
-
-    const albums: ArtistDiscographyItem[] = Array.isArray(a.albums)
-      ? a.albums.map((alb: any) => mapDiscItem(alb, 'Album'))
-      : [];
-
-    const singlesEps: ArtistDiscographyItem[] = Array.isArray(a.singles_eps)
-      ? a.singles_eps.map((s: any) => mapDiscItem(s, 'Single'))
-      : [];
-
-    const featuredOn: ArtistDiscographyItem[] = Array.isArray(a.featured_on)
-      ? a.featured_on.map((f: any) => mapDiscItem(f, 'Playlist'))
-      : [];
-
-    const playlists: ArtistDiscographyItem[] = Array.isArray(a.playlists)
-      ? a.playlists.map((p: any) => mapDiscItem(p, 'Playlist'))
-      : [];
-
-    const relatedArtists: RelatedArtistItem[] = Array.isArray(a.related_artists)
-      ? a.related_artists.map((r: any) => ({
-          id: r.id || r.browse_id,
-          browseId: r.browse_id || r.id,
-          name: r.name,
-          avatarUrl: resolveArtworkUrl(r.avatar_url || r.avatarUrl, 'artist', r.name),
-          subscribers: r.subscribers || r.monthly_audience || undefined,
-          monthlyAudience: r.monthly_audience || undefined
-        }))
-      : [];
-
-    const genresList = Array.isArray(a.genres) ? a.genres : [];
+    const mappedTracks: Track[] = rawTracks.map((t: any) => this.mapDbTrack(t));
 
     return {
       id: a.id,
-      name: a.name,
-      avatarUrl: resolveArtworkUrl(a.avatar_url || a.avatarUrl, 'artist', a.name),
-      headerUrl: resolveArtworkUrl(a.header_url || a.headerUrl || a.avatar_url, 'artist', a.name),
+      name,
+      avatarUrl: resolveArtworkUrl(a.avatar_url || a.avatarUrl, 'artist', name),
+      headerUrl: resolveArtworkUrl(a.header_url || a.headerUrl || a.avatar_url, 'artist', name),
       bio: a.bio || '',
-      bioSource: a.bio_source || undefined,
-      bioUrl: a.bio_url || undefined,
-      wikidataId: a.wikidata_id || undefined,
-      ytBrowseId: a.yt_browse_id || undefined,
-      verified: Boolean(Number(a.verified ?? 1)),
-      monthlyListeners: a.monthly_listeners !== null && a.monthly_listeners !== undefined && Number(a.monthly_listeners) > 0
-        ? Number(a.monthly_listeners)
-        : null,
+      bioSource: a.bio_source || a.bioSource || undefined,
+      bioUrl: a.bio_url || a.bioUrl || undefined,
+      wikidataId: a.wikidata_id || a.wikidataId || undefined,
+      ytBrowseId: a.yt_browse_id || a.ytBrowseId || undefined,
+      verified: Boolean(Number(a.verified ?? 0)),
+      monthlyListeners: a.monthly_listeners !== null && a.monthly_listeners !== undefined ? Number(a.monthly_listeners) : 0,
       ytMonthlyAudience: a.yt_monthly_audience || null,
       ytSubscribers: a.yt_subscribers || null,
       ytTotalViews: a.yt_total_views || null,
-      totalStreams: a.total_streams !== null && a.total_streams !== undefined && Number(a.total_streams) > 0
-        ? Number(a.total_streams)
-        : null,
-      flontmieStreams: typeof a.flontmie_streams === 'number' ? a.flontmie_streams : 0,
-      followers: a.followers !== null && a.followers !== undefined && Number(a.followers) > 0
-        ? Number(a.followers)
-        : null,
-      flontmieFollowers: typeof a.flontmie_followers === 'number' ? a.flontmie_followers : (Number(a.followers) || 0),
-      label: a.label_name || a.label || 'Official Artist',
-      topTracks: popularSongs.map(s => s.id),
-      popularSongs,
-      albums,
-      singlesEps,
-      featuredOn,
-      playlists,
-      relatedArtists,
-      primaryGenre: genresList[0] || a.primaryGenre || 'Music',
+      totalStreams: a.total_streams !== null && a.total_streams !== undefined ? Number(a.total_streams) : 0,
+      flontmieStreams: Number(a.flontmie_streams) || 0,
+      followers: a.followers !== null && a.followers !== undefined ? Number(a.followers) : 0,
+      flontmieFollowers: Number(a.flontmie_followers ?? a.followers) || 0,
+      label: a.label_name || a.label || '',
+      distributorId: a.distributor_id || undefined,
+      distributorName: a.distributor_name || a.created_by_distributor || undefined,
+      claimedStatus: a.claimed_status === 'claimed' ? 'Claimed' : (a.claimed_status === 'pending' ? 'Pending Claim' : 'Unclaimed'),
+      topTracks: mappedTracks.map((t) => t.id),
+      popularSongs: mappedTracks,
+      albums: Array.isArray(a.albums) ? a.albums.map((alb: any) => this.mapDiscographyItem(alb)) : [],
+      singlesEps: Array.isArray(a.singles_eps) ? a.singles_eps.map((s: any) => this.mapDiscographyItem(s)) : [],
+      featuredOn: Array.isArray(a.featured_on) ? a.featured_on.map((f: any) => this.mapDiscographyItem(f)) : [],
+      playlists: Array.isArray(a.playlists) ? a.playlists.map((p: any) => this.mapDiscographyItem(p)) : [],
+      relatedArtists: Array.isArray(a.related_artists) ? a.related_artists.map((r: any) => this.mapRelatedArtist(r)) : [],
       country: a.country || 'US',
+      primaryGenre: a.primary_genre || (Array.isArray(a.genres) && a.genres[0]) || 'Music',
       socialLinks: a.social_links || {},
-      distributorName: a.distributor_name || 'Global Release',
-      claimedStatus: a.claimed_status || 'Verified'
     };
   }
 
-  public async getArtists(): Promise<ArtistProfile[]> {
-    try {
-      const res = await this.request<{ status: string; artists: any[] }>('/artists.php');
-      if (res && Array.isArray(res.artists)) {
-        return res.artists.map(a => this.mapBackendArtist(a));
-      }
-    } catch (e) {
-      console.warn('Backend artists fetch error:', e);
+  // --- Fetch All Tracks ---
+  public async getTracks(filters?: { genre?: string; q?: string; artist_id?: string; distributor_id?: string; label_id?: string }): Promise<Track[]> {
+    const params = new URLSearchParams();
+    if (filters?.genre && filters.genre !== 'all') params.set('genre', filters.genre);
+    if (filters?.q) params.set('q', filters.q);
+    if (filters?.artist_id) params.set('artist_id', filters.artist_id);
+    if (filters?.distributor_id) params.set('distributor_id', filters.distributor_id);
+    if (filters?.label_id) params.set('label_id', filters.label_id);
+
+    const queryStr = params.toString() ? `?${params.toString()}` : '';
+    const res = await this.request<{ status: string; tracks: any[] }>(`tracks.php${queryStr}`);
+    if (res.status === 'success' && Array.isArray(res.tracks)) {
+      return res.tracks.map((t) => this.mapDbTrack(t));
     }
     return [];
   }
 
-  public async getArtistById(id: string): Promise<ArtistProfile | null> {
+  // --- Increment Stream Counter in MySQL ---
+  public async recordStream(trackId: string, progressSeconds: number = 0): Promise<void> {
     try {
-      const res = await this.request<{ status: string; artist: any }>(`/artists.php?id=${encodeURIComponent(id)}`);
-      if (res && res.artist) {
-        return this.mapBackendArtist(res.artist);
+      await this.request(`tracks.php?action=stream`, {
+        method: 'POST',
+        body: JSON.stringify({ track_id: trackId, progress_seconds: progressSeconds }),
+      });
+    } catch {
+      // Ignore transient network errors during playback telemetry
+    }
+  }
+
+  public async registerStream(trackId: string, progressSeconds: number = 0): Promise<void> {
+    return this.recordStream(trackId, progressSeconds);
+  }
+
+  // --- Toggle Track Like ---
+  public async toggleLikeTrack(trackId: string): Promise<{ liked: boolean; likes_count?: number }> {
+    return this.request(`tracks.php?action=like`, {
+      method: 'POST',
+      body: JSON.stringify({ track_id: trackId }),
+    });
+  }
+
+  public async toggleLike(trackId: string): Promise<{ liked: boolean; likes_count?: number }> {
+    return this.toggleLikeTrack(trackId);
+  }
+
+  // --- Dislike Track ---
+  public async dislikeTrack(trackId: string): Promise<{ status: string; dislikes_count: number }> {
+    return this.request(`tracks.php?action=dislike`, {
+      method: 'POST',
+      body: JSON.stringify({ track_id: trackId }),
+    });
+  }
+
+  // --- Track Comments ---
+  public async getTrackComments(trackId: string): Promise<Array<{ id: string; user: string; text: string; time: string }>> {
+    try {
+      const res = await this.request<{ status: string; comments: any[] }>(
+        `tracks.php?action=comments&track_id=${encodeURIComponent(trackId)}`
+      );
+      if (res.status === 'success' && Array.isArray(res.comments)) {
+        return res.comments.map((c: any) => ({
+          id: String(c.id),
+          user: c.author_name || 'Listener',
+          text: c.comment_text || '',
+          time: c.created_at || ''
+        }));
       }
-    } catch (e) {
-      console.warn('Backend single artist fetch error:', e);
+    } catch {}
+    return [];
+  }
+
+  public async postTrackComment(trackId: string, text: string): Promise<{ id: string; user: string; text: string; time: string } | null> {
+    const res = await this.request<{ status: string; comment: any }>(`tracks.php?action=add_comment`, {
+      method: 'POST',
+      body: JSON.stringify({ track_id: trackId, text }),
+    });
+    if (res.status === 'success' && res.comment) {
+      return {
+        id: String(res.comment.id),
+        user: res.comment.author_name || 'Listener',
+        text: res.comment.comment_text || text,
+        time: res.comment.created_at || 'Just now'
+      };
     }
     return null;
   }
 
+  // --- Create / Update / Delete Track ---
+  public async createTrack(payload: any): Promise<any> {
+    return this.request(`tracks.php?action=create`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async updateTrack(payload: any): Promise<any> {
+    return this.request(`tracks.php?action=update`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async deleteTrack(trackId: string): Promise<any> {
+    return this.request(`tracks.php?action=delete`, {
+      method: 'POST',
+      body: JSON.stringify({ track_id: trackId }),
+    });
+  }
+
+  // --- Fetch Playlists ---
+  public async getPlaylists(): Promise<Playlist[]> {
+    const res = await this.request<{ status: string; playlists: any[] }>('playlists.php');
+    if (res.status === 'success' && Array.isArray(res.playlists)) {
+      return res.playlists.map((p) => ({
+        id: p.id,
+        title: p.title,
+        description: p.description || '',
+        coverUrl: resolveArtworkUrl(p.cover_art_url, 'playlist', p.title),
+        trackIds: Array.isArray(p.track_ids) ? p.track_ids : [],
+        curator: p.curator_name || 'Flontmie',
+        isPublic: Boolean(Number(p.is_public)),
+        isCollaborative: false,
+        followers: Number(p.followers || 0),
+        category: (p.genre_category || 'all') as any,
+        genreCategory: p.genre_category || 'all',
+        createdAt: p.created_at || new Date().toISOString().split('T')[0],
+      }));
+    }
+    return [];
+  }
+
+  public async getPlaylistById(playlistId: string): Promise<{ playlist: Playlist; tracks: Track[] } | null> {
+    try {
+      const res = await this.request<{ status: string; playlist: any; tracks: any[] }>(
+        `playlists.php?id=${encodeURIComponent(playlistId)}`
+      );
+      if (res.status === 'success' && res.playlist) {
+        const p = res.playlist;
+        const playlist: Playlist = {
+          id: p.id,
+          title: p.title,
+          description: p.description || '',
+          coverUrl: resolveArtworkUrl(p.cover_art_url, 'playlist', p.title),
+          trackIds: Array.isArray(p.track_ids) ? p.track_ids : [],
+          curator: p.curator_name || 'Flontmie',
+          isPublic: Boolean(Number(p.is_public)),
+          isCollaborative: false,
+          followers: Number(p.followers || 0),
+          category: (p.genre_category || 'all') as any,
+          genreCategory: p.genre_category || 'all',
+          createdAt: p.created_at || new Date().toISOString().split('T')[0],
+        };
+        const tracks = Array.isArray(res.tracks) ? res.tracks.map((t) => this.mapDbTrack(t)) : [];
+        return { playlist, tracks };
+      }
+    } catch {}
+    return null;
+  }
+
+  // --- Create Playlist in MySQL ---
+  public async createPlaylist(playlist: {
+    id?: string;
+    title: string;
+    description: string;
+    cover_art_url?: string;
+    genre_category?: string;
+    is_public?: boolean;
+    track_ids?: string[];
+  }): Promise<{ status: string; id: string }> {
+    return this.request('playlists.php?action=create', {
+      method: 'POST',
+      body: JSON.stringify(playlist),
+    });
+  }
+
+  // --- Update Playlist Tracks in MySQL ---
+  public async updatePlaylistTracks(playlistId: string, trackIds: string[], title?: string): Promise<void> {
+    await this.request(`playlists.php?action=update&id=${encodeURIComponent(playlistId)}`, {
+      method: 'POST',
+      body: JSON.stringify({ id: playlistId, track_ids: trackIds, title }),
+    });
+  }
+
+  public async deletePlaylist(playlistId: string): Promise<void> {
+    await this.request(`playlists.php?action=delete&id=${encodeURIComponent(playlistId)}`, {
+      method: 'POST',
+      body: JSON.stringify({ id: playlistId }),
+    });
+  }
+
+  // --- Fetch All Artists ---
+  public async getArtists(filters?: { distributor_id?: string; label_id?: string; q?: string }): Promise<Record<string, ArtistProfile>> {
+    const params = new URLSearchParams();
+    if (filters?.distributor_id) params.set('distributor_id', filters.distributor_id);
+    if (filters?.label_id) params.set('label_id', filters.label_id);
+    if (filters?.q) params.set('q', filters.q);
+    const qs = params.toString() ? `?${params.toString()}` : '';
+
+    const res = await this.request<{ status: string; artists: any[] }>(`artists.php${qs}`);
+    const map: Record<string, ArtistProfile> = {};
+    if (res.status === 'success' && Array.isArray(res.artists)) {
+      res.artists.forEach((a) => {
+        map[a.id] = this.mapDbArtist(a);
+      });
+    }
+    return map;
+  }
+
+  // --- Fetch Single Enriched Artist Profile & 6-Section Discography ---
+  public async getArtistById(artistIdOrName: string): Promise<ArtistProfile | null> {
+    try {
+      const res = await this.request<{ status: string; artist: any }>(
+        `artists.php?id=${encodeURIComponent(artistIdOrName)}`
+      );
+      if (res.status === 'success' && res.artist) {
+        return this.mapDbArtist(res.artist);
+      }
+    } catch (err) {
+      console.warn('getArtistById error:', err);
+    }
+    return null;
+  }
+
+  // --- Toggle Follow / Unfollow Artist ---
+  public async toggleFollowArtist(artistId: string): Promise<{ following: boolean; followers_count: number }> {
+    return this.request(`artists.php?action=follow`, {
+      method: 'POST',
+      body: JSON.stringify({ artist_id: artistId }),
+    });
+  }
+
+  // --- Fetch Release (Album / EP / Single) Tracklist on Demand ---
   public async getReleaseTracks(browseId: string, title?: string, artist?: string, coverUrl?: string): Promise<{
     title: string;
     artist: string;
@@ -319,397 +486,185 @@ class ApiService {
     tracks: Track[];
   } | null> {
     try {
-      const q = new URLSearchParams({ action: 'release' });
-      if (browseId) q.append('browse_id', browseId);
-      if (title) q.append('title', title);
-      if (artist) q.append('artist', artist);
-      if (coverUrl) q.append('cover_url', coverUrl);
-
-      const res = await this.request<{ status: string; release: any }>(`/artists.php?${q.toString()}`);
-      if (res && res.release) {
+      const params = new URLSearchParams({
+        action: 'release_tracks',
+        browse_id: browseId,
+        title: title || '',
+        artist: artist || '',
+        cover_url: coverUrl || '',
+      });
+      const res = await this.request<{ status: string; release: any }>(`artists.php?${params.toString()}`);
+      if (res.status === 'success' && res.release) {
         const r = res.release;
         return {
           title: r.title || title || 'Release',
           artist: r.artist || artist || 'Artist',
           coverUrl: resolveArtworkUrl(r.cover_url || coverUrl, 'album', r.title || title),
-          tracks: Array.isArray(r.tracks) ? r.tracks.map((t: any) => this.mapBackendTrack(t)) : []
+          tracks: Array.isArray(r.tracks) ? r.tracks.map((t: any) => this.mapDbTrack(t)) : [],
         };
       }
-    } catch (e) {
-      console.warn('Backend release tracks fetch error:', e);
+    } catch (err) {
+      console.warn('getReleaseTracks error:', err);
     }
     return null;
   }
 
-  // --- ALBUMS (DATABASE-DRIVEN) ---
-  public async getAlbums(): Promise<any[]> {
-    try {
-      const res = await this.request<{ status: string; albums: any[] }>('/albums.php');
-      if (res && Array.isArray(res.albums)) {
-        return res.albums.map(alb => ({
-          ...alb,
-          cover_art_url: resolveArtworkUrl(alb.cover_art_url, 'album', alb.title)
-        }));
-      }
-    } catch (e) {
-      console.warn('Backend albums fetch error:', e);
-    }
-    return [];
+  // --- Artist Portal Dashboard ---
+  public async getArtistDashboard(artistId?: string): Promise<any> {
+    const qs = artistId ? `&artist_id=${encodeURIComponent(artistId)}` : '';
+    return this.request(`artists.php?action=dashboard${qs}`);
   }
 
-  public async getAlbumById(id: string): Promise<any | null> {
-    try {
-      const res = await this.request<{ status: string; album: any }>(`/albums.php?id=${encodeURIComponent(id)}`);
-      if (res && res.album) {
-        return {
-          ...res.album,
-          cover_art_url: resolveArtworkUrl(res.album.cover_art_url, 'album', res.album.title)
-        };
-      }
-    } catch (e) {
-      console.warn('Backend album detail fetch error:', e);
-    }
-    return null;
-  }
-
-  // --- PLAYLISTS ---
-  public async getPlaylists(): Promise<Playlist[]> {
-    try {
-      const res = await this.request<{ status: string; playlists: any[] }>('/playlists.php');
-      if (res && Array.isArray(res.playlists)) {
-        return res.playlists.map(p => {
-          let trackIds: string[] = [];
-          if (Array.isArray(p.track_ids)) {
-            trackIds = p.track_ids;
-          } else if (Array.isArray(p.track_ids_json)) {
-            trackIds = p.track_ids_json;
-          } else if (typeof p.track_ids_json === 'string' && p.track_ids_json.trim()) {
-            try {
-              const parsed = JSON.parse(p.track_ids_json);
-              trackIds = Array.isArray(parsed) ? parsed : [];
-            } catch {
-              trackIds = [];
-            }
-          }
-
-          const pid = String(p.id || '');
-          let genreCat = p.genre_category || p.category;
-          if (!genreCat) {
-            if (pid.includes('love') || pid.includes('rnb')) genreCat = 'love_songs';
-            else if (pid.includes('old')) genreCat = 'old_school';
-            else if (pid.includes('work') || pid.includes('rap')) genreCat = 'workout';
-            else if (pid.includes('focus') || pid.includes('chill')) genreCat = 'coding';
-            else if (pid.includes('road') || pid.includes('pop')) genreCat = 'road_trip';
-            else genreCat = 'all';
-          }
-
-          return {
-            id: pid,
-            title: p.title || 'Curated Collection',
-            description: p.description || '',
-            coverUrl: resolveArtworkUrl(p.cover_art_url, 'playlist', p.title),
-            curator: p.curator || 'Flontmie Editorial',
-            trackIds,
-            category: (p.category || 'trending') as any,
-            genreCategory: genreCat,
-            isPublic: Boolean(Number(p.is_public ?? 1)),
-            isCollaborative: Boolean(Number(p.is_collaborative ?? 0)),
-            followers: Number(p.saves_count ?? p.followers) || 0,
-            createdAt: p.created_at || new Date().toISOString().split('T')[0]
-          };
-        });
-      }
-    } catch (e) {
-      console.warn('Backend playlists fetch error:', e);
-    }
-    return [];
-  }
-
-  public async getPlaylistById(id: string): Promise<{ playlist: Playlist; tracks: Track[] } | null> {
-    try {
-      const res = await this.request<{ status: string; playlist: any }>(`/playlists.php?id=${encodeURIComponent(id)}`);
-      if (res && res.playlist) {
-        const p = res.playlist;
-        let trackIds: string[] = [];
-        if (Array.isArray(p.track_ids)) {
-          trackIds = p.track_ids;
-        } else if (typeof p.track_ids_json === 'string' && p.track_ids_json.trim()) {
-          try {
-            const parsed = JSON.parse(p.track_ids_json);
-            trackIds = Array.isArray(parsed) ? parsed : [];
-          } catch {
-            trackIds = [];
-          }
-        }
-
-        const rawTracks = Array.isArray(p.tracks) ? p.tracks : [];
-        const mappedTracks: Track[] = rawTracks
-          .filter((t: any) => !String(t.audio_url || '').includes('soundhelix'))
-          .map((t: any) => {
-            const dur = Number(t.duration) || 180;
-            const vid = extractVideoId(t);
-            return {
-              id: t.id,
-              title: t.title,
-              artist: t.artist_name || t.artist || 'Unknown Artist',
-              artistId: t.artist_id || 'art_unknown',
-              album: t.album_name || t.album || 'Single',
-              duration: dur,
-              genre: t.genre || 'Pop',
-              coverUrl: String(t.cover_art_url || t.coverUrl || '').startsWith('/phpbackend/api/')
-                ? `${API_BASE}${String(t.cover_art_url || t.coverUrl).replace('/phpbackend/api', '')}`
-                : (t.cover_art_url || t.coverUrl || `${API_BASE}/stream.php?type=artwork&id=${encodeURIComponent(t.id)}`),
-              audioUrl: `${API_BASE}/stream.php?id=${encodeURIComponent(t.id)}`,
-              videoId: vid,
-              streams: Number(t.stream_count || t.streams || 0),
-              likes: Number(t.likes_count || t.likes || 0),
-              releaseDate: t.release_date || new Date().toISOString().split('T')[0],
-              lyrics: parseLyricsToLines(t.lyrics, dur),
-              isrc: t.isrc || 'USFLM2026001',
-              upc: '012345678901',
-              label: 'Flontmie Records',
-              distributor: 'Flontmie Global',
-              isExplicit: Boolean(Number(t.explicit)),
-              scale: t.scale,
-              bpm: Number(t.bpm) || 120,
-              moods: ['trending', 'party'] as any[],
-              moodTags: t.mood_tags || [t.genre || 'Pop']
-            };
-          });
-
-        const pid = String(p.id || '');
-        let genreCat = p.genre_category || p.category;
-        if (!genreCat) {
-          if (pid.includes('love')) genreCat = 'love_songs';
-          else if (pid.includes('old')) genreCat = 'old_school';
-          else if (pid.includes('work')) genreCat = 'workout';
-          else if (pid.includes('focus') || pid.includes('chill')) genreCat = 'coding';
-          else if (pid.includes('road')) genreCat = 'road_trip';
-          else genreCat = 'all';
-        }
-
-        return {
-          playlist: {
-            id: pid,
-            title: p.title || 'Curated Collection',
-            description: p.description || '',
-            coverUrl: p.cover_art_url || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600',
-            curator: p.curator || 'Flontmie Editorial',
-            trackIds,
-            category: (p.category || 'trending') as any,
-            genreCategory: genreCat,
-            isPublic: Boolean(Number(p.is_public ?? 1)),
-            isCollaborative: Boolean(Number(p.is_collaborative ?? 0)),
-            followers: Number(p.followers) || 142000,
-            createdAt: p.created_at || new Date().toISOString().split('T')[0]
-          },
-          tracks: mappedTracks
-        };
-      }
-    } catch (e) {
-      console.warn('Backend single playlist fetch error:', e);
-    }
-    return null;
-  }
-
-  // --- AUTH ---
-  public async login(login: string, password: string) {
-    const res = await this.request<{
-      status: string;
-      token: string;
-      csrf_token?: string;
-      must_change_password?: boolean;
-      user: any;
-    }>('/auth.php?action=login', {
+  public async updateArtistProfile(payload: any): Promise<any> {
+    return this.request(`artists.php?action=update`, {
       method: 'POST',
-      body: JSON.stringify({ login, password })
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async saveArtistSplit(payload: { track_id: string; artist_id?: string; members: any[] }): Promise<any> {
+    return this.request(`artists.php?action=save_split`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  // --- Albums / Releases ---
+  public async getAlbums(filters?: { artist_id?: string; distributor_id?: string; label_id?: string }): Promise<any[]> {
+    const params = new URLSearchParams();
+    if (filters?.artist_id) params.set('artist_id', filters.artist_id);
+    if (filters?.distributor_id) params.set('distributor_id', filters.distributor_id);
+    if (filters?.label_id) params.set('label_id', filters.label_id);
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    const res = await this.request<{ status: string; albums: any[] }>(`albums.php${qs}`);
+    return res.albums || [];
+  }
+
+  public async createAlbum(payload: any): Promise<any> {
+    return this.request(`albums.php?action=create`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async updateAlbum(payload: any): Promise<any> {
+    return this.request(`albums.php?action=update`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async deleteAlbum(albumId: string): Promise<any> {
+    return this.request(`albums.php?action=delete`, {
+      method: 'POST',
+      body: JSON.stringify({ id: albumId }),
+    });
+  }
+
+  // --- Auth Login / Register (Listener-Only Public Registration) ---
+  public async login(email: string, password: string): Promise<any> {
+    const res = await this.request<any>('auth.php?action=login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
     });
     if (res.token) {
-      this.setToken(res.token, res.csrf_token || res.user?.csrf_token || null);
+      this.setToken(res.token, res.csrf_token);
     }
     return res;
   }
 
   public async register(payload: {
-    name: string;
-    username: string;
     email: string;
+    username: string;
     password: string;
-    role: string;
-    country: string;
-  }) {
-    const res = await this.request<{
-      status: string;
-      token: string;
-      csrf_token?: string;
-      verification_code_sent?: boolean;
-      user: any;
-    }>('/auth.php?action=register', {
+    display_name?: string;
+    country?: string;
+  }): Promise<any> {
+    const res = await this.request<any>('auth.php?action=register', {
       method: 'POST',
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
     });
     if (res.token) {
-      this.setToken(res.token, res.csrf_token || res.user?.csrf_token || null);
+      this.setToken(res.token, res.csrf_token);
     }
     return res;
   }
 
-  public async logout() {
+  public async getCurrentUser(): Promise<any> {
+    const res = await this.request<any>('auth.php?action=me');
+    if (res.user?.csrf_token) {
+      this.csrfToken = res.user.csrf_token;
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('flontmie_csrf', res.user.csrf_token);
+      }
+    }
+    return res;
+  }
+
+  public async logout(): Promise<void> {
     try {
-      await this.request('/auth.php?action=logout', { method: 'POST' });
+      await this.request('auth.php?action=logout', { method: 'POST' });
     } catch {}
     this.setToken(null, null);
   }
 
-  public async getCurrentUser() {
-    const res = await this.request<{
-      status: string;
-      user: any;
-      csrf_token?: string;
-      must_change_password?: boolean;
-    }>('/auth.php?action=me');
-    if (res?.csrf_token) {
-      this.setToken(this.token, res.csrf_token);
-    }
-    return res;
-  }
-
-  public async verifyEmail(email: string, code: string) {
-    return this.request<{ status: string; message: string }>('/auth.php?action=verify_email', {
+  public async updateProfile(payload: { display_name: string; country?: string; avatar_url?: string; bio?: string }): Promise<any> {
+    return this.request('auth.php?action=update_profile', {
       method: 'POST',
-      body: JSON.stringify({ email, code })
+      body: JSON.stringify(payload),
     });
   }
 
-  public async resendVerification(email: string) {
-    return this.request<{ status: string; message: string }>('/auth.php?action=resend_verification', {
+  public async changePassword(currentPassword: string, newPassword: string): Promise<any> {
+    return this.request('auth.php?action=change_password', {
       method: 'POST',
-      body: JSON.stringify({ email })
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
     });
   }
 
-  public async forgotPassword(email: string) {
-    return this.request<{ status: string; message: string }>('/auth.php?action=forgot_password', {
-      method: 'POST',
-      body: JSON.stringify({ email })
-    });
-  }
-
-  public async resetPassword(email: string, code: string, newPassword: string) {
-    return this.request<{ status: string; message: string }>('/auth.php?action=reset_password', {
-      method: 'POST',
-      body: JSON.stringify({ email, code, new_password: newPassword })
-    });
-  }
-
-  public async changePassword(currentPassword: string, newPassword: string) {
-    return this.request<{ status: string; message: string; must_change_password?: boolean }>('/auth.php?action=change_password', {
-      method: 'POST',
-      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword })
-    });
-  }
-
-  public async updateProfile(payload: { display_name?: string; country?: string; avatar_url?: string }) {
-    return this.request<{ status: string; message: string; user: any }>('/auth.php?action=update_profile', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    });
-  }
-
-  // --- DISTRIBUTOR & CLAIMS ---
-  public async getDistributorClaims() {
-    return this.request<{ status: string; claims: any[] }>('/distributor.php?action=claims');
-  }
-
-  public async reviewClaim(claimId: string, decision: 'approved' | 'rejected' | 'escalated', notes?: string) {
-    return this.request<{ status: string; message: string }>('/distributor.php?action=review_claim', {
-      method: 'POST',
-      body: JSON.stringify({ claim_id: claimId, decision, notes })
-    });
-  }
-
-  public async submitArtistClaim(artistId: string, evidenceType: string, evidenceDetails: string, proofUrl?: string) {
-    return this.request<{ status: string; message: string; claim_id: string }>(`/artists.php?action=claim&id=${encodeURIComponent(artistId)}`, {
-      method: 'POST',
-      body: JSON.stringify({
-        evidence_type: evidenceType,
-        evidence_details: evidenceDetails,
-        proof_url: proofUrl
-      })
-    });
-  }
-
-  // --- ADMIN GOVERNANCE API (/phpbackend/api/admin.php) ---
-  public async getAdminDashboard() {
-    return this.request<{
-      status: string;
-      stats: any;
-      users: any[];
-      artists: any[];
-      claims: any[];
-      tracks: any[];
-      albums: any[];
-      playlists: any[];
-      distributors: any[];
-      labels: any[];
-      role_permissions: any[];
-      reports: any[];
-      genres: any[];
-      settings: any[];
-      import_jobs: any[];
-      import_schedules: any[];
-      storage: any;
-      audit_logs: any[];
-      sessions: any[];
-      security_events: any[];
-      analytics: any;
-    }>('/admin.php?action=dashboard');
-  }
-
-  public async getAdminStats() {
-    return this.request<{ status: string; stats: any }>('/admin.php?action=stats');
-  }
-
-  public async getAdminUsers(params?: { q?: string; role?: string; status?: string }) {
-    const query = new URLSearchParams();
-    if (params?.q) query.append('q', params.q);
-    if (params?.role) query.append('role', params.role);
-    if (params?.status) query.append('status', params.status);
-    return this.request<{ status: string; users: any[] }>(`/admin.php?action=users&${query.toString()}`);
-  }
-
-  public async updateUserRole(userId: string, role: string) {
-    return this.request<{ status: string; message: string }>('/admin.php?action=update_user', {
-      method: 'POST',
-      body: JSON.stringify({ user_id: userId, role })
-    });
+  // --- Admin Governance APIs ---
+  public async getAdminDashboard(): Promise<any> {
+    return this.request('admin.php?action=dashboard');
   }
 
   public async updateAdminUser(payload: {
     user_id: string;
     role?: string;
     status?: 'active' | 'suspended' | 'banned';
-    display_name?: string;
     email_verified?: boolean;
-  }) {
-    return this.request<{ status: string; message: string }>('/admin.php?action=update_user', {
+    display_name?: string;
+    distributor_id?: string | null;
+    label_id?: string | null;
+    artist_id?: string | null;
+  }): Promise<any> {
+    return this.request('admin.php?action=update_user', {
       method: 'POST',
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ ...payload, csrf_token: this.csrfToken }),
     });
   }
 
   public async createAdminUser(payload: {
     email: string;
-    display_name: string;
     username?: string;
+    display_name: string;
     password: string;
     role: string;
     country?: string;
+    distributor_id?: string;
+    label_id?: string;
+    artist_id?: string;
     must_change_password?: boolean;
-  }) {
-    return this.request<{ status: string; message: string }>('/admin.php?action=create_user', {
+  }): Promise<any> {
+    return this.request('admin.php?action=create_user', {
       method: 'POST',
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ ...payload, csrf_token: this.csrfToken }),
+    });
+  }
+
+  public async deleteAdminUser(userId: string): Promise<any> {
+    return this.request('admin.php?action=delete_user', {
+      method: 'POST',
+      body: JSON.stringify({ user_id: userId, csrf_token: this.csrfToken }),
     });
   }
 
@@ -717,100 +672,185 @@ class ApiService {
     claim_id: string;
     decision: 'approved' | 'rejected' | 'escalated' | 'disputed';
     notes?: string;
-  }) {
-    return this.request<{ status: string; message: string }>('/admin.php?action=review_claim', {
+  }): Promise<any> {
+    return this.request('admin.php?action=review_claim', {
       method: 'POST',
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ ...payload, csrf_token: this.csrfToken }),
+    });
+  }
+
+  public async createAdminArtist(payload: {
+    name: string;
+    stage_name?: string;
+    bio?: string;
+    country?: string;
+    primary_genre?: string;
+    avatar_url?: string;
+    header_url?: string;
+    label_id?: string;
+    label_name?: string;
+    distributor_id?: string;
+    verified?: boolean;
+    claimed_status?: string;
+    claimed_user_id?: string;
+  }): Promise<any> {
+    return this.request('admin.php?action=create_artist', {
+      method: 'POST',
+      body: JSON.stringify({ ...payload, csrf_token: this.csrfToken }),
     });
   }
 
   public async updateAdminArtist(payload: {
     artist_id: string;
-    name?: string;
     verified?: boolean;
     claimed_status?: string;
-    label_name?: string;
+    name?: string;
     bio?: string;
-  }) {
-    return this.request<{ status: string; message: string }>('/admin.php?action=update_artist', {
+    country?: string;
+    primary_genre?: string;
+    avatar_url?: string;
+    header_url?: string;
+    label_id?: string;
+    label_name?: string;
+    distributor_id?: string;
+  }): Promise<any> {
+    return this.request('admin.php?action=update_artist', {
       method: 'POST',
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ ...payload, csrf_token: this.csrfToken }),
+    });
+  }
+
+  public async deleteAdminArtist(artistId: string): Promise<any> {
+    return this.request('admin.php?action=delete_artist', {
+      method: 'POST',
+      body: JSON.stringify({ artist_id: artistId, csrf_token: this.csrfToken }),
+    });
+  }
+
+  public async createAdminTrack(payload: {
+    title: string;
+    artist_id?: string;
+    artist_name?: string;
+    album_id?: string;
+    album_name?: string;
+    genre?: string;
+    country?: string;
+    duration?: number;
+    bpm?: number;
+    isrc?: string;
+    upc?: string;
+    release_date?: string;
+    cover_art_url?: string;
+    audio_url?: string;
+    video_url?: string;
+    lyrics?: string;
+    explicit?: boolean;
+    featured_on_home?: boolean;
+    status?: string;
+    distributor_id?: string;
+    label_id?: string;
+  }): Promise<any> {
+    return this.request('admin.php?action=create_track', {
+      method: 'POST',
+      body: JSON.stringify({ ...payload, csrf_token: this.csrfToken }),
     });
   }
 
   public async updateAdminTrack(payload: {
     track_id: string;
+    status?: string;
+    featured_on_home?: boolean;
     title?: string;
     artist_name?: string;
     album_name?: string;
     genre?: string;
     country?: string;
     release_year?: number;
-    cover_art_url?: string;
-    status?: string;
+    isrc?: string;
+    upc?: string;
+    explicit?: boolean;
     license_status?: string;
-    license_notes?: string;
-    featured_on_home?: boolean;
+    cover_art_url?: string;
+    audio_url?: string;
+    video_url?: string;
+    lyrics?: string;
     delete_permanently?: boolean;
-  }) {
-    return this.request<{ status: string; message: string }>('/admin.php?action=update_track', {
+  }): Promise<any> {
+    return this.request('admin.php?action=update_track', {
       method: 'POST',
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ ...payload, csrf_token: this.csrfToken }),
     });
   }
 
-  public async bulkUpdateAdminTracks(trackIds: string[], bulkAction: 'publish' | 'unpublish' | 'verify_license' | 'resync_audio' | 'delete') {
-    return this.request<{ status: string; affected_count: number; message: string }>('/admin.php?action=bulk_update_tracks', {
+  public async createAdminAlbum(payload: {
+    title: string;
+    artist_id?: string;
+    artist_name?: string;
+    release_type?: 'album' | 'ep' | 'single';
+    genre?: string;
+    release_date?: string;
+    cover_art_url?: string;
+    upc?: string;
+    status?: string;
+    distributor_id?: string;
+    label_id?: string;
+  }): Promise<any> {
+    return this.request('admin.php?action=create_album', {
       method: 'POST',
-      body: JSON.stringify({ track_ids: trackIds, bulk_action: bulkAction })
+      body: JSON.stringify({ ...payload, csrf_token: this.csrfToken }),
     });
   }
 
   public async updateAdminAlbum(payload: {
     album_id: string;
+    status?: string;
     title?: string;
-    status?: string;
+    artist_name?: string;
+    genre?: string;
+    release_type?: string;
+    release_date?: string;
+    upc?: string;
+    cover_art_url?: string;
     delete?: boolean;
-  }) {
-    return this.request<{ status: string; message: string }>('/admin.php?action=update_album', {
+  }): Promise<any> {
+    return this.request('admin.php?action=update_album', {
       method: 'POST',
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ ...payload, csrf_token: this.csrfToken }),
     });
   }
 
-  public async updateAdminDistributor(payload: {
-    id?: string;
-    name?: string;
-    contact_email?: string;
-    status?: string;
-    quota_type?: string;
-    can_direct_upload?: boolean;
-    can_edit_metadata?: boolean;
-  }) {
-    return this.request<{ status: string; message: string }>('/admin.php?action=update_distributor', {
+  public async updateAdminDistributor(payload: any): Promise<any> {
+    return this.request('admin.php?action=update_distributor', {
       method: 'POST',
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ ...payload, csrf_token: this.csrfToken }),
     });
   }
 
-  public async updateAdminLabel(payload: {
-    id?: string;
-    name?: string;
-    contact_email?: string;
-    country?: string;
-    status?: string;
-    can_manage_roster?: boolean;
-  }) {
-    return this.request<{ status: string; message: string }>('/admin.php?action=update_label', {
+  public async deleteAdminDistributor(id: string): Promise<any> {
+    return this.request('admin.php?action=delete_distributor', {
       method: 'POST',
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ id, csrf_token: this.csrfToken }),
     });
   }
 
-  public async updateAdminRolePermission(payload: any) {
-    return this.request<{ status: string; message: string }>('/admin.php?action=update_role_permission', {
+  public async updateAdminLabel(payload: any): Promise<any> {
+    return this.request('admin.php?action=update_label', {
       method: 'POST',
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ ...payload, csrf_token: this.csrfToken }),
+    });
+  }
+
+  public async deleteAdminLabel(id: string): Promise<any> {
+    return this.request('admin.php?action=delete_label', {
+      method: 'POST',
+      body: JSON.stringify({ id, csrf_token: this.csrfToken }),
+    });
+  }
+
+  public async updateAdminRolePermission(payload: any): Promise<any> {
+    return this.request('admin.php?action=update_role_permission', {
+      method: 'POST',
+      body: JSON.stringify({ ...payload, csrf_token: this.csrfToken }),
     });
   }
 
@@ -819,10 +859,10 @@ class ApiService {
     status: string;
     resolution_notes?: string;
     enforce_action?: string;
-  }) {
-    return this.request<{ status: string; message: string }>('/admin.php?action=resolve_report', {
+  }): Promise<any> {
+    return this.request('admin.php?action=resolve_report', {
       method: 'POST',
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ ...payload, csrf_token: this.csrfToken }),
     });
   }
 
@@ -832,11 +872,25 @@ class ApiService {
     target_name: string;
     category: string;
     reason: string;
-    reporter_email?: string;
-  }) {
-    return this.request<{ status: string; message: string }>('/admin.php?action=create_report', {
+  }): Promise<any> {
+    return this.request('admin.php?action=create_report', {
       method: 'POST',
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ ...payload, csrf_token: this.csrfToken }),
+    });
+  }
+
+  public async createAdminPlaylist(payload: {
+    title: string;
+    description?: string;
+    cover_art_url?: string;
+    genre_category?: string;
+    is_public?: boolean;
+    is_featured?: boolean;
+    track_ids?: string[];
+  }): Promise<any> {
+    return this.request('admin.php?action=create_playlist', {
+      method: 'POST',
+      body: JSON.stringify({ ...payload, csrf_token: this.csrfToken }),
     });
   }
 
@@ -844,14 +898,17 @@ class ApiService {
     playlist_id: string;
     title?: string;
     description?: string;
+    cover_art_url?: string;
     genre_category?: string;
     is_featured?: boolean;
+    is_public?: boolean;
     status?: string;
+    track_ids?: string[];
     delete?: boolean;
-  }) {
-    return this.request<{ status: string; message: string }>('/admin.php?action=update_playlist', {
+  }): Promise<any> {
+    return this.request('admin.php?action=update_playlist', {
       method: 'POST',
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ ...payload, csrf_token: this.csrfToken }),
     });
   }
 
@@ -859,153 +916,331 @@ class ApiService {
     id?: string;
     name: string;
     description?: string;
+    color_theme?: string;
     is_featured?: boolean;
     display_order?: number;
-  }) {
-    return this.request<{ status: string; message: string }>('/admin.php?action=save_genre', {
+  }): Promise<any> {
+    return this.request('admin.php?action=save_genre', {
       method: 'POST',
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ ...payload, csrf_token: this.csrfToken }),
     });
   }
 
-  public async updateAdminSettings(settings: Record<string, string | boolean>) {
-    return this.request<{ status: string; message: string }>('/admin.php?action=update_settings', {
+  public async deleteAdminGenre(id: string): Promise<any> {
+    return this.request('admin.php?action=delete_genre', {
       method: 'POST',
-      body: JSON.stringify({ settings })
+      body: JSON.stringify({ id, csrf_token: this.csrfToken }),
     });
   }
 
-  public async revokeAdminSession(payload: { session_id?: string; user_id?: string }) {
-    return this.request<{ status: string; message: string }>('/admin.php?action=revoke_session', {
+  public async updateAdminSettings(settings: Record<string, string>): Promise<any> {
+    return this.request('admin.php?action=update_settings', {
       method: 'POST',
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ settings, csrf_token: this.csrfToken }),
     });
   }
 
-  public async unlockAdminUser(userId: string) {
-    return this.request<{ status: string; message: string }>('/admin.php?action=unlock_user', {
+  public async revokeAdminSession(sessionIdOrPayload: string | { session_id: string }): Promise<any> {
+    const sessionId = typeof sessionIdOrPayload === 'string' ? sessionIdOrPayload : sessionIdOrPayload.session_id;
+    return this.request('admin.php?action=revoke_session', {
       method: 'POST',
-      body: JSON.stringify({ user_id: userId })
+      body: JSON.stringify({ session_id: sessionId, csrf_token: this.csrfToken }),
     });
   }
 
-  public async getSearchSuggestions(query: string) {
-    if (!query || !query.trim()) return [];
+  public async clearAdminSecurityEvents(): Promise<any> {
+    return this.request('admin.php?action=clear_security_events', {
+      method: 'POST',
+      body: JSON.stringify({ csrf_token: this.csrfToken }),
+    });
+  }
+
+  // --- Distributor Portal Operations (Scoped to Authorized Distributor) ---
+  public async getDistributorDashboard(): Promise<any> {
+    return this.request('distributor.php?action=overview');
+  }
+
+  public async createDistributorArtist(payload: {
+    name: string;
+    stage_name?: string;
+    bio?: string;
+    country?: string;
+    primary_genre?: string;
+    label_id?: string;
+    label_name?: string;
+    avatar_url?: string;
+    header_url?: string;
+    instagram?: string;
+    twitter?: string;
+    website?: string;
+  }): Promise<any> {
+    return this.request('distributor.php?action=create_artist', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async updateDistributorArtist(payload: any): Promise<any> {
+    return this.request('distributor.php?action=update_artist', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async deleteDistributorArtist(artistId: string): Promise<any> {
+    return this.request('distributor.php?action=delete_artist', {
+      method: 'POST',
+      body: JSON.stringify({ artist_id: artistId }),
+    });
+  }
+
+  public async createDistributorLabel(payload: {
+    name: string;
+    contact_email?: string;
+    country?: string;
+  }): Promise<any> {
+    return this.request('distributor.php?action=create_label', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async updateDistributorLabel(payload: any): Promise<any> {
+    return this.request('distributor.php?action=update_label', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async deleteDistributorLabel(labelId: string): Promise<any> {
+    return this.request('distributor.php?action=delete_label', {
+      method: 'POST',
+      body: JSON.stringify({ label_id: labelId }),
+    });
+  }
+
+  public async createDistributorRelease(payload: {
+    title: string;
+    artist_id: string;
+    release_type?: 'single' | 'ep' | 'album';
+    genre?: string;
+    release_date?: string;
+    upc?: string;
+    label_id?: string;
+    cover_art_url?: string;
+  }): Promise<any> {
+    return this.request('distributor.php?action=create_release', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async updateDistributorTrack(payload: any): Promise<any> {
+    return this.request('distributor.php?action=update_track', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async deleteDistributorTrack(trackId: string): Promise<any> {
+    return this.request('distributor.php?action=delete_track', {
+      method: 'POST',
+      body: JSON.stringify({ track_id: trackId }),
+    });
+  }
+
+  public async submitArtistClaim(payload: {
+    artist_id: string;
+    claimant_name: string;
+    claimant_email: string;
+    evidence_type: string;
+    evidence_details: string;
+    proof_url?: string;
+  }): Promise<any> {
+    return this.request('distributor.php?action=submit_claim', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  // --- Record Label Portal Operations ---
+  public async getLabelDashboard(): Promise<any> {
+    return this.request('label.php?action=overview');
+  }
+
+  public async createLabelArtist(payload: {
+    name: string;
+    stage_name?: string;
+    bio?: string;
+    country?: string;
+    primary_genre?: string;
+    avatar_url?: string;
+    advance_amount?: number;
+    recouped_amount?: number;
+    roster_status?: string;
+  }): Promise<any> {
+    return this.request('label.php?action=create_artist', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async updateLabelArtist(payload: any): Promise<any> {
+    return this.request('label.php?action=update_artist', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async createLabelRelease(payload: {
+    title: string;
+    artist_id: string;
+    release_type?: string;
+    genre?: string;
+    release_date?: string;
+    upc?: string;
+    cover_art_url?: string;
+    status?: string;
+  }): Promise<any> {
+    return this.request('label.php?action=create_release', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  // --- Multipart Media Upload with Real Progress Tracking (Audio, Artwork, Video, Lyrics) ---
+  public uploadReleaseMultipartWithProgress(
+    formData: FormData,
+    onProgress?: (percent: number) => void
+  ): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${API_BASE}/upload.php`, true);
+
+      if (this.token) {
+        xhr.setRequestHeader('Authorization', `Bearer ${this.token}`);
+      }
+      if (this.csrfToken) {
+        xhr.setRequestHeader('X-CSRF-Token', this.csrfToken);
+      }
+
+      if (xhr.upload && onProgress) {
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            const pct = Math.round((event.loaded / event.total) * 100);
+            onProgress(pct);
+          }
+        };
+      }
+
+      xhr.onload = () => {
+        let data: any = null;
+        try {
+          data = JSON.parse(xhr.responseText);
+        } catch {}
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(data);
+        } else {
+          reject(new Error((data && data.message) || `Upload failed with status ${xhr.status}`));
+        }
+      };
+
+      xhr.onerror = () => {
+        reject(new Error('Network error occurred during file upload.'));
+      };
+
+      xhr.send(formData);
+    });
+  }
+
+  // --- Unified Platform & YouTube Music Discovery API ---
+  public async searchYouTubeMusic(
+    query: string,
+    filter: 'songs' | 'videos' | 'albums' | 'artists' | 'playlists' | 'all' = 'all',
+    extra?: { country?: string; year?: string; genre?: string }
+  ): Promise<{
+    status: string;
+    query: string;
+    results: {
+      songs: any[];
+      albums: any[];
+      artists: any[];
+      playlists: any[];
+    };
+  }> {
+    const params = new URLSearchParams({
+      action: 'search',
+      q: query,
+      filter,
+    });
+    if (extra?.country) params.set('country', extra.country);
+    if (extra?.year && extra.year !== 'All') params.set('year', extra.year);
+    if (extra?.genre && extra.genre !== 'All') params.set('genre', extra.genre);
+
+    return this.request(`youtube_music.php?${params.toString()}`);
+  }
+
+  public async getYouTubeMusicSuggestions(query: string): Promise<string[]> {
     try {
-      const res = await this.request<{
-        status: string;
-        suggestions: Array<{
-          text: string;
-          type: 'query' | 'song' | 'artist' | 'album';
-          artist?: string;
-          track_id?: string;
-          videoId?: string;
-          cover_url?: string;
-        }>;
-      }>(`/youtube_music.php?action=suggestions&q=${encodeURIComponent(query.trim())}`);
-      return res?.suggestions || [];
+      const res = await this.request<{ status: string; suggestions: string[] }>(
+        `youtube_music.php?action=suggestions&q=${encodeURIComponent(query)}`
+      );
+      return res.suggestions || [];
     } catch {
       return [];
     }
   }
 
-  // --- PUBLIC MUSIC DISCOVERY & SEARCH API ---
-  public async searchYouTubeMusic(
-    query: string,
-    filter?: 'songs' | 'artists' | 'albums' | 'playlists' | 'all',
-    options?: { country?: string; year?: string; genre?: string }
-  ) {
-
-    const params = new URLSearchParams();
-    params.append('action', 'search');
-    params.append('q', query);
-    if (filter && filter !== 'all') params.append('filter', filter);
-    if (options?.country) params.append('country', options.country);
-    if (options?.year && options.year !== 'All') params.append('year', options.year);
-    if (options?.genre && options.genre !== 'All') params.append('genre', options.genre);
-
-    return this.request<{
-      status: string;
-      query: string;
-      effective_query?: string;
-      country?: string;
-      year?: string;
-      genre?: string;
-      results: {
-        songs: any[];
-        artists: any[];
-        albums: any[];
-        playlists: any[];
-      };
-      total_count: number;
-    }>(`/youtube_music.php?${params.toString()}`);
+  public async getYouTubeMusicHome(): Promise<{
+    status: string;
+    shelves: Array<{ title: string; subtitle: string; items: any[] }>;
+  }> {
+    return this.request('youtube_music.php?action=home');
   }
 
-  public async getYouTubeMusicCharts() {
-    return this.request<{
-      status: string;
-      count: number;
-      charts: Array<{
-        id: string;
-        videoId?: string;
-        title: string;
-        artist: string;
-        cover_url: string;
-        shelf: string;
-        streams: number;
-      }>;
-    }>('/youtube_music.php?action=charts');
+  public async getYouTubeMusicCharts(country: string = 'US'): Promise<{
+    status: string;
+    country: string;
+    charts: any[];
+  }> {
+    return this.request(`youtube_music.php?action=charts&country=${encodeURIComponent(country)}`);
   }
 
-  public async getYouTubeMusicMoods() {
-    return this.request<{
-      status: string;
-      count: number;
-      moods_and_genres: Array<{
-        name: string;
-        browseId: string;
-        color: string;
-      }>;
-    }>('/youtube_music.php?action=moods');
+  public async getYouTubeMusicAlbum(browseId: string): Promise<any> {
+    return this.request(`youtube_music.php?action=album&browseId=${encodeURIComponent(browseId)}`);
   }
 
-  public async getYouTubeMusicLyrics(videoId: string) {
-    return this.request<{
-      status: string;
-      videoId: string;
-      lyrics: string;
-      source: string;
-    }>(`/youtube_music.php?action=lyrics&videoId=${encodeURIComponent(videoId)}`);
+  public async getYouTubeMusicPlaylist(browseId: string): Promise<any> {
+    return this.request(`youtube_music.php?action=playlist&browseId=${encodeURIComponent(browseId)}`);
   }
 
-  public async importYouTubeMusicTrack(trackData: {
+  public async getYouTubeMusicArtist(browseId: string, name: string = ''): Promise<any> {
+    return this.request(
+      `youtube_music.php?action=artist&browseId=${encodeURIComponent(browseId)}&name=${encodeURIComponent(name)}`
+    );
+  }
+
+  public async getYouTubeMusicLyrics(videoId: string): Promise<{ status: string; lyrics: string }> {
+    return this.request(`youtube_music.php?action=lyrics&videoId=${encodeURIComponent(videoId)}`);
+  }
+
+  public async importYouTubeMusicTrack(payload: {
     title: string;
     artist: string;
     album?: string;
     genre?: string;
     country?: string;
     release_year?: number;
-    release_date?: string;
     duration?: number;
     cover_url?: string;
-    audio_url?: string;
-    videoId?: string;
-    lyrics?: string;
+    videoId: string;
     license_status?: string;
     auto_publish?: boolean;
     force_resync?: boolean;
-  }) {
-    return this.request<{
-      status: string;
-      job_id?: string;
-      track_id?: string;
-      audio_method?: string;
-      file_size_bytes?: number;
-      message: string;
-      track?: Track;
-    }>('/youtube_music.php?action=import', {
+  }): Promise<any> {
+    return this.request('youtube_music.php?action=import', {
       method: 'POST',
-      body: JSON.stringify(trackData)
+      body: JSON.stringify({ ...payload, csrf_token: this.csrfToken }),
     });
   }
 
@@ -1015,57 +1250,41 @@ class ApiService {
     country?: string;
     license_status?: string;
     auto_publish?: boolean;
-    force_resync?: boolean;
-  }) {
-    return this.request<{
-      status: string;
-      batch_id: string;
-      imported_count: number;
-      skipped_count: number;
-      failed_count: number;
-      message: string;
-      results: any[];
-    }>('/youtube_music.php?action=bulk_import', {
+  }): Promise<any> {
+    return this.request('youtube_music.php?action=bulk_import', {
       method: 'POST',
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ ...payload, csrf_token: this.csrfToken }),
     });
   }
 
   public async importYouTubeMusicCollection(payload: {
     collection_type: 'album' | 'artist' | 'playlist';
     title: string;
-    artist?: string;
+    artist: string;
     cover_url?: string;
     description?: string;
     genre?: string;
     country?: string;
     license_status?: string;
     tracks: any[];
-  }) {
-    return this.request<{
-      status: string;
-      batch_id: string;
-      imported_count: number;
-      skipped_count: number;
-      playlist_id?: string;
-      message: string;
-    }>('/youtube_music.php?action=import_collection', {
+  }): Promise<any> {
+    return this.request('youtube_music.php?action=import_collection', {
       method: 'POST',
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ ...payload, csrf_token: this.csrfToken }),
     });
   }
 
-  public async retryImportJob(jobId: string) {
-    return this.request<{ status: string; message: string; result?: any }>('/youtube_music.php?action=retry_job', {
+  public async retryImportJob(jobId: string): Promise<any> {
+    return this.request('youtube_music.php?action=retry_job', {
       method: 'POST',
-      body: JSON.stringify({ job_id: jobId })
+      body: JSON.stringify({ job_id: jobId, csrf_token: this.csrfToken }),
     });
   }
 
-  public async cancelImportJob(jobId: string) {
-    return this.request<{ status: string; message: string }>('/youtube_music.php?action=cancel_job', {
+  public async cancelImportJob(jobId: string): Promise<any> {
+    return this.request('youtube_music.php?action=cancel_job', {
       method: 'POST',
-      body: JSON.stringify({ job_id: jobId })
+      body: JSON.stringify({ job_id: jobId, csrf_token: this.csrfToken }),
     });
   }
 
@@ -1080,184 +1299,80 @@ class ApiService {
     auto_publish?: boolean;
     license_status?: string;
     frequency?: string;
-  }) {
-    return this.request<{ status: string; message: string; schedule_id: string }>('/youtube_music.php?action=create_schedule', {
+  }): Promise<any> {
+    return this.request('youtube_music.php?action=create_schedule', {
       method: 'POST',
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ ...payload, csrf_token: this.csrfToken }),
     });
   }
 
-  public async toggleImportSchedule(scheduleId: string) {
-    return this.request<{ status: string; message: string }>('/youtube_music.php?action=toggle_schedule', {
+  public async runImportSchedule(scheduleId: string): Promise<any> {
+    return this.request('youtube_music.php?action=run_schedule', {
       method: 'POST',
-      body: JSON.stringify({ schedule_id: scheduleId })
+      body: JSON.stringify({ schedule_id: scheduleId, csrf_token: this.csrfToken }),
     });
   }
 
-  public async deleteImportSchedule(scheduleId: string) {
-    return this.request<{ status: string; message: string }>('/youtube_music.php?action=delete_schedule', {
+  public async toggleImportSchedule(scheduleId: string): Promise<any> {
+    return this.request('youtube_music.php?action=toggle_schedule', {
       method: 'POST',
-      body: JSON.stringify({ schedule_id: scheduleId })
+      body: JSON.stringify({ schedule_id: scheduleId, csrf_token: this.csrfToken }),
     });
   }
 
-  public async runImportSchedule(scheduleId: string) {
-    return this.request<{ status: string; imported_count: number; skipped_count: number; message: string }>('/youtube_music.php?action=run_schedule', {
+  public async deleteImportSchedule(scheduleId: string): Promise<any> {
+    return this.request('youtube_music.php?action=delete_schedule', {
       method: 'POST',
-      body: JSON.stringify({ schedule_id: scheduleId })
+      body: JSON.stringify({ schedule_id: scheduleId, csrf_token: this.csrfToken }),
     });
   }
 
-  public async syncAllStorage() {
-    return this.request<{ status: string; synced_count: number; storage: any; message: string }>('/youtube_music.php?action=sync_all_storage', {
+  public async syncAllStorage(): Promise<any> {
+    return this.request('youtube_music.php?action=sync_all_storage', {
       method: 'POST',
-      body: JSON.stringify({})
+      body: JSON.stringify({ csrf_token: this.csrfToken }),
     });
   }
 
-  public async uploadMediaFile(file: File, type: 'audio' | 'artwork' = 'audio', trackId?: string) {
+  public async uploadMediaFile(file: File, mediaType: 'audio' | 'artwork', trackId?: string): Promise<any> {
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('type', type);
-    if (trackId) formData.append('track_id', trackId);
-    if (this.csrfToken) formData.append('csrf_token', this.csrfToken);
+    formData.append('media_type', mediaType);
+    if (trackId) {
+      formData.append('track_id', trackId);
+    }
 
     const headers: Record<string, string> = {};
-    if (this.token) headers['Authorization'] = `Bearer ${this.token}`;
-    if (this.csrfToken) headers['X-CSRF-Token'] = this.csrfToken;
+    if (this.token) {
+      headers['Authorization'] = `Bearer ${this.token}`;
+    }
+    if (this.csrfToken) {
+      headers['X-CSRF-Token'] = this.csrfToken;
+    }
 
-    const response = await fetch(`${API_BASE}/upload.php`, {
+    const response = await fetch(`${API_BASE}/youtube_music.php?action=upload_media_file`, {
       method: 'POST',
       headers,
-      body: formData
+      body: formData,
     });
-    const data = await response.json();
+
+    const data = await response.json().catch(() => null);
     if (!response.ok) {
-      throw new Error(data.message || 'Upload failed');
+      throw new Error((data && data.message) || `Upload Error: ${response.status}`);
     }
-    return data as {
-      status: string;
-      message: string;
-      url: string;
-      track_id?: string;
-      size: number;
-      format: string;
-      type: string;
-    };
+    return data;
   }
 
-  public async getYouTubeMusicArtist(browseId: string, name?: string) {
-    const params = new URLSearchParams();
-    if (browseId) params.append('browseId', browseId);
-    if (name) params.append('name', name);
-    return this.request<{
-      status: string;
-      artist: {
-        name: string;
-        subscribers: string;
-        description: string;
-        avatar_url: string;
-      };
-      top_songs: Array<{
-        id: string;
-        videoId?: string;
-        title: string;
-        artist: string;
-        cover_url: string;
-        duration: number;
-        plays: string;
-      }>;
-      albums: Array<{
-        id: string;
-        browseId: string;
-        title: string;
-        artist: string;
-        year: string;
-        cover_url: string;
-      }>;
-      singles: Array<{
-        id: string;
-        browseId: string;
-        title: string;
-        artist: string;
-        year: string;
-        cover_url: string;
-      }>;
-    }>(`/youtube_music.php?action=artist&${params.toString()}`);
+  public async bulkUpdateAdminTracks(trackIds: string[], bulkAction: 'publish' | 'unpublish' | 'verify_license' | 'resync_audio' | 'delete'): Promise<any> {
+    return this.request('admin.php?action=bulk_update_tracks', {
+      method: 'POST',
+      body: JSON.stringify({ track_ids: trackIds, bulk_action: bulkAction, csrf_token: this.csrfToken }),
+    });
   }
 
-  public async getYouTubeMusicAlbum(browseId: string) {
-    return this.request<{
-      status: string;
-      album: {
-        id: string;
-        title: string;
-        artist: string;
-        year: string;
-        cover_url: string;
-        tracks: Array<{
-          id: string;
-          videoId?: string;
-          title: string;
-          artist: string;
-          duration_text?: string;
-          duration: number;
-          cover_url: string;
-        }>;
-      };
-    }>(`/youtube_music.php?action=album&browseId=${encodeURIComponent(browseId)}`);
-  }
-
-  public async getYouTubeMusicPlaylist(browseId: string) {
-    return this.request<{
-      status: string;
-      playlist: {
-        id: string;
-        title: string;
-        curator: string;
-        description: string;
-        cover_url: string;
-        tracks: Array<{
-          id: string;
-          videoId?: string;
-          title: string;
-          artist: string;
-          cover_url: string;
-          duration: number;
-        }>;
-      };
-    }>(`/youtube_music.php?action=playlist&browseId=${encodeURIComponent(browseId)}`);
-  }
-
-  // Fallback public music search
-  public async searchPublicMusic(query: string) {
-    return this.searchYouTubeMusic(query);
-  }
-
-  public async importPublicTrack(trackData: any) {
-    return this.importYouTubeMusicTrack(trackData);
-  }
-
-  // --- AUTOMATIC MEDIA-TO-METADATA SCANNER & MATCHER ---
-  public async getMediaScannerStatus() {
-    return this.request<{
-      status: string;
-      counts: {
-        total_scanned: number;
-        matched: number;
-        ambiguous: number;
-        unmatched: number;
-        unsupported: number;
-        error: number;
-        video_files: number;
-      };
-      run: any;
-      scan_directories: string[];
-      supported_audio: string[];
-      supported_video: string[];
-      high_conf_threshold: number;
-      ambiguous_threshold: number;
-    }>('/media_scanner.php?action=status');
+  // --- Media Scanner & Auto-Matching Admin APIs ---
+  public async getMediaScannerStatus(): Promise<any> {
+    return this.request('media_scanner.php?action=status');
   }
 
   public async getMediaScannerFiles(params: {
@@ -1266,81 +1381,54 @@ class ApiService {
     q?: string;
     page?: number;
     limit?: number;
-  } = {}) {
-    const sp = new URLSearchParams();
-    if (params.status) sp.set('status', params.status);
-    if (params.media_type) sp.set('media_type', params.media_type);
-    if (params.q) sp.set('q', params.q);
-    if (params.page) sp.set('page', String(params.page));
-    if (params.limit) sp.set('limit', String(params.limit));
-
-    return this.request<{
-      status: string;
-      files: any[];
-      total: number;
-      page: number;
-      limit: number;
-      total_pages: number;
-    }>(`/media_scanner.php?action=files&${sp.toString()}`);
+  } = {}): Promise<any> {
+    const qs = new URLSearchParams({ action: 'files' });
+    if (params.status) qs.set('status', params.status);
+    if (params.media_type) qs.set('media_type', params.media_type);
+    if (params.q) qs.set('q', params.q);
+    if (params.page) qs.set('page', String(params.page));
+    if (params.limit) qs.set('limit', String(params.limit));
+    return this.request(`media_scanner.php?${qs.toString()}`);
   }
 
-  public async startMediaScanNow(batchSize: number = 25) {
-    return this.request<{
-      status: string;
-      message: string;
-      batch: any;
-    }>(`/media_scanner.php?action=scan_now&batch_size=${batchSize}`, {
-      method: 'POST'
-    });
-  }
-
-  public async resumeMediaScan(batchSize: number = 25) {
-    return this.request<{
-      status: string;
-      message: string;
-      batch: any;
-    }>(`/media_scanner.php?action=resume_scan&batch_size=${batchSize}`, {
-      method: 'POST'
-    });
-  }
-
-  public async runMediaScanBatch(batchSize: number = 25) {
-    return this.request<{
-      status: string;
-      batch: any;
-    }>(`/media_scanner.php?action=scan_batch&batch_size=${batchSize}`, {
-      method: 'POST'
-    });
-  }
-
-  public async manualLinkMediaFile(fileId: string, trackId: string) {
-    return this.request<{
-      status: string;
-      message: string;
-      track: any;
-      file: any;
-    }>('/media_scanner.php?action=manual_link', {
+  public async startMediaScanNow(batchSize: number = 25): Promise<any> {
+    return this.request('media_scanner.php?action=scan_now', {
       method: 'POST',
-      body: JSON.stringify({ file_id: fileId, track_id: trackId })
+      body: JSON.stringify({ batch_size: batchSize, csrf_token: this.csrfToken }),
     });
   }
 
-  public async unlinkMediaFile(fileId: string) {
-    return this.request<{
-      status: string;
-      message: string;
-    }>('/media_scanner.php?action=unlink', {
+  public async resumeMediaScan(batchSize: number = 25): Promise<any> {
+    return this.request('media_scanner.php?action=resume_scan', {
       method: 'POST',
-      body: JSON.stringify({ file_id: fileId })
+      body: JSON.stringify({ batch_size: batchSize, csrf_token: this.csrfToken }),
     });
   }
 
-  public async searchCatalogForMediaMatch(q: string) {
-    return this.request<{
-      status: string;
-      tracks: any[];
-    }>(`/media_scanner.php?action=catalog_search&q=${encodeURIComponent(q)}`);
+  public async runMediaScanBatch(batchSize: number = 25): Promise<any> {
+    return this.request('media_scanner.php?action=scan_batch', {
+      method: 'POST',
+      body: JSON.stringify({ batch_size: batchSize, csrf_token: this.csrfToken }),
+    });
+  }
+
+  public async manualLinkMediaFile(fileId: string, trackId: string): Promise<any> {
+    return this.request('media_scanner.php?action=manual_link', {
+      method: 'POST',
+      body: JSON.stringify({ file_id: fileId, track_id: trackId, csrf_token: this.csrfToken }),
+    });
+  }
+
+  public async unlinkMediaFile(fileId: string): Promise<any> {
+    return this.request('media_scanner.php?action=unlink', {
+      method: 'POST',
+      body: JSON.stringify({ file_id: fileId, csrf_token: this.csrfToken }),
+    });
+  }
+
+  public async searchCatalogForMediaMatch(query: string): Promise<any> {
+    return this.request(`media_scanner.php?action=search_tracks&q=${encodeURIComponent(query)}`);
   }
 }
 
-export const api = new ApiService();
+export const api = new FlontmieApiService();

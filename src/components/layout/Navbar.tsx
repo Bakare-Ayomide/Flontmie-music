@@ -297,66 +297,71 @@ export const Navbar: React.FC<NavbarProps> = ({
           </span>
         </button>
 
-        {/* Persona Switcher Dropdown */}
-        <div className="relative">
-          <button
-            onClick={() => setIsPersonaMenuOpen(!isPersonaMenuOpen)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-neutral-900 border border-white/10 text-neutral-200 hover:bg-neutral-800 transition-colors text-xs font-medium"
-          >
-            <div className={`w-4 h-4 md:w-5 md:h-5 rounded-full flex items-center justify-center font-bold text-[10px] ${
-              currentPersona === 'admin' ? 'bg-amber-500/20 text-amber-400' : 'bg-red-600/20 text-red-400'
-            }`}>
-              {currentPersona[0].toUpperCase()}
-            </div>
-            <span className="hidden lg:inline font-semibold">{personaLabels[currentPersona].title}</span>
-            <ChevronDown className="w-3 h-3 text-neutral-400" />
-          </button>
-
-          {isPersonaMenuOpen && (
-            <>
-              <div
-                className="fixed inset-0 z-40"
-                onClick={() => setIsPersonaMenuOpen(false)}
-              />
-              <div className="absolute right-0 mt-2 w-72 rounded-xl bg-[#121212] border border-white/10 shadow-2xl p-1.5 z-50 animate-in fade-in zoom-in-95 duration-100">
-                <div className="px-3 py-2 border-b border-white/[0.06] mb-1">
-                  <p className="text-[11px] font-medium text-neutral-400 uppercase tracking-wider">Portals</p>
-                  <p className="text-xs text-neutral-200">Switch workspace</p>
-                </div>
-                {(['listener', 'artist', 'label', 'distributor'] as Persona[]).map((p) => {
-                  const item = personaLabels[p];
-                  const isSelected = currentPersona === p;
-                  return (
-                    <button
-                      key={p}
-                      onClick={() => {
-                        onSelectPersona(p);
-                        setIsPersonaMenuOpen(false);
-                      }}
-                      className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-left text-xs transition-colors ${
-                        isSelected
-                          ? 'bg-white/10 text-white font-medium'
-                          : 'text-neutral-300 hover:bg-white/[0.05] hover:text-white'
-                      }`}
-                    >
-                      <div className="flex flex-col">
-                        <span className="font-semibold text-white">{item.title}</span>
-                        <span className="text-[11px] text-neutral-400">{item.subtitle}</span>
-                      </div>
-                      {isSelected ? (
-                        <Check className="w-4 h-4 text-red-500 shrink-0" />
-                      ) : (
-                        <span className="text-[10px] text-neutral-500 border border-white/10 rounded px-1.5 py-0.5">
-                          {item.badge}
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
+        {/* Persona Switcher Dropdown (Only shown when user has access to multiple portals) */}
+        {currentUser && currentUser.role !== 'listener' && (
+          <div className="relative">
+            <button
+              onClick={() => setIsPersonaMenuOpen(!isPersonaMenuOpen)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-neutral-900 border border-white/10 text-neutral-200 hover:bg-neutral-800 transition-colors text-xs font-medium"
+            >
+              <div className={`w-4 h-4 md:w-5 md:h-5 rounded-full flex items-center justify-center font-bold text-[10px] ${
+                currentPersona === 'admin' ? 'bg-amber-500/20 text-amber-400' : 'bg-red-600/20 text-red-400'
+              }`}>
+                {currentPersona[0].toUpperCase()}
               </div>
-            </>
-          )}
-        </div>
+              <span className="hidden lg:inline font-semibold">{personaLabels[currentPersona].title}</span>
+              <ChevronDown className="w-3 h-3 text-neutral-400" />
+            </button>
+
+            {isPersonaMenuOpen && (
+              <>
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setIsPersonaMenuOpen(false)}
+                />
+                <div className="absolute right-0 mt-2 w-72 rounded-xl bg-[#121212] border border-white/10 shadow-2xl p-1.5 z-50 animate-in fade-in zoom-in-95 duration-100">
+                  <div className="px-3 py-2 border-b border-white/[0.06] mb-1">
+                    <p className="text-[11px] font-medium text-neutral-400 uppercase tracking-wider">Portals</p>
+                    <p className="text-xs text-neutral-200">Switch authorized workspace</p>
+                  </div>
+                  {(currentUser.role === 'admin'
+                    ? (['listener', 'artist', 'label', 'distributor', 'admin'] as Persona[])
+                    : (['listener', currentUser.role] as Persona[])
+                  ).map((p) => {
+                    const item = personaLabels[p];
+                    const isSelected = currentPersona === p;
+                    return (
+                      <button
+                        key={p}
+                        onClick={() => {
+                          onSelectPersona(p);
+                          setIsPersonaMenuOpen(false);
+                        }}
+                        className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-left text-xs transition-colors ${
+                          isSelected
+                            ? 'bg-white/10 text-white font-medium'
+                            : 'text-neutral-300 hover:bg-white/[0.05] hover:text-white'
+                        }`}
+                      >
+                        <div className="flex flex-col">
+                          <span className="font-semibold text-white">{item.title}</span>
+                          <span className="text-[11px] text-neutral-400">{item.subtitle}</span>
+                        </div>
+                        {isSelected ? (
+                          <Check className="w-4 h-4 text-red-500 shrink-0" />
+                        ) : (
+                          <span className="text-[10px] text-neutral-500 border border-white/10 rounded px-1.5 py-0.5">
+                            {item.badge}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+        )}
 
         {/* Auth / Profile Trigger */}
         {currentUser ? (

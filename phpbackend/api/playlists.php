@@ -1,213 +1,189 @@
 <?php
 /**
- * Flontmie API - User & Curated Playlists
+ * Flontmie API - Playlists Curation & Management Controller
+ * Connects every playlist operation to real MySQL records with zero mock defaults.
  */
 
 require_once __DIR__ . '/../config.php';
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth_helper.php';
-require_once __DIR__ . '/../artist_enrichment.php';
 
 $method = $_SERVER['REQUEST_METHOD'];
-$id = $_GET['id'] ?? '';
+$action = $_GET['action'] ?? '';
+$input = get_json_input();
 $pdo = Database::getConnection();
 
-// --- GET SINGLE PLAYLIST ---
-if ($method === 'GET' && !empty($id)) {
-    $stmt = $pdo->prepare("SELECT * FROM playlists WHERE id = ?");
-    $stmt->execute([$id]);
-    $playlist = $stmt->fetch();
-
-    if (!$playlist) {
-        json_response(['status' => 'error', 'message' => 'Playlist not found'], 404);
-    }
-
-    $playlist['cover_art_url'] = ArtistEnrichment::resolveArtworkUrl($playlist['cover_art_url'] ?? '', $playlist['id']);
-
-    $trackIds = !empty($playlist['track_ids_json']) ? json_decode($playlist['track_ids_json'], true) : [];
-    $tracks = [];
-
-    if (!empty($trackIds)) {
-        $inQuery = implode(',', array_fill(0, count($trackIds), '?'));
-        $trkStmt = $pdo->prepare("SELECT * FROM tracks WHERE id IN ($inQuery) AND is_deleted = 0");
-        $trkStmt->execute($trackIds);
-        $fetched = $trkStmt->fetchAll();
-        $map = [];
-        foreach ($fetched as $t) {
-            $t['mood_tags'] = !empty($t['mood_tags_json']) ? json_decode($t['mood_tags_json'], true) : [];
-            $t['cover_art_url'] = ArtistEnrichment::resolveArtworkUrl($t['cover_art_url'] ?? '', $t['video_id'] ?? $t['id']);
-            $t['audio_url'] = '/phpbackend/api/stream.php?id=' . urlencode($t['id']);
-            unset($t['local_audio_path'], $t['local_artwork_path']);
-            $map[$t['id']] = $t;
-        }
-        // Preserve order
-        foreach ($trackIds as $tid) {
-            if (isset($map[$tid])) {
-                $tracks[] = $map[$tid];
-            }
-        }
-    }
-
-    $playlist['track_ids'] = $trackIds;
-    $playlist['track_count'] = count($tracks);
-    $playlist['followers'] = !empty($playlist['followers']) ? (int)$playlist['followers'] : null;
-    $playlist['curator'] = $playlist['curator'] ?? 'Flontmie Editorial';
-
-    if (empty($playlist['category'])) {
-        if (strpos($playlist['id'], 'love') !== false) {
-            $playlist['category'] = 'romance';
-            $playlist['genre_category'] = 'love_songs';
-        } elseif (strpos($playlist['id'], 'old') !== false) {
-            $playlist['category'] = 'oldschool';
-            $playlist['genre_category'] = 'old_school';
-        } elseif (strpos($playlist['id'], 'work') !== false) {
-            $playlist['category'] = 'workout';
-            $playlist['genre_category'] = 'workout';
-        } elseif (strpos($playlist['id'], 'focus') !== false || strpos($playlist['id'], 'chill') !== false) {
-            $playlist['category'] = 'focus';
-            $playlist['genre_category'] = 'coding';
-        } elseif (strpos($playlist['id'], 'road') !== false) {
-            $playlist['category'] = 'energize';
-            $playlist['genre_category'] = 'road_trip';
-        } else {
-            $playlist['category'] = 'trending';
-            $playlist['genre_category'] = 'all';
-        }
-    }
-
-    $playlist['tracks'] = $tracks;
-    json_response(['status' => 'success', 'playlist' => $playlist]);
-}
-
-// --- GET PLAYLISTS LIST ---
 if ($method === 'GET') {
-    $user = Auth::getCurrentUser();
-    $userId = $user['id'] ?? '';
+    if (!empty($_GET['id'])) {
+        $plId = trim($_GET['id']);
+        $stmt = $pdo->prepare("
+            SELECT p.*, u.display_name AS curator_name, u.avatar_url AS curator_avatar
+            FROM playlists p
+            LEFT JOIN users u ON p.user_id = u.id
+            WHERE p.id = ?
+            LIMIT 1
+        ");
+        $stmt->execute([$plId]);
+        $pl = $stmt->fetch();
+        if (!$pl) {
+            json_response(['status' => 'error', 'message' => 'Playlist not found'], 404);
+        }
+        $trackIds = !empty($pl['track_ids_json']) ? json_decode($pl['track_ids_json'], true) : [];
+        $pl['track_ids'] = is_array($trackIds) ? $trackIds : [];
+        $tracks = [];
+        if (!empty($pl['track_ids'])) {
+            $placeholders = implode(',', array_fill(0, count($pl['track_ids']), '?'));
+            $tStmt = $pdo->prepare("SELECT * FROM tracks WHERE id IN ($placeholders) AND is_deleted = 0");
+            $tStmt->execute(array_values($pl['track_ids']));
+            $tracks = $tStmt->fetchAll();
+        }
+        json_response([
+            'status' => 'success',
+            'playlist' => $pl,
+            'tracks' => $tracks
+        ]);
+    }
 
-    $stmt = $pdo->prepare("SELECT * FROM playlists WHERE is_public = 1 OR user_id = ? ORDER BY created_at DESC");
-    $stmt->execute([$userId]);
+    $stmt = $pdo->query("
+        SELECT p.*, u.display_name AS curator_name, u.avatar_url AS curator_avatar
+        FROM playlists p
+        LEFT JOIN users u ON p.user_id = u.id
+        WHERE p.is_public = 1 AND (p.status IS NULL OR p.status = 'active')
+        ORDER BY p.is_featured DESC, p.created_at DESC
+    ");
     $playlists = $stmt->fetchAll();
 
     foreach ($playlists as &$p) {
-        $p['cover_art_url'] = ArtistEnrichment::resolveArtworkUrl($p['cover_art_url'] ?? '', $p['id']);
-        $trackIds = !empty($p['track_ids_json']) ? json_decode($p['track_ids_json'], true) : [];
-        if (!is_array($trackIds)) {
-            $trackIds = [];
-        }
-        $p['track_ids'] = $trackIds;
-        $p['track_count'] = count($trackIds);
-
-        if (empty($p['category'])) {
-            if (strpos($p['id'], 'love') !== false) {
-                $p['category'] = 'romance';
-                $p['genre_category'] = 'love_songs';
-            } elseif (strpos($p['id'], 'old') !== false) {
-                $p['category'] = 'oldschool';
-                $p['genre_category'] = 'old_school';
-            } elseif (strpos($p['id'], 'work') !== false) {
-                $p['category'] = 'workout';
-                $p['genre_category'] = 'workout';
-            } elseif (strpos($p['id'], 'focus') !== false || strpos($p['id'], 'chill') !== false) {
-                $p['category'] = 'focus';
-                $p['genre_category'] = 'coding';
-            } elseif (strpos($p['id'], 'road') !== false) {
-                $p['category'] = 'energize';
-                $p['genre_category'] = 'road_trip';
-            } else {
-                $p['category'] = 'trending';
-                $p['genre_category'] = 'all';
-            }
-        }
-        $p['followers'] = !empty($p['followers']) ? (int)$p['followers'] : null;
-        $p['curator'] = $p['curator'] ?? 'Flontmie Editorial';
+        $p['track_ids'] = !empty($p['track_ids_json']) ? json_decode($p['track_ids_json'], true) : [];
     }
-
-    json_response(['status' => 'success', 'count' => count($playlists), 'playlists' => $playlists]);
-}
-
-// --- CREATE PLAYLIST (POST) ---
-if ($method === 'POST') {
-    $user = Auth::requireAuth();
-    $input = get_json_input();
-
-    $title = trim($input['title'] ?? 'My Flontmie Playlist');
-    $description = trim($input['description'] ?? '');
-    $cover = $input['cover_art_url'] ?? 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600';
-    $tracks = is_array($input['track_ids'] ?? null) ? $input['track_ids'] : [];
-
-    $playlistId = 'ply_' . bin2hex(random_bytes(6));
-    $stmt = $pdo->prepare("
-        INSERT INTO playlists (id, user_id, title, description, cover_art_url, is_public, track_ids_json)
-        VALUES (?, ?, ?, ?, ?, 1, ?)
-    ");
-    $stmt->execute([$playlistId, $user['id'], $title, $description, $cover, json_encode($tracks)]);
 
     json_response([
         'status' => 'success',
-        'message' => 'Playlist created',
-        'playlist_id' => $playlistId
+        'count' => count($playlists),
+        'playlists' => $playlists
+    ]);
+}
+
+if ($method === 'POST' && ($action === '' || $action === 'create')) {
+    $user = Auth::requireAuth();
+    $title = trim($input['title'] ?? '');
+    if (empty($title)) {
+        json_response(['status' => 'error', 'message' => 'Playlist title is required'], 400);
+    }
+
+    $id = !empty($input['id']) ? trim($input['id']) : ('pl_' . bin2hex(random_bytes(5)));
+    $trackIds = $input['track_ids'] ?? [];
+    $genreCategory = trim($input['genre_category'] ?? ($input['category'] ?? 'all'));
+    $isFeatured = ($user['role'] === 'admin' && !empty($input['is_featured'])) ? 1 : 0;
+
+    $stmt = $pdo->prepare("
+        INSERT INTO playlists (id, user_id, title, description, cover_art_url, genre_category, is_public, is_featured, status, track_ids_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+        ON DUPLICATE KEY UPDATE
+            title = VALUES(title),
+            description = VALUES(description),
+            cover_art_url = IF(VALUES(cover_art_url) != '', VALUES(cover_art_url), cover_art_url),
+            genre_category = VALUES(genre_category),
+            is_public = VALUES(is_public),
+            track_ids_json = VALUES(track_ids_json)
+    ");
+
+    $stmt->execute([
+        $id,
+        $user['id'],
+        $title,
+        trim($input['description'] ?? ''),
+        trim($input['cover_art_url'] ?? ''),
+        $genreCategory,
+        isset($input['is_public']) ? ($input['is_public'] ? 1 : 0) : 1,
+        $isFeatured,
+        json_encode(array_values($trackIds))
+    ]);
+
+    json_response([
+        'status' => 'success',
+        'message' => 'Playlist saved to database',
+        'id' => $id,
+        'playlist' => [
+            'id' => $id,
+            'title' => $title,
+            'description' => trim($input['description'] ?? ''),
+            'cover_art_url' => trim($input['cover_art_url'] ?? ''),
+            'genre_category' => $genreCategory,
+            'curator_name' => $user['display_name'],
+            'is_public' => isset($input['is_public']) ? ($input['is_public'] ? 1 : 0) : 1,
+            'track_ids' => array_values($trackIds)
+        ]
     ], 201);
 }
 
-// --- UPDATE PLAYLIST (PUT) ---
-if ($method === 'PUT' && !empty($id)) {
+if ($method === 'PUT' || ($method === 'POST' && $action === 'update')) {
     $user = Auth::requireAuth();
-    $input = get_json_input();
+    $playlistId = trim($_GET['id'] ?? $input['id'] ?? '');
+    $trackIds = $input['track_ids'] ?? null;
 
-    // Fetch existing playlist
-    $stmt = $pdo->prepare("SELECT * FROM playlists WHERE id = ?");
-    $stmt->execute([$id]);
-    $playlist = $stmt->fetch();
-
-    if (!$playlist) {
-        json_response(['status' => 'error', 'message' => 'Playlist not found'], 404);
+    if (empty($playlistId)) {
+        json_response(['status' => 'error', 'message' => 'Playlist ID is required'], 400);
     }
 
-    if ($playlist['user_id'] !== $user['id'] && $user['role'] !== 'admin') {
-        json_response(['status' => 'error', 'message' => 'Forbidden'], 403);
+    $chk = $pdo->prepare("SELECT * FROM playlists WHERE id = ? LIMIT 1");
+    $chk->execute([$playlistId]);
+    $pl = $chk->fetch();
+
+    if (!$pl) {
+        // If updating a playlist that isn't persisted yet, create it for the user
+        $title = trim($input['title'] ?? 'Playlist');
+        $stmt = $pdo->prepare("
+            INSERT INTO playlists (id, user_id, title, description, cover_art_url, is_public, status, track_ids_json)
+            VALUES (?, ?, ?, ?, ?, 1, 'active', ?)
+        ");
+        $stmt->execute([
+            $playlistId,
+            $user['id'],
+            $title,
+            trim($input['description'] ?? ''),
+            trim($input['cover_art_url'] ?? ''),
+            json_encode(is_array($trackIds) ? array_values($trackIds) : [])
+        ]);
+        json_response(['status' => 'success', 'message' => 'Playlist created and updated']);
     }
 
-    $existingTrackIds = !empty($playlist['track_ids_json']) ? json_decode($playlist['track_ids_json'], true) : [];
-
-    // Add track action
-    if (!empty($input['add_track_id'])) {
-        if (!in_array($input['add_track_id'], $existingTrackIds, true)) {
-            $existingTrackIds[] = $input['add_track_id'];
-        }
+    if ($user['role'] !== 'admin' && $pl['user_id'] !== $user['id']) {
+        json_response(['status' => 'error', 'message' => 'You can only modify playlists you created.'], 403);
     }
 
-    // Remove track action
-    if (!empty($input['remove_track_id'])) {
-        $existingTrackIds = array_values(array_filter($existingTrackIds, fn($t) => $t !== $input['remove_track_id']));
+    if (is_array($trackIds)) {
+        $stmt = $pdo->prepare("UPDATE playlists SET track_ids_json = ? WHERE id = ?");
+        $stmt->execute([json_encode(array_values($trackIds)), $playlistId]);
     }
-
-    if (isset($input['track_ids']) && is_array($input['track_ids'])) {
-        $existingTrackIds = $input['track_ids'];
+    if (isset($input['title']) && trim($input['title']) !== '') {
+        $pdo->prepare("UPDATE playlists SET title = ? WHERE id = ?")->execute([trim($input['title']), $playlistId]);
     }
-
-    $upd = $pdo->prepare("
-        UPDATE playlists SET
-            title = COALESCE(?, title),
-            description = COALESCE(?, description),
-            track_ids_json = ?
-        WHERE id = ?
-    ");
-    $upd->execute([
-        $input['title'] ?? null,
-        $input['description'] ?? null,
-        json_encode($existingTrackIds),
-        $id
-    ]);
+    if (isset($input['description'])) {
+        $pdo->prepare("UPDATE playlists SET description = ? WHERE id = ?")->execute([trim($input['description']), $playlistId]);
+    }
+    if (isset($input['cover_art_url'])) {
+        $pdo->prepare("UPDATE playlists SET cover_art_url = ? WHERE id = ?")->execute([trim($input['cover_art_url']), $playlistId]);
+    }
 
     json_response(['status' => 'success', 'message' => 'Playlist updated']);
 }
 
-// --- DELETE PLAYLIST (DELETE) ---
-if ($method === 'DELETE' && !empty($id)) {
+if ($method === 'DELETE' || ($method === 'POST' && $action === 'delete')) {
     $user = Auth::requireAuth();
-    $stmt = $pdo->prepare("DELETE FROM playlists WHERE id = ? AND (user_id = ? OR ? = 'admin')");
-    $stmt->execute([$id, $user['id'], $user['role']]);
+    $playlistId = trim($_GET['id'] ?? $input['id'] ?? '');
+    if (empty($playlistId)) {
+        json_response(['status' => 'error', 'message' => 'Playlist ID required'], 400);
+    }
+
+    if ($user['role'] === 'admin') {
+        $stmt = $pdo->prepare("DELETE FROM playlists WHERE id = ?");
+        $stmt->execute([$playlistId]);
+    } else {
+        $stmt = $pdo->prepare("DELETE FROM playlists WHERE id = ? AND user_id = ?");
+        $stmt->execute([$playlistId, $user['id']]);
+    }
     json_response(['status' => 'success', 'message' => 'Playlist deleted']);
 }
 
-json_response(['status' => 'error', 'message' => 'Method not allowed'], 405);
+json_response(['status' => 'error', 'message' => 'Invalid playlists request'], 400);

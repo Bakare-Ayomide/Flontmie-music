@@ -1,1430 +1,1409 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Network, 
   Upload, 
-  Key, 
-  Edit3, 
   CheckCircle2, 
   Clock, 
-  ShieldCheck, 
+  ShieldAlert, 
   Plus, 
-  FileText, 
+  Music, 
   Users, 
-  Building2, 
-  Disc, 
-  Save,
-  Trash2,
-  ExternalLink,
-  Sparkles,
-  AlertTriangle,
-  FolderPlus,
-  Music2,
-  Check,
-  X,
-  FileCheck2,
-  Globe,
+  FileCheck, 
   Radio,
+  Disc,
+  Loader2,
   RefreshCw,
-  Search
+  Building2,
+  Video,
+  FileText,
+  Trash2,
+  Edit3,
+  Play,
+  X
 } from 'lucide-react';
 import { 
   DistributorIngestionItem, 
   DistributorAccessGrant, 
   Track, 
-  MusicGenre,
-  ArtistProfile,
-  AlbumRelease,
-  AlbumTrackItem
+  MusicGenre 
 } from '../../types/music';
-import { IMAGES } from '../../data/mockCatalog';
+import { api } from '../../services/api';
+import { resolveArtworkUrl, handleImageError } from '../../utils/artwork';
 
 interface DistributorDashboardProps {
   ingestions: DistributorIngestionItem[];
   accessGrants: DistributorAccessGrant[];
-  onUploadSongToFlontmie: (newSong: Partial<Track>) => void;
-  onModifySongOnFlontmie: (trackId: string, updates: Partial<Track>) => void;
-  onDeleteSongFromFlontmie?: (trackId: string) => void;
-  tracks: Track[];
-  artistProfiles: Record<string, ArtistProfile>;
-  onCreateArtistProfile: (artist: ArtistProfile) => void;
-  onUpdateArtistProfile: (artistId: string, updates: Partial<ArtistProfile>) => void;
-  onViewArtistPublicPage: (artistId: string) => void;
+  onIngestNewTrack: (item: DistributorIngestionItem, newTrack?: Track) => void;
+  onToggleGrantAccess: (grantId: string) => void;
+  onPlayTrack: (track: Track) => void;
+  allTracks: Track[];
 }
 
 export const DistributorDashboard: React.FC<DistributorDashboardProps> = ({
-  ingestions,
-  accessGrants,
-  onUploadSongToFlontmie,
-  onModifySongOnFlontmie,
-  onDeleteSongFromFlontmie,
-  tracks,
-  artistProfiles,
-  onCreateArtistProfile,
-  onUpdateArtistProfile,
-  onViewArtistPublicPage,
+  onIngestNewTrack,
+  onPlayTrack,
 }) => {
-  const [activeTab, setActiveTab] = useState<'artists' | 'releases' | 'catalog' | 'access' | 'modify'>('artists');
-  const [grants, setGrants] = useState<DistributorAccessGrant[]>(accessGrants);
-  const [items, setItems] = useState<DistributorIngestionItem[]>(ingestions);
+  const [activeTab, setActiveTab] = useState<'upload' | 'artists' | 'labels' | 'catalog' | 'claims'>('upload');
 
-  // Selected distributor identity
-  const [distributorName, setDistributorName] = useState<string>('TuneCore Direct');
+  // Real Backend State Scoped to this Authorized Distributor
+  const [distributorInfo, setDistributorInfo] = useState<{ id: string; name: string; status: string } | null>(null);
+  const [dbStats, setDbStats] = useState<{
+    managed_artists_count: number;
+    managed_labels_count: number;
+    ingested_tracks_count: number;
+    ingested_albums_count: number;
+    total_streams: number;
+    pending_claims_count: number;
+  } | null>(null);
+  const [dbArtists, setDbArtists] = useState<any[]>([]);
+  const [dbLabels, setDbLabels] = useState<any[]>([]);
+  const [dbAlbums, setDbAlbums] = useState<any[]>([]);
+  const [dbTracks, setDbTracks] = useState<any[]>([]);
+  const [dbClaims, setDbClaims] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
-  // --- ARTIST MANAGEMENT STATE ---
-  const [isCreateArtistModalOpen, setIsCreateArtistModalOpen] = useState(false);
-  const [artistSearch, setArtistSearch] = useState('');
+  // Multipart Release Upload Form (Audio + Cover + Video + Lyrics)
+  const [trackTitle, setTrackTitle] = useState('');
+  const [selectedArtistId, setSelectedArtistId] = useState('');
+  const [customArtistName, setCustomArtistName] = useState('');
+  const [selectedLabelId, setSelectedLabelId] = useState('');
+  const [albumName, setAlbumName] = useState('');
+  const [releaseType, setReleaseType] = useState<'single' | 'ep' | 'album'>('single');
+  const [genre, setGenre] = useState<MusicGenre>('Afrobeats');
+  const [country, setCountry] = useState('US');
+  const [releaseDate, setReleaseDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [isrc, setIsrc] = useState('');
+  const [upc, setUpc] = useState('');
+  const [bpm, setBpm] = useState(120);
+  const [explicit, setExplicit] = useState(false);
+  const [lyricsText, setLyricsText] = useState('');
+  const [audioFile, setAudioFile] = useState<File | null>(null);
+  const [coverFile, setCoverFile] = useState<File | null>(null);
+  const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [lyricsFile, setLyricsFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number>(0);
+
+  // Create Artist Form State
   const [newArtistName, setNewArtistName] = useState('');
-  const [newArtistAvatar, setNewArtistAvatar] = useState(IMAGES.synthwave);
-  const [newArtistBanner, setNewArtistBanner] = useState(IMAGES.synthwave);
-  const [newArtistBio, setNewArtistBio] = useState('');
-  const [newArtistGenre, setNewArtistGenre] = useState<string>('Afrobeat');
+  const [newArtistStage, setNewArtistStage] = useState('');
+  const [newArtistGenre, setNewArtistGenre] = useState('Afrobeats');
   const [newArtistCountry, setNewArtistCountry] = useState('US');
-  const [newArtistClaimStatus, setNewArtistClaimStatus] = useState<ArtistProfile['claimedStatus']>('Verified');
-  const [newArtistInstagram, setNewArtistInstagram] = useState('');
-  const [newArtistTwitter, setNewArtistTwitter] = useState('');
-  const [newArtistSpotify, setNewArtistSpotify] = useState('');
-  const [newArtistYouTube, setNewArtistYouTube] = useState('');
-  const [artistSuccessNotice, setArtistSuccessNotice] = useState<string | null>(null);
+  const [newArtistLabelId, setNewArtistLabelId] = useState('');
+  const [newArtistAvatar, setNewArtistAvatar] = useState('');
+  const [newArtistBio, setNewArtistBio] = useState('');
+  const [creatingArtist, setCreatingArtist] = useState(false);
+  const [editingArtist, setEditingArtist] = useState<any | null>(null);
 
-  // --- RELEASES & ALBUM MANAGEMENT STATE ---
-  const [selectedArtistForRelease, setSelectedArtistForRelease] = useState<string>(
-    Object.keys(artistProfiles)[0] || 'artist-nova'
-  );
-  const [isCreateReleaseModalOpen, setIsCreateReleaseModalOpen] = useState(false);
-  const [releaseTitle, setReleaseTitle] = useState('');
-  const [releaseType, setReleaseType] = useState<'Single' | 'EP' | 'Album'>('Single');
-  const [releaseGenre, setReleaseGenre] = useState<MusicGenre>('afrobeat');
-  const [releaseSubgenre, setReleaseSubgenre] = useState('Afro-Fusion');
-  const [releaseLabel, setReleaseLabel] = useState('Astral Horizon Records');
-  const [releaseUpc, setReleaseUpc] = useState(`8401928${Math.floor(10000 + Math.random() * 90000)}`);
-  const [releaseDate, setReleaseDate] = useState(new Date().toISOString().split('T')[0]);
-  const [releasePreorderDate, setReleasePreorderDate] = useState('');
-  const [audioFormat, setAudioFormat] = useState<'24-bit FLAC (Lossless)' | 'WAV 48kHz / 24-bit' | 'MP3 320kbps CBR'>('24-bit FLAC (Lossless)');
-  const [releaseCoverUrl, setReleaseCoverUrl] = useState(IMAGES.partymix);
-  
-  // Tracklist builder for the new release
-  const [releaseTracks, setReleaseTracks] = useState<AlbumTrackItem[]>([
-    {
-      id: `trk-${Date.now()}-1`,
-      trackNumber: 1,
-      title: '',
-      duration: 210,
-      isrc: `US-FLN-26-${Math.floor(10000 + Math.random() * 90000)}`,
-      isExplicit: false,
-      audioFileName: 'master_track_01.flac',
-      producer: 'SoundGate Lab',
-      composer: 'Lead Composer',
-      bpm: 118,
-      keyScale: 'C Major',
-    },
-  ]);
-  const [validationErrors, setValidationErrors] = useState<string[]>([]);
-  const [releaseNotice, setReleaseNotice] = useState<string | null>(null);
+  // Create Record Label Form State
+  const [newLabelName, setNewLabelName] = useState('');
+  const [newLabelEmail, setNewLabelEmail] = useState('');
+  const [newLabelCountry, setNewLabelCountry] = useState('US');
+  const [creatingLabel, setCreatingLabel] = useState(false);
 
-  // Safeguarded Delete modal
-  const [itemToDelete, setItemToDelete] = useState<{ id: string; title: string; type: 'track' | 'release' } | null>(null);
+  // Edit Track Modal State
+  const [editingTrack, setEditingTrack] = useState<any | null>(null);
 
-  // --- QUICK MODIFY TRACK STATE ---
-  const [selectedTrackToModify, setSelectedTrackToModify] = useState<string>(tracks[0]?.id || '');
-  const [modifiedTitle, setModifiedTitle] = useState('');
-  const [modifiedGenre, setModifiedGenre] = useState<MusicGenre>('afrobeat');
-  const [modifySuccess, setModifySuccess] = useState(false);
+  // Artist Claim Submission Form State
+  const [claimArtistId, setClaimArtistId] = useState('');
+  const [claimantName, setClaimantName] = useState('');
+  const [claimantEmail, setClaimantEmail] = useState('');
+  const [evidenceType, setEvidenceType] = useState('Distribution Agreement & ISRC Ownership');
+  const [evidenceDetails, setEvidenceDetails] = useState('');
+  const [proofUrl, setProofUrl] = useState('');
+  const [submittingClaim, setSubmittingClaim] = useState(false);
 
-  // --- ACCESS GRANT STATE ---
-  const [grantEntityName, setGrantEntityName] = useState('');
-  const [grantEntityType, setGrantEntityType] = useState<'Artist' | 'Record Label'>('Artist');
-  const [grantCanAlbums, setGrantCanAlbums] = useState(true);
-  const [grantMaxReleases, setGrantMaxReleases] = useState(25);
-
-  const artistList = Object.values(artistProfiles);
-
-  const filteredArtists = artistList.filter((a) =>
-    a.name.toLowerCase().includes(artistSearch.toLowerCase()) ||
-    (a.primaryGenre && a.primaryGenre.toLowerCase().includes(artistSearch.toLowerCase())) ||
-    (a.country && a.country.toLowerCase().includes(artistSearch.toLowerCase()))
-  );
-
-  // Add a track to the album release tracklist
-  const handleAddTrackToRelease = () => {
-    const nextNumber = releaseTracks.length + 1;
-    setReleaseTracks([
-      ...releaseTracks,
-      {
-        id: `trk-${Date.now()}-${nextNumber}`,
-        trackNumber: nextNumber,
-        title: '',
-        duration: 195,
-        isrc: `US-FLN-26-${Math.floor(10000 + Math.random() * 90000)}`,
-        isExplicit: false,
-        audioFileName: `master_track_0${nextNumber}.flac`,
-        producer: 'SoundGate Lab',
-        composer: 'Lead Composer',
-        bpm: 120,
-        keyScale: 'A Minor',
-      },
-    ]);
+  const notify = (type: 'success' | 'error', message: string) => {
+    setFeedback({ type, message });
+    setTimeout(() => setFeedback(null), 6000);
   };
 
-  const handleRemoveTrackFromRelease = (index: number) => {
-    if (releaseTracks.length <= 1) return;
-    const updated = releaseTracks.filter((_, i) => i !== index).map((t, idx) => ({
-      ...t,
-      trackNumber: idx + 1,
-    }));
-    setReleaseTracks(updated);
-  };
-
-  const handleUpdateReleaseTrack = (index: number, updates: Partial<AlbumTrackItem>) => {
-    setReleaseTracks((prev) =>
-      prev.map((t, i) => (i === index ? { ...t, ...updates } : t))
-    );
-  };
-
-  // Validation function for releases
-  const validateRelease = () => {
-    const errors: string[] = [];
-    if (!releaseTitle.trim()) {
-      errors.push('Release title is required.');
-    }
-    if (!releaseUpc.trim()) {
-      errors.push('UPC / Barcode is required for platform ingestion.');
-    }
-    releaseTracks.forEach((t, i) => {
-      if (!t.title.trim()) {
-        errors.push(`Track #${i + 1} must have a title.`);
+  const fetchDistributorPortal = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await api.getDistributorDashboard();
+      if (res && res.status === 'success') {
+        setDistributorInfo(res.distributor || null);
+        setDbStats(res.stats || null);
+        const artists = res.artists || [];
+        const labels = res.labels || [];
+        setDbArtists(artists);
+        setDbLabels(labels);
+        setDbAlbums(res.albums || []);
+        setDbTracks(res.tracks || []);
+        setDbClaims(res.claims || []);
+        if (artists.length > 0 && !selectedArtistId) {
+          setSelectedArtistId(artists[0].id);
+        }
+        if (artists.length > 0 && !claimArtistId) {
+          setClaimArtistId(artists[0].id);
+        }
       }
-      if (!t.isrc.trim()) {
-        errors.push(`Track #${i + 1} is missing a valid ISRC code.`);
-      }
-    });
-    return errors;
-  };
+    } catch (err: any) {
+      notify('error', err?.message || 'Failed to load distributor portal data.');
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedArtistId, claimArtistId]);
 
-  // Submit Release (Draft vs Submit for Review vs Live)
-  const handleSubmitRelease = (status: 'draft' | 'under_review' | 'live') => {
-    const errs = validateRelease();
-    if (errs.length > 0) {
-      setValidationErrors(errs);
+  useEffect(() => {
+    fetchDistributorPortal();
+  }, [fetchDistributorPortal]);
+
+  // 1. Upload Audio, Cover, Video & Lyrics to MySQL & Server Storage
+  const handleDirectUpload = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!trackTitle.trim()) {
+      notify('error', 'Track title is required.');
       return;
     }
-    setValidationErrors([]);
+    if (!selectedArtistId && !customArtistName.trim()) {
+      notify('error', 'Please select an artist from your roster or enter a new artist name.');
+      return;
+    }
+    if (!audioFile && !videoFile) {
+      notify('error', 'Please select a master audio file (.mp3, .wav, .flac, .m4a) or music video file (.mp4, .webm).');
+      return;
+    }
 
-    const artistObj = artistProfiles[selectedArtistForRelease] || artistList[0];
+    setUploading(true);
+    setUploadProgress(0);
 
-    // Ingest all tracks into live catalog if status is 'live' or 'under_review'
-    releaseTracks.forEach((trk) => {
-      const fullTrack: Track = {
-        id: `track-${Date.now()}-${trk.trackNumber}`,
-        title: trk.title.trim(),
-        artist: artistObj.name,
-        artistId: artistObj.id,
-        album: releaseTitle.trim(),
-        coverUrl: releaseCoverUrl,
-        duration: trk.duration || 210,
-        genre: releaseGenre,
-        bpm: trk.bpm || 120,
-        moods: ['energize'],
-        streams: 1,
-        likes: 1,
-        isExplicit: trk.isExplicit,
-        releaseDate: releaseDate,
-        isrc: trk.isrc,
-        upc: releaseUpc,
-        label: releaseLabel,
-        distributor: distributorName,
-        status: status === 'draft' ? 'review' : 'active',
-        featuredOnHome: status === 'live',
-      };
+    try {
+      const formData = new FormData();
+      formData.append('title', trackTitle.trim());
+      if (selectedArtistId && selectedArtistId !== '__new__') {
+        formData.append('artist_id', selectedArtistId);
+        const foundArtist = dbArtists.find((a) => a.id === selectedArtistId);
+        if (foundArtist) {
+          formData.append('artist_name', foundArtist.name);
+        }
+      } else {
+        formData.append('artist_name', customArtistName.trim());
+      }
 
-      onUploadSongToFlontmie(fullTrack);
+      if (selectedLabelId) {
+        formData.append('label_id', selectedLabelId);
+        const foundLabel = dbLabels.find((l) => l.id === selectedLabelId);
+        if (foundLabel) {
+          formData.append('label_name', foundLabel.name);
+        }
+      }
 
-      const newIngestion: DistributorIngestionItem = {
-        id: `ing-${Date.now()}-${trk.trackNumber}`,
-        trackTitle: trk.title.trim(),
-        artistName: artistObj.name,
-        artistId: artistObj.id,
-        labelName: releaseLabel,
-        isrc: trk.isrc,
-        upc: releaseUpc,
-        genre: releaseGenre,
-        releaseDate: releaseDate,
-        flontmieStatus: status === 'live' ? 'Live on Flontmie' : status === 'under_review' ? 'Ingestion QA' : 'Metadata Processing',
-        grantedUploadAccess: true,
-        uploadedByDistributor: distributorName,
-        audioQuality: 'Lossless Hi-Res',
-      };
-      setItems((prev) => [newIngestion, ...prev]);
-    });
+      formData.append('album_name', albumName.trim() || `${trackTitle.trim()} - Single`);
+      formData.append('release_type', releaseType);
+      formData.append('genre', genre);
+      formData.append('country', country.trim().toUpperCase() || 'US');
+      formData.append('release_date', releaseDate);
+      formData.append('isrc', isrc.trim());
+      formData.append('upc', upc.trim());
+      formData.append('bpm', String(bpm || 120));
+      formData.append('explicit', explicit ? '1' : '0');
+      formData.append('lyrics', lyricsText.trim());
 
-    setReleaseNotice(`Release "${releaseTitle}" successfully processed (${status.toUpperCase()}) with ${releaseTracks.length} track(s)!`);
-    setTimeout(() => {
-      setReleaseNotice(null);
-      setIsCreateReleaseModalOpen(false);
-      setReleaseTitle('');
-      setReleaseTracks([
-        {
-          id: `trk-${Date.now()}-1`,
-          trackNumber: 1,
-          title: '',
-          duration: 210,
-          isrc: `US-FLN-26-${Math.floor(10000 + Math.random() * 90000)}`,
-          isExplicit: false,
-          audioFileName: 'master_track_01.flac',
-          producer: 'SoundGate Lab',
-          composer: 'Lead Composer',
-          bpm: 118,
-          keyScale: 'C Major',
-        },
-      ]);
-    }, 1800);
+      if (audioFile) {
+        formData.append('audio_file', audioFile);
+      }
+      if (coverFile) {
+        formData.append('cover_file', coverFile);
+      }
+      if (videoFile) {
+        formData.append('video_file', videoFile);
+      }
+      if (lyricsFile) {
+        formData.append('lyrics_file', lyricsFile);
+      }
+
+      const res = await api.uploadReleaseMultipartWithProgress(formData, (pct) => {
+        setUploadProgress(pct);
+      });
+
+      if (res && res.status === 'success' && res.track) {
+        const mapped = api.mapDbTrack(res.track);
+        onIngestNewTrack(
+          {
+            id: mapped.id,
+            trackTitle: mapped.title,
+            artistName: mapped.artist,
+            artistId: mapped.artistId,
+            labelName: mapped.label,
+            isrc: mapped.isrc,
+            upc: mapped.upc,
+            genre: mapped.genre,
+            releaseDate: mapped.releaseDate,
+            flontmieStatus: 'Live on Flontmie',
+            grantedUploadAccess: true,
+            uploadedByDistributor: distributorInfo?.name || 'Authorized Distributor',
+            audioQuality: 'Lossless Hi-Res',
+          },
+          mapped
+        );
+
+        notify('success', res.message || `Uploaded "${mapped.title}" by ${mapped.artist}.`);
+        setTrackTitle('');
+        setCustomArtistName('');
+        setAlbumName('');
+        setIsrc('');
+        setUpc('');
+        setLyricsText('');
+        setAudioFile(null);
+        setCoverFile(null);
+        setVideoFile(null);
+        setLyricsFile(null);
+        setUploadProgress(0);
+        fetchDistributorPortal();
+      }
+    } catch (err: any) {
+      notify('error', err?.message || 'Upload failed.');
+    } finally {
+      setUploading(false);
+    }
   };
 
-  // Create Artist Profile Handler
-  const handleCreateArtistSubmit = (e: React.FormEvent) => {
+  // 2. Create Artist Profile in Roster
+  const handleCreateArtist = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newArtistName.trim()) return;
-
-    const uniqueId = `artist-${newArtistName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now().toString().slice(-4)}`;
-
-    const newProfile: ArtistProfile = {
-      id: uniqueId,
-      name: newArtistName.trim(),
-      avatarUrl: newArtistAvatar || IMAGES.synthwave,
-      headerUrl: newArtistBanner || IMAGES.synthwave,
-      bio: newArtistBio.trim() || `${newArtistName.trim()} is an official recording artist.`,
-      verified: true,
-      monthlyListeners: 84000,
-      totalStreams: 120000,
-      followers: 14500,
-      label: releaseLabel,
-      topTracks: [],
-      country: newArtistCountry,
-      primaryGenre: newArtistGenre,
-      distributorId: `dist-${Date.now()}`,
-      distributorName: distributorName,
-      claimedStatus: newArtistClaimStatus,
-      socialLinks: {
-        instagram: newArtistInstagram,
-        twitter: newArtistTwitter,
-        spotify: newArtistSpotify,
-        youtube: newArtistYouTube,
-      },
-    };
-
-    onCreateArtistProfile(newProfile);
-    setArtistSuccessNotice(`Artist page for "${newArtistName}" created with ID ${uniqueId}!`);
-    setTimeout(() => {
-      setArtistSuccessNotice(null);
-      setIsCreateArtistModalOpen(false);
+    setCreatingArtist(true);
+    try {
+      const selectedLabel = dbLabels.find((l) => l.id === newArtistLabelId);
+      const res = await api.createDistributorArtist({
+        name: newArtistName.trim(),
+        stage_name: newArtistStage.trim() || newArtistName.trim(),
+        primary_genre: newArtistGenre,
+        country: newArtistCountry.trim().toUpperCase() || 'US',
+        label_id: newArtistLabelId || undefined,
+        label_name: selectedLabel?.name || undefined,
+        avatar_url: newArtistAvatar.trim(),
+        bio: newArtistBio.trim(),
+      });
+      notify('success', res.message || `Created artist profile "${newArtistName}".`);
       setNewArtistName('');
+      setNewArtistStage('');
+      setNewArtistAvatar('');
       setNewArtistBio('');
-    }, 1500);
-  };
-
-  const handleConfirmDelete = () => {
-    if (!itemToDelete) return;
-    if (itemToDelete.type === 'track') {
-      if (onDeleteSongFromFlontmie) {
-        onDeleteSongFromFlontmie(itemToDelete.id);
-      }
-      setItems((prev) => prev.filter((i) => i.id !== itemToDelete.id));
+      fetchDistributorPortal();
+    } catch (err: any) {
+      notify('error', err?.message || 'Failed to create artist.');
+    } finally {
+      setCreatingArtist(false);
     }
-    setItemToDelete(null);
   };
 
-  const handleModifySubmit = (e: React.FormEvent) => {
+  // 3. Create Record Label under Distributor
+  const handleCreateLabel = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedTrackToModify) return;
-
-    const updates: Partial<Track> = {};
-    if (modifiedTitle.trim()) updates.title = modifiedTitle.trim();
-    if (modifiedGenre) updates.genre = modifiedGenre;
-
-    onModifySongOnFlontmie(selectedTrackToModify, updates);
-    setModifySuccess(true);
-    setTimeout(() => setModifySuccess(false), 2000);
+    if (!newLabelName.trim()) return;
+    setCreatingLabel(true);
+    try {
+      const res = await api.createDistributorLabel({
+        name: newLabelName.trim(),
+        contact_email: newLabelEmail.trim(),
+        country: newLabelCountry.trim().toUpperCase() || 'US',
+      });
+      notify('success', res.message || `Created record label "${newLabelName}".`);
+      setNewLabelName('');
+      setNewLabelEmail('');
+      fetchDistributorPortal();
+    } catch (err: any) {
+      notify('error', err?.message || 'Failed to create record label.');
+    } finally {
+      setCreatingLabel(false);
+    }
   };
 
-  const handleAddAccessGrant = (e: React.FormEvent) => {
+  // 4. Submit Artist Verification Claim
+  const handleSubmitClaim = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!grantEntityName.trim()) return;
-
-    const newGrant: DistributorAccessGrant = {
-      id: `grant-${Date.now()}`,
-      entityName: grantEntityName.trim(),
-      entityType: grantEntityType,
-      distributorName: distributorName,
-      canUploadTracks: true,
-      canUploadAlbums: grantCanAlbums,
-      canModifyLiveMetadata: true,
-      maxMonthlyReleases: Number(grantMaxReleases),
-      status: 'Active',
-    };
-
-    setGrants([newGrant, ...grants]);
-    setGrantEntityName('');
+    if (!claimArtistId || !claimantName.trim() || !claimantEmail.trim()) return;
+    setSubmittingClaim(true);
+    try {
+      const res = await api.submitArtistClaim({
+        artist_id: claimArtistId,
+        claimant_name: claimantName.trim(),
+        claimant_email: claimantEmail.trim(),
+        evidence_type: evidenceType,
+        evidence_details: evidenceDetails.trim(),
+        proof_url: proofUrl.trim(),
+      });
+      notify('success', res.message || 'Verification claim submitted.');
+      setClaimantName('');
+      setClaimantEmail('');
+      setEvidenceDetails('');
+      setProofUrl('');
+      fetchDistributorPortal();
+    } catch (err: any) {
+      notify('error', err?.message || 'Failed to submit claim.');
+    } finally {
+      setSubmittingClaim(false);
+    }
   };
 
   return (
-    <div className="space-y-8 pb-28 animate-in fade-in duration-200">
-      {/* Distributor Header (NO play or wave icons) */}
-      <div className="p-6 md:p-8 rounded-2xl bg-neutral-900/60 border border-white/[0.08] flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
-        <div className="flex items-center gap-4">
-          <div className="w-16 h-16 rounded-2xl bg-purple-600/20 text-purple-400 border border-purple-500/30 flex items-center justify-center shrink-0 shadow-lg">
-            <Network className="w-8 h-8" />
+    <div className="space-y-8 pb-24 animate-in fade-in duration-200">
+      {/* Distributor Portal Header */}
+      <div className="p-6 md:p-8 rounded-2xl bg-gradient-to-r from-neutral-900 via-neutral-900 to-purple-950/40 border border-white/[0.08] flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+        <div className="space-y-2">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-purple-500/15 border border-purple-500/30 text-purple-300 text-xs font-semibold">
+            <Network className="w-3.5 h-3.5" />
+            <span>Authorized Music Distributor Portal</span>
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-purple-400 uppercase tracking-wider">
-                Distributor Direct Gateway
-              </span>
-              <span aria-hidden="true" className="text-neutral-500">·</span>
-              <span className="text-xs text-neutral-400">Distributing onto Platform</span>
-            </div>
-            <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight mt-0.5">
-              TuneCore · CD Baby · Ditto Distributor Portal
-            </h1>
-            <p className="text-xs text-neutral-400 mt-1 max-w-xl">
-              Create and manage artist pages, ingest albums &amp; singles, grant upload rights, and manage live music metadata.
-            </p>
-          </div>
+          <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight">
+            {distributorInfo?.name || 'Distributor Operations'}
+          </h1>
+          <p className="text-xs sm:text-sm text-neutral-400 max-w-2xl">
+            Create and manage your authorized artists and record labels, upload master audio, music videos, artwork, and synced lyrics files, and manage releases created under your distributor account.
+          </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            onClick={() => setIsCreateArtistModalOpen(true)}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs tracking-wide shadow-lg shadow-purple-600/30 transition-all hover:scale-[1.02] active:scale-[0.98]"
-          >
-            <Users className="w-4 h-4" />
-            <span>Create Artist Page</span>
-          </button>
+        <button
+          onClick={fetchDistributorPortal}
+          className="px-4 py-2 rounded-xl bg-white/[0.06] hover:bg-white/10 border border-white/10 text-xs font-semibold text-white flex items-center gap-2 cursor-pointer shrink-0"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-purple-400' : ''}`} />
+          <span>Sync Roster & Catalog</span>
+        </button>
+      </div>
 
-          <button
-            onClick={() => setIsCreateReleaseModalOpen(true)}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white text-black hover:bg-neutral-200 font-semibold text-xs tracking-wide shadow-lg transition-all hover:scale-[1.02] active:scale-[0.98]"
-          >
-            <FolderPlus className="w-4 h-4" />
-            <span>New Album / Single</span>
-          </button>
+      {/* Real Database Statistics Grid */}
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        <div className="p-4 rounded-xl bg-neutral-900/50 border border-white/[0.06]">
+          <span className="text-[11px] text-neutral-400 block">Managed Artists</span>
+          <span className="text-xl font-extrabold font-mono text-white">
+            {dbStats?.managed_artists_count ?? dbArtists.length}
+          </span>
+        </div>
+        <div className="p-4 rounded-xl bg-neutral-900/50 border border-white/[0.06]">
+          <span className="text-[11px] text-neutral-400 block">Managed Labels</span>
+          <span className="text-xl font-extrabold font-mono text-purple-400">
+            {dbStats?.managed_labels_count ?? dbLabels.length}
+          </span>
+        </div>
+        <div className="p-4 rounded-xl bg-neutral-900/50 border border-white/[0.06]">
+          <span className="text-[11px] text-neutral-400 block">Uploaded Tracks</span>
+          <span className="text-xl font-extrabold font-mono text-emerald-400">
+            {dbStats?.ingested_tracks_count ?? dbTracks.length}
+          </span>
+        </div>
+        <div className="p-4 rounded-xl bg-neutral-900/50 border border-white/[0.06]">
+          <span className="text-[11px] text-neutral-400 block">Total Streams</span>
+          <span className="text-xl font-extrabold font-mono text-white">
+            {(dbStats?.total_streams ?? 0).toLocaleString()}
+          </span>
+        </div>
+        <div className="p-4 rounded-xl bg-neutral-900/50 border border-white/[0.06]">
+          <span className="text-[11px] text-neutral-400 block">Verification Claims</span>
+          <span className="text-xl font-extrabold font-mono text-amber-400">
+            {dbStats?.pending_claims_count ?? dbClaims.length}
+          </span>
         </div>
       </div>
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="p-5 rounded-xl bg-neutral-900/40 border border-white/[0.06] space-y-2">
-          <span className="text-xs font-medium text-neutral-400">Managed Artist Profiles</span>
-          <p className="text-2xl font-bold font-mono tabular-nums text-white">
-            {artistList.length} Artists
-          </p>
-          <div className="text-[11px] text-purple-400 font-mono">Public pages active</div>
+      {/* Feedback Banner */}
+      {feedback && (
+        <div
+          className={`p-4 rounded-xl border text-xs font-medium flex items-center justify-between ${
+            feedback.type === 'success'
+              ? 'bg-emerald-950/50 border-emerald-500/40 text-emerald-200'
+              : 'bg-red-950/50 border-red-500/40 text-red-200'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 shrink-0" />
+            <span>{feedback.message}</span>
+          </div>
+          <button onClick={() => setFeedback(null)} className="text-neutral-400 hover:text-white">
+            <X className="w-4 h-4" />
+          </button>
         </div>
-
-        <div className="p-5 rounded-xl bg-neutral-900/40 border border-white/[0.06] space-y-2">
-          <span className="text-xs font-medium text-neutral-400">Active Releases</span>
-          <p className="text-2xl font-bold font-mono tabular-nums text-white">
-            {tracks.length} Tracks
-          </p>
-          <div className="text-[11px] text-emerald-400 font-mono">100% Live on Platform</div>
-        </div>
-
-        <div className="p-5 rounded-xl bg-neutral-900/40 border border-white/[0.06] space-y-2">
-          <span className="text-xs font-medium text-neutral-400">Granted Upload Access</span>
-          <p className="text-2xl font-bold font-mono tabular-nums text-white">
-            {grants.filter((g) => g.status === 'Active').length} Entities
-          </p>
-          <div className="text-[11px] text-neutral-400">Artists & Labels authorized</div>
-        </div>
-
-        <div className="p-5 rounded-xl bg-neutral-900/40 border border-white/[0.06] space-y-2">
-          <span className="text-xs font-medium text-neutral-400">Ingestion QA Health</span>
-          <p className="text-2xl font-bold font-mono tabular-nums text-emerald-400">
-            Lossless Hi-Res
-          </p>
-          <div className="text-[11px] text-neutral-400">24-bit FLAC / WAV Pipeline</div>
-        </div>
-      </div>
+      )}
 
       {/* Navigation Tabs */}
-      <div className="flex items-center gap-2 border-b border-white/[0.08] pb-3 overflow-x-auto">
-        <button
-          onClick={() => setActiveTab('artists')}
-          className={`flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap ${
-            activeTab === 'artists' ? 'bg-white text-black' : 'text-neutral-400 hover:text-white'
-          }`}
-        >
-          <Users className="w-3.5 h-3.5" />
-          <span>Artist Management ({artistList.length})</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('releases')}
-          className={`flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap ${
-            activeTab === 'releases' ? 'bg-white text-black' : 'text-neutral-400 hover:text-white'
-          }`}
-        >
-          <Disc className="w-3.5 h-3.5" />
-          <span>Albums & Releases Management</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('catalog')}
-          className={`flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap ${
-            activeTab === 'catalog' ? 'bg-white text-black' : 'text-neutral-400 hover:text-white'
-          }`}
-        >
-          <Music2 className="w-3.5 h-3.5" />
-          <span>Live Ingestions ({items.length})</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('access')}
-          className={`flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap ${
-            activeTab === 'access' ? 'bg-white text-black' : 'text-neutral-400 hover:text-white'
-          }`}
-        >
-          <Key className="w-3.5 h-3.5" />
-          <span>Grant Upload Rights ({grants.length})</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('modify')}
-          className={`flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap ${
-            activeTab === 'modify' ? 'bg-white text-black' : 'text-neutral-400 hover:text-white'
-          }`}
-        >
-          <Edit3 className="w-3.5 h-3.5" />
-          <span>Quick Metadata Editor</span>
-        </button>
+      <div className="flex items-center gap-2 overflow-x-auto pb-1 border-b border-white/[0.08]">
+        {[
+          { id: 'upload', label: 'Upload Audio / Video / Lyrics', icon: <Upload className="w-4 h-4" /> },
+          { id: 'artists', label: `My Artists (${dbArtists.length})`, icon: <Users className="w-4 h-4" /> },
+          { id: 'labels', label: `My Labels (${dbLabels.length})`, icon: <Building2 className="w-4 h-4" /> },
+          { id: 'catalog', label: `My Releases & Tracks (${dbTracks.length})`, icon: <Music className="w-4 h-4" /> },
+          { id: 'claims', label: `Artist Claims (${dbClaims.length})`, icon: <FileCheck className="w-4 h-4" /> },
+        ].map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setActiveTab(t.id as any)}
+            className={`px-4 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-2 transition-all whitespace-nowrap cursor-pointer ${
+              activeTab === t.id
+                ? 'bg-white text-black shadow-lg'
+                : 'bg-neutral-900/60 text-neutral-400 hover:text-white hover:bg-white/[0.06]'
+            }`}
+          >
+            {t.icon}
+            <span>{t.label}</span>
+          </button>
+        ))}
       </div>
 
-      {/* ============================================================== */}
-      {/* TAB 1: ARTIST MANAGEMENT                                       */}
-      {/* ============================================================== */}
-      {activeTab === 'artists' && (
-        <div className="space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <h2 className="text-lg font-bold text-white">Managed Artists</h2>
-              <p className="text-xs text-neutral-400">
-                Each artist profile has a unique identifier and an active public artist page
-              </p>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <div className="relative min-w-[220px]">
-                <Search className="w-3.5 h-3.5 text-neutral-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <input
-                  type="text"
-                  placeholder="Filter by name, genre, country..."
-                  value={artistSearch}
-                  onChange={(e) => setArtistSearch(e.target.value)}
-                  className="w-full pl-8 pr-3 py-1.5 text-xs bg-neutral-900 border border-white/10 rounded-xl text-white placeholder-neutral-500"
-                />
-              </div>
-
-              <button
-                onClick={() => setIsCreateArtistModalOpen(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold shrink-0"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>New Artist</span>
-              </button>
-            </div>
+      {/* TAB 1: UPLOAD AUDIO, VIDEO, ARTWORK & LYRICS FILES */}
+      {activeTab === 'upload' && (
+        <div className="p-6 rounded-2xl bg-neutral-900/40 border border-white/[0.08] space-y-6">
+          <div className="border-b border-white/[0.06] pb-4">
+            <h3 className="text-base font-bold text-white flex items-center gap-2">
+              <Upload className="w-4 h-4 text-purple-400" />
+              <span>Upload Master Audio, Video, Cover Artwork & Synced Lyrics</span>
+            </h3>
+            <p className="text-xs text-neutral-400 mt-1">
+              Supported formats: Audio (.mp3, .wav, .flac, .m4a, .aac, .ogg up to 100MB), Video (.mp4, .webm, .mov up to 250MB), Artwork (.jpg, .png, .webp up to 15MB), and Lyrics (.lrc, .txt, .srt).
+            </p>
           </div>
 
-          {/* Artists Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredArtists.map((artist) => {
-              const artistSongs = tracks.filter((t) => t.artistId === artist.id || t.artist === artist.name);
-              return (
-                <div
-                  key={artist.id}
-                  className="p-5 rounded-2xl bg-neutral-900/40 border border-white/[0.08] hover:border-white/20 transition-all flex flex-col justify-between space-y-4 group"
-                >
-                  <div className="flex items-start gap-4">
-                    <img
-                      src={artist.avatarUrl}
-                      alt={artist.name}
-                      referrerPolicy="no-referrer"
-                      className="w-14 h-14 rounded-full object-cover shrink-0 border border-white/10 shadow-md"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <h3 className="font-bold text-sm text-white truncate">{artist.name}</h3>
-                        {artist.verified && (
-                          <ShieldCheck className="w-4 h-4 text-blue-400 shrink-0" />
-                        )}
-                      </div>
-                      <p className="text-[11px] font-mono text-neutral-400 truncate">ID: {artist.id}</p>
-                      <div className="flex items-center gap-2 mt-1">
-                        <span className="px-2 py-0.5 rounded-full bg-white/[0.06] text-[10px] text-neutral-300">
-                          {artist.primaryGenre || 'Music'}
-                        </span>
-                        {artist.country && (
-                          <span className="px-2 py-0.5 rounded-full bg-white/[0.06] text-[10px] text-neutral-300 font-mono">
-                            {artist.country}
-                          </span>
-                        )}
-                        <span className="text-[10px] text-emerald-400 font-medium">
-                          {artist.claimedStatus || 'Verified'}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <p className="text-xs text-neutral-400 line-clamp-2">
-                    {artist.bio}
-                  </p>
-
-                  <div className="pt-3 border-t border-white/[0.06] flex items-center justify-between text-xs text-neutral-400">
-                    <span className="font-mono">{artistSongs.length} track{artistSongs.length !== 1 ? 's' : ''} live</span>
-                    <span className="text-[11px] text-purple-300">
-                      via {artist.distributorName || distributorName}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-2 pt-1">
-                    <button
-                      onClick={() => onViewArtistPublicPage(artist.id)}
-                      className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-white/[0.06] hover:bg-white/10 text-white text-xs font-semibold transition-colors"
-                      title="View public artist page"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5" />
-                      <span>View Public Page</span>
-                    </button>
-
-                    <button
-                      onClick={() => {
-                        setSelectedArtistForRelease(artist.id);
-                        setIsCreateReleaseModalOpen(true);
-                      }}
-                      className="flex items-center justify-center gap-1 px-3 py-2 rounded-xl bg-purple-600/20 text-purple-300 hover:bg-purple-600/30 text-xs font-medium transition-colors"
-                      title="Upload release for this artist"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Release</span>
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* ============================================================== */}
-      {/* TAB 2: ALBUMS & RELEASES MANAGEMENT                             */}
-      {/* ============================================================== */}
-      {activeTab === 'releases' && (
-        <div className="space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <h2 className="text-lg font-bold text-white">Releases, Albums & Singles</h2>
-              <p className="text-xs text-neutral-400">
-                Upload single tracks or multi-track albums, edit metadata, and submit for platform review
-              </p>
-            </div>
-
-            <button
-              onClick={() => setIsCreateReleaseModalOpen(true)}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs shrink-0"
-            >
-              <FolderPlus className="w-4 h-4" />
-              <span>Create New Release</span>
-            </button>
-          </div>
-
-          {/* List of active catalog releases */}
-          <div className="border border-white/[0.08] rounded-xl overflow-hidden bg-neutral-900/30">
-            <div className="p-4 border-b border-white/[0.06] flex items-center justify-between">
-              <span className="text-xs font-bold text-white uppercase tracking-wider">
-                Releases on Platform ({tracks.length} tracks registered)
-              </span>
-              <span className="text-xs font-mono text-purple-400">Direct Ingest Pipeline</span>
-            </div>
-
-            <div className="divide-y divide-white/[0.04]">
-              {tracks.map((t) => (
-                <div key={t.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-white/[0.02] transition-colors">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <img src={t.coverUrl} alt={t.title} referrerPolicy="no-referrer" className="w-12 h-12 rounded-lg object-cover shrink-0" />
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold text-sm text-white truncate">{t.title}</span>
-                        <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-mono">
-                          Live
-                        </span>
-                      </div>
-                      <p className="text-xs text-neutral-400 truncate">
-                        {t.artist} · <span className="text-neutral-300">{t.album}</span>
-                      </p>
-                      <div className="flex items-center gap-3 text-[11px] font-mono text-neutral-500 mt-1">
-                        <span>ISRC: {t.isrc}</span>
-                        <span>UPC: {t.upc}</span>
-                        <span className="capitalize">{t.genre}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      onClick={() => onViewArtistPublicPage(t.artistId || t.artist)}
-                      className="px-3 py-1.5 rounded-lg bg-white/[0.05] hover:bg-white/10 text-xs text-neutral-300 hover:text-white transition-colors flex items-center gap-1"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5" />
-                      <span>Artist Page</span>
-                    </button>
-
-                    <button
-                      onClick={() => {
-                        setSelectedTrackToModify(t.id);
-                        setModifiedTitle(t.title);
-                        setModifiedGenre(t.genre);
-                        setActiveTab('modify');
-                      }}
-                      className="px-3 py-1.5 rounded-lg bg-white/[0.05] hover:bg-white/10 text-xs text-neutral-300 hover:text-white transition-colors flex items-center gap-1"
-                    >
-                      <Edit3 className="w-3.5 h-3.5" />
-                      <span>Edit</span>
-                    </button>
-
-                    <button
-                      onClick={() => setItemToDelete({ id: t.id, title: t.title, type: 'track' })}
-                      className="p-1.5 rounded-lg text-neutral-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                      title="Delete release safeguard"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ============================================================== */}
-      {/* TAB 3: LIVE CATALOG INGESTIONS TABLE                            */}
-      {/* ============================================================== */}
-      {activeTab === 'catalog' && (
-        <div className="space-y-4">
-          <div className="border border-white/[0.08] rounded-xl overflow-hidden bg-neutral-900/30">
-            <div className="p-4 border-b border-white/[0.06] flex items-center justify-between">
+          <form onSubmit={handleDirectUpload} className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
-                <h3 className="text-sm font-bold text-white">Music Distributed Directly</h3>
-                <p className="text-xs text-neutral-400">Releases ingested from TuneCore, CD Baby, and Ditto</p>
-              </div>
-              <span className="text-xs text-emerald-400 font-mono">Platform Stream Ready</span>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs text-left">
-                <thead className="bg-white/[0.02] text-neutral-400 uppercase tracking-wider text-[11px] border-b border-white/[0.06]">
-                  <tr>
-                    <th className="py-3 px-4">Track & Artist</th>
-                    <th className="py-3 px-4">Genre</th>
-                    <th className="py-3 px-4">ISRC Code</th>
-                    <th className="py-3 px-4">Distributor Source</th>
-                    <th className="py-3 px-4">Audio Quality</th>
-                    <th className="py-3 px-4 text-right">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/[0.04]">
-                  {items.map((item) => (
-                    <tr key={item.id} className="hover:bg-white/[0.03] transition-colors">
-                      <td className="py-3.5 px-4">
-                        <div className="flex flex-col">
-                          <span className="font-semibold text-white">{item.trackTitle}</span>
-                          <span className="text-[11px] text-neutral-400">{item.artistName} · {item.labelName}</span>
-                        </div>
-                      </td>
-                      <td className="py-3.5 px-4 capitalize text-neutral-300">{item.genre}</td>
-                      <td className="py-3.5 px-4 font-mono text-neutral-400">{item.isrc}</td>
-                      <td className="py-3.5 px-4 text-neutral-300">{item.uploadedByDistributor}</td>
-                      <td className="py-3.5 px-4 text-emerald-400 font-mono">{item.audioQuality}</td>
-                      <td className="py-3.5 px-4 text-right">
-                        <span className="font-semibold text-emerald-400">
-                          {item.flontmieStatus ? item.flontmieStatus.replace(' on Flontmie', '') : 'Live'}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ============================================================== */}
-      {/* TAB 4: ACCESS GRANTS                                            */}
-      {/* ============================================================== */}
-      {activeTab === 'access' && (
-        <div className="space-y-6">
-          <div className="border border-white/[0.08] rounded-xl overflow-hidden bg-neutral-900/30">
-            <div className="p-4 border-b border-white/[0.06] flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-white">Granted Upload Rights</h3>
-                <p className="text-xs text-neutral-400">
-                  Manage which artists and record labels have permission to upload songs &amp; albums
-                </p>
-              </div>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs text-left">
-                <thead className="bg-white/[0.02] text-neutral-400 uppercase tracking-wider text-[11px] border-b border-white/[0.06]">
-                  <tr>
-                    <th className="py-3 px-4">Artist / Label Entity</th>
-                    <th className="py-3 px-4">Entity Type</th>
-                    <th className="py-3 px-4">Distributor Gateway</th>
-                    <th className="py-3 px-4">Upload Permissions</th>
-                    <th className="py-3 px-4">Max Monthly Releases</th>
-                    <th className="py-3 px-4 text-right">Access Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/[0.04]">
-                  {grants.map((grant) => (
-                    <tr key={grant.id} className="hover:bg-white/[0.03] transition-colors">
-                      <td className="py-3.5 px-4 font-semibold text-white">{grant.entityName}</td>
-                      <td className="py-3.5 px-4 text-neutral-300">{grant.entityType}</td>
-                      <td className="py-3.5 px-4 text-purple-400">{grant.distributorName}</td>
-                      <td className="py-3.5 px-4 text-neutral-300">
-                        Tracks, Albums, Metadata
-                      </td>
-                      <td className="py-3.5 px-4 font-mono text-neutral-300">{grant.maxMonthlyReleases}</td>
-                      <td className="py-3.5 px-4 text-right">
-                        <span className="font-semibold text-emerald-400">{grant.status}</span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* New Grant Form */}
-          <div className="max-w-xl p-5 rounded-xl bg-neutral-900/40 border border-white/[0.08] space-y-4">
-            <h4 className="text-sm font-bold text-white">Grant Ingestion Rights to New Entity</h4>
-            <form onSubmit={handleAddAccessGrant} className="space-y-3 text-xs">
-              <div>
-                <label className="text-neutral-300 block mb-1">Entity / Artist / Label Name</label>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                  Track Title *
+                </label>
                 <input
                   type="text"
                   required
-                  placeholder="e.g. Neo-Wave Collective"
-                  value={grantEntityName}
-                  onChange={(e) => setGrantEntityName(e.target.value)}
-                  className="w-full px-3 py-2 bg-neutral-900 border border-white/10 rounded-lg text-white"
+                  value={trackTitle}
+                  onChange={(e) => setTrackTitle(e.target.value)}
+                  placeholder="Enter official song title"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white focus:outline-none focus:border-purple-500"
                 />
               </div>
-              <div className="grid grid-cols-2 gap-3">
+
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                  Managed Artist *
+                </label>
+                <select
+                  value={selectedArtistId}
+                  onChange={(e) => setSelectedArtistId(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white focus:outline-none focus:border-purple-500"
+                >
+                  {dbArtists.length === 0 && <option value="__new__">+ Create New Artist on Upload</option>}
+                  {dbArtists.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                    </option>
+                  ))}
+                  {dbArtists.length > 0 && <option value="__new__">+ Enter New Artist Name...</option>}
+                </select>
+              </div>
+
+              {(selectedArtistId === '__new__' || dbArtists.length === 0) ? (
                 <div>
-                  <label className="text-neutral-300 block mb-1">Type</label>
-                  <select
-                    value={grantEntityType}
-                    onChange={(e) => setGrantEntityType(e.target.value as any)}
-                    className="w-full px-3 py-2 bg-neutral-900 border border-white/10 rounded-lg text-white"
-                  >
-                    <option value="Artist">Artist</option>
-                    <option value="Record Label">Record Label</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-neutral-300 block mb-1">Max Monthly Releases</label>
+                  <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                    New Artist Name *
+                  </label>
                   <input
-                    type="number"
-                    value={grantMaxReleases}
-                    onChange={(e) => setGrantMaxReleases(Number(e.target.value))}
-                    className="w-full px-3 py-2 bg-neutral-900 border border-white/10 rounded-lg text-white"
+                    type="text"
+                    required
+                    value={customArtistName}
+                    onChange={(e) => setCustomArtistName(e.target.value)}
+                    placeholder="Artist name to create in your roster"
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white focus:outline-none focus:border-purple-500"
                   />
                 </div>
+              ) : (
+                <div>
+                  <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                    Record Label (Optional)
+                  </label>
+                  <select
+                    value={selectedLabelId}
+                    onChange={(e) => setSelectedLabelId(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white focus:outline-none focus:border-purple-500"
+                  >
+                    <option value="">-- Independent / Direct --</option>
+                    {dbLabels.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                  Release / Album Title
+                </label>
+                <input
+                  type="text"
+                  value={albumName}
+                  onChange={(e) => setAlbumName(e.target.value)}
+                  placeholder="Leave blank for Single"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white focus:outline-none focus:border-purple-500"
+                />
               </div>
-              <button
-                type="submit"
-                className="w-full py-2.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-semibold"
-              >
-                Issue Upload Authorization
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
 
-      {/* ============================================================== */}
-      {/* TAB 5: QUICK METADATA EDITOR                                   */}
-      {/* ============================================================== */}
-      {activeTab === 'modify' && (
-        <div className="max-w-xl p-6 rounded-2xl bg-neutral-900/40 border border-white/[0.08] space-y-4">
-          <div>
-            <h3 className="text-base font-bold text-white">Edit &amp; Modify Song</h3>
-            <p className="text-xs text-neutral-400">Update track title, genre or metadata in the live streaming app</p>
-          </div>
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                  Release Format
+                </label>
+                <select
+                  value={releaseType}
+                  onChange={(e) => setReleaseType(e.target.value as any)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white focus:outline-none focus:border-purple-500"
+                >
+                  <option value="single">Single</option>
+                  <option value="ep">EP</option>
+                  <option value="album">Full Album</option>
+                </select>
+              </div>
 
-          {modifySuccess && (
-            <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-400 text-xs font-semibold flex items-center gap-2">
-              <Check className="w-4 h-4" />
-              <span>Track metadata updated successfully!</span>
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                  Primary Genre
+                </label>
+                <select
+                  value={genre}
+                  onChange={(e) => setGenre(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white focus:outline-none focus:border-purple-500"
+                >
+                  <option value="Afrobeats">Afrobeats</option>
+                  <option value="Pop">Pop</option>
+                  <option value="Rap">Rap & Hip-Hop</option>
+                  <option value="R&B">R&B & Soul</option>
+                  <option value="Amapiano">Amapiano</option>
+                  <option value="Synthwave">Electronic</option>
+                  <option value="Lo-Fi">Lo-Fi</option>
+                  <option value="Ambient">Ambient</option>
+                  <option value="Oldschool">Classics</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                  Release Date
+                </label>
+                <input
+                  type="date"
+                  value={releaseDate}
+                  onChange={(e) => setReleaseDate(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white focus:outline-none focus:border-purple-500"
+                />
+              </div>
             </div>
-          )}
 
-          <form onSubmit={handleModifySubmit} className="space-y-4 text-xs">
-            <div>
-              <label className="text-neutral-300 block mb-1">Select Track</label>
-              <select
-                value={selectedTrackToModify}
-                onChange={(e) => {
-                  setSelectedTrackToModify(e.target.value);
-                  const found = tracks.find((t) => t.id === e.target.value);
-                  if (found) {
-                    setModifiedTitle(found.title);
-                    setModifiedGenre(found.genre);
-                  }
-                }}
-                className="w-full px-3 py-2 bg-neutral-900 border border-white/10 rounded-lg text-white"
-              >
-                {tracks.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.title} - {t.artist} ({t.album})
-                  </option>
-                ))}
-              </select>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                  ISRC Code
+                </label>
+                <input
+                  type="text"
+                  value={isrc}
+                  onChange={(e) => setIsrc(e.target.value)}
+                  placeholder="e.g. USRC12600001"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white font-mono focus:outline-none focus:border-purple-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                  UPC / EAN Barcode
+                </label>
+                <input
+                  type="text"
+                  value={upc}
+                  onChange={(e) => setUpc(e.target.value)}
+                  placeholder="12-digit UPC"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white font-mono focus:outline-none focus:border-purple-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                  Country (ISO)
+                </label>
+                <input
+                  type="text"
+                  maxLength={2}
+                  value={country}
+                  onChange={(e) => setCountry(e.target.value.toUpperCase())}
+                  placeholder="US"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white font-mono uppercase focus:outline-none focus:border-purple-500"
+                />
+              </div>
+
+              <div className="flex items-end pb-2">
+                <label className="flex items-center gap-2 text-xs text-neutral-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={explicit}
+                    onChange={(e) => setExplicit(e.target.checked)}
+                    className="accent-purple-500 w-4 h-4"
+                  />
+                  <span>Explicit Lyrics Advisory</span>
+                </label>
+              </div>
+            </div>
+
+            {/* File Pickers: Audio, Artwork, Video, Lyrics */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-2">
+              <div className="p-3.5 rounded-xl bg-neutral-950 border border-white/10 space-y-2">
+                <label className="text-xs font-bold text-white flex items-center gap-1.5">
+                  <Music className="w-3.5 h-3.5 text-purple-400" />
+                  <span>1. Audio File (.mp3/.wav/.flac)</span>
+                </label>
+                <input
+                  type="file"
+                  accept=".mp3,.wav,.flac,.m4a,.aac,.ogg,.opus,audio/*"
+                  onChange={(e) => setAudioFile(e.target.files?.[0] || null)}
+                  className="w-full text-[11px] text-neutral-300 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-[11px] file:font-semibold file:bg-purple-600/20 file:text-purple-300 hover:file:bg-purple-600/30"
+                />
+                {audioFile && (
+                  <p className="text-[10px] font-mono text-emerald-400 truncate">
+                    {audioFile.name} ({(audioFile.size / (1024 * 1024)).toFixed(2)} MB)
+                  </p>
+                )}
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-neutral-950 border border-white/10 space-y-2">
+                <label className="text-xs font-bold text-white flex items-center gap-1.5">
+                  <Disc className="w-3.5 h-3.5 text-pink-400" />
+                  <span>2. Cover Artwork (.jpg/.png)</span>
+                </label>
+                <input
+                  type="file"
+                  accept=".jpg,.jpeg,.png,.webp,image/*"
+                  onChange={(e) => setCoverFile(e.target.files?.[0] || null)}
+                  className="w-full text-[11px] text-neutral-300 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-[11px] file:font-semibold file:bg-pink-600/20 file:text-pink-300 hover:file:bg-pink-600/30"
+                />
+                {coverFile && (
+                  <p className="text-[10px] font-mono text-emerald-400 truncate">
+                    {coverFile.name} ({(coverFile.size / 1024).toFixed(0)} KB)
+                  </p>
+                )}
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-neutral-950 border border-white/10 space-y-2">
+                <label className="text-xs font-bold text-white flex items-center gap-1.5">
+                  <Video className="w-3.5 h-3.5 text-sky-400" />
+                  <span>3. Video File (.mp4/.webm)</span>
+                </label>
+                <input
+                  type="file"
+                  accept=".mp4,.webm,.m4v,.mov,video/*"
+                  onChange={(e) => setVideoFile(e.target.files?.[0] || null)}
+                  className="w-full text-[11px] text-neutral-300 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-[11px] file:font-semibold file:bg-sky-600/20 file:text-sky-300 hover:file:bg-sky-600/30"
+                />
+                {videoFile && (
+                  <p className="text-[10px] font-mono text-emerald-400 truncate">
+                    {videoFile.name} ({(videoFile.size / (1024 * 1024)).toFixed(2)} MB)
+                  </p>
+                )}
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-neutral-950 border border-white/10 space-y-2">
+                <label className="text-xs font-bold text-white flex items-center gap-1.5">
+                  <FileText className="w-3.5 h-3.5 text-amber-400" />
+                  <span>4. Lyrics File (.lrc/.txt/.srt)</span>
+                </label>
+                <input
+                  type="file"
+                  accept=".lrc,.txt,.srt"
+                  onChange={(e) => setLyricsFile(e.target.files?.[0] || null)}
+                  className="w-full text-[11px] text-neutral-300 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-[11px] file:font-semibold file:bg-amber-600/20 file:text-amber-300 hover:file:bg-amber-600/30"
+                />
+                {lyricsFile && (
+                  <p className="text-[10px] font-mono text-emerald-400 truncate">
+                    {lyricsFile.name}
+                  </p>
+                )}
+              </div>
             </div>
 
             <div>
-              <label className="text-neutral-300 block mb-1">New Track Title</label>
-              <input
-                type="text"
-                value={modifiedTitle}
-                onChange={(e) => setModifiedTitle(e.target.value)}
-                placeholder="Enter updated song title"
-                className="w-full px-3 py-2 bg-neutral-900 border border-white/10 rounded-lg text-white"
+              <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                Lyrics Text / Timed LRC Lines (Optional if uploading a .lrc / .txt file)
+              </label>
+              <textarea
+                rows={3}
+                value={lyricsText}
+                onChange={(e) => setLyricsText(e.target.value)}
+                placeholder="[00:12.00] First line of lyrics..."
+                className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white focus:outline-none focus:border-purple-500 font-mono"
               />
             </div>
 
-            <div>
-              <label className="text-neutral-300 block mb-1">Genre</label>
-              <select
-                value={modifiedGenre}
-                onChange={(e) => setModifiedGenre(e.target.value as MusicGenre)}
-                className="w-full px-3 py-2 bg-neutral-900 border border-white/10 rounded-lg text-white capitalize"
-              >
-                <option value="afrobeat">Afrobeat</option>
-                <option value="pop">Pop</option>
-                <option value="rap">Rap & Hip-Hop</option>
-                <option value="oldschool">Old School & Funk</option>
-                <option value="r&b">R&B & Neo-Soul</option>
-                <option value="synthwave">Synthwave</option>
-                <option value="lo-fi">Lo-Fi</option>
-                <option value="ambient">Ambient</option>
-              </select>
-            </div>
+            {uploading && (
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-xs text-purple-300 font-mono">
+                  <span>Uploading media files to server...</span>
+                  <span>{uploadProgress}%</span>
+                </div>
+                <div className="w-full h-2 rounded-full bg-neutral-800 overflow-hidden">
+                  <div
+                    className="h-full bg-purple-500 transition-all duration-150"
+                    style={{ width: `${uploadProgress}%` }}
+                  />
+                </div>
+              </div>
+            )}
 
             <button
               type="submit"
-              className="w-full py-2.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs transition-colors"
+              disabled={uploading}
+              className="px-6 py-3 rounded-xl bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-bold text-xs flex items-center gap-2 shadow-lg shadow-purple-600/25 transition-all cursor-pointer"
             >
-              Save Changes
+              {uploading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Uploading & Persisting ({uploadProgress}%)...</span>
+                </>
+              ) : (
+                <>
+                  <Upload className="w-4 h-4" />
+                  <span>Upload & Publish Release to Catalog</span>
+                </>
+              )}
             </button>
           </form>
         </div>
       )}
 
-      {/* ============================================================== */}
-      {/* MODAL: CREATE ARTIST PROFILE ON FLONTMIE                       */}
-      {/* ============================================================== */}
-      {isCreateArtistModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-[#121214] border border-white/10 rounded-3xl max-w-xl w-full p-6 sm:p-8 space-y-6 shadow-2xl animate-in zoom-in-95 duration-150 my-8">
-            <div className="flex items-center justify-between border-b border-white/[0.08] pb-4">
+      {/* TAB 2: CREATE & MANAGE DISTRIBUTOR ARTISTS */}
+      {activeTab === 'artists' && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="lg:col-span-5 p-6 rounded-2xl bg-neutral-900/40 border border-white/[0.08] space-y-4">
+            <h3 className="text-base font-bold text-white flex items-center gap-2">
+              <Plus className="w-4 h-4 text-purple-400" />
+              <span>Create New Artist Profile</span>
+            </h3>
+            <p className="text-xs text-neutral-400">
+              Artists created here are scoped exclusively to your distributor account.
+            </p>
+
+            <form onSubmit={handleCreateArtist} className="space-y-3">
               <div>
-                <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                  <Users className="w-5 h-5 text-purple-400" />
-                  <span>Create Artist Profile</span>
-                </h3>
-                <p className="text-xs text-neutral-400 mt-0.5">
-                  Generates a unique ID and a live public artist page
-                </p>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                  Artist / Band Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={newArtistName}
+                  onChange={(e) => setNewArtistName(e.target.value)}
+                  placeholder="Official artist name"
+                  className="w-full px-3.5 py-2 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white"
+                />
               </div>
-              <button
-                onClick={() => setIsCreateArtistModalOpen(false)}
-                className="p-1.5 rounded-full text-neutral-400 hover:text-white hover:bg-white/10"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
 
-            {artistSuccessNotice ? (
-              <div className="p-6 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-center space-y-2">
-                <CheckCircle2 className="w-8 h-8 text-emerald-400 mx-auto" />
-                <h4 className="text-sm font-bold text-white">{artistSuccessNotice}</h4>
-                <p className="text-xs text-neutral-400">The public artist page is now ready for listeners!</p>
-              </div>
-            ) : (
-              <form onSubmit={handleCreateArtistSubmit} className="space-y-4 text-xs">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-neutral-300 font-medium block mb-1">Artist / Stage Name *</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="e.g. Kairos Nova"
-                      value={newArtistName}
-                      onChange={(e) => setNewArtistName(e.target.value)}
-                      className="w-full px-3 py-2 bg-neutral-900 border border-white/10 rounded-xl text-white placeholder-neutral-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-neutral-300 font-medium block mb-1">Distributor Source</label>
-                    <select
-                      value={distributorName}
-                      onChange={(e) => setDistributorName(e.target.value)}
-                      className="w-full px-3 py-2 bg-neutral-900 border border-white/10 rounded-xl text-white"
-                    >
-                      <option value="TuneCore Direct">TuneCore Direct</option>
-                      <option value="CDBaby Gateway">CDBaby Gateway</option>
-                      <option value="Ditto Music Hub">Ditto Music Hub</option>
-                      <option value="DistroKid Direct">DistroKid Direct</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-neutral-300 font-medium block mb-1">Primary Genre</label>
-                    <select
-                      value={newArtistGenre}
-                      onChange={(e) => setNewArtistGenre(e.target.value)}
-                      className="w-full px-3 py-2 bg-neutral-900 border border-white/10 rounded-xl text-white"
-                    >
-                      <option value="Afrobeat">Afrobeat</option>
-                      <option value="Pop">Pop</option>
-                      <option value="Rap & Hip-Hop">Rap & Hip-Hop</option>
-                      <option value="Synthwave">Synthwave</option>
-                      <option value="Lo-Fi">Lo-Fi</option>
-                      <option value="Old School">Old School</option>
-                      <option value="R&B">R&B</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="text-neutral-300 font-medium block mb-1">Country / Territory</label>
-                    <select
-                      value={newArtistCountry}
-                      onChange={(e) => setNewArtistCountry(e.target.value)}
-                      className="w-full px-3 py-2 bg-neutral-900 border border-white/10 rounded-xl text-white"
-                    >
-                      <option value="US">United States (US)</option>
-                      <option value="NG">Nigeria (NG)</option>
-                      <option value="UK">United Kingdom (UK)</option>
-                      <option value="ZA">South Africa (ZA)</option>
-                      <option value="CA">Canada (CA)</option>
-                      <option value="DE">Germany (DE)</option>
-                      <option value="JP">Japan (JP)</option>
-                    </select>
-                  </div>
-                </div>
-
+              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-neutral-300 font-medium block mb-1">Biography</label>
-                  <textarea
-                    rows={3}
-                    placeholder="Describe the artist's musical style, background, influences, and achievements..."
-                    value={newArtistBio}
-                    onChange={(e) => setNewArtistBio(e.target.value)}
-                    className="w-full px-3 py-2 bg-neutral-900 border border-white/10 rounded-xl text-white placeholder-neutral-500"
+                  <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                    Primary Genre
+                  </label>
+                  <select
+                    value={newArtistGenre}
+                    onChange={(e) => setNewArtistGenre(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white"
+                  >
+                    <option value="Afrobeats">Afrobeats</option>
+                    <option value="Pop">Pop</option>
+                    <option value="Rap">Rap & Hip-Hop</option>
+                    <option value="R&B">R&B & Soul</option>
+                    <option value="Electronic">Electronic</option>
+                    <option value="Lo-Fi">Lo-Fi</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                    Country (ISO)
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={2}
+                    value={newArtistCountry}
+                    onChange={(e) => setNewArtistCountry(e.target.value.toUpperCase())}
+                    placeholder="US"
+                    className="w-full px-3.5 py-2 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white uppercase font-mono"
                   />
                 </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-neutral-300 font-medium block mb-1">Verification Status</label>
-                    <select
-                      value={newArtistClaimStatus}
-                      onChange={(e) => setNewArtistClaimStatus(e.target.value as any)}
-                      className="w-full px-3 py-2 bg-neutral-900 border border-white/10 rounded-xl text-white"
-                    >
-                      <option value="Verified">Verified Official Profile</option>
-                      <option value="Official Ingestion">Official Distributor Ingestion</option>
-                      <option value="Pending Claim">Pending Claim by Artist</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="text-neutral-300 font-medium block mb-1">Profile Photo Preset</label>
-                    <select
-                      value={newArtistAvatar}
-                      onChange={(e) => {
-                        setNewArtistAvatar(e.target.value);
-                        setNewArtistBanner(e.target.value);
-                      }}
-                      className="w-full px-3 py-2 bg-neutral-900 border border-white/10 rounded-xl text-white"
-                    >
-                      <option value={IMAGES.synthwave}>Neon Horizon (Cyberpunk)</option>
-                      <option value={IMAGES.afrobeats}>Lagos Sunset (Afro-Gold)</option>
-                      <option value={IMAGES.lofi}>Rainy Lo-Fi Atmosphere</option>
-                      <option value={IMAGES.partymix}>Club Euphoria Spotlight</option>
-                      <option value={IMAGES.series}>Chronicles Studio High-Res</option>
-                    </select>
-                  </div>
-                </div>
-
-                {/* Social media links */}
-                <div className="space-y-2 pt-2 border-t border-white/[0.06]">
-                  <span className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider block">
-                    Social Media Handles (Optional)
-                  </span>
-                  <div className="grid grid-cols-2 gap-2">
-                    <input
-                      type="text"
-                      placeholder="Instagram @handle"
-                      value={newArtistInstagram}
-                      onChange={(e) => setNewArtistInstagram(e.target.value)}
-                      className="px-3 py-1.5 bg-neutral-900 border border-white/10 rounded-lg text-white"
-                    />
-                    <input
-                      type="text"
-                      placeholder="X / Twitter @handle"
-                      value={newArtistTwitter}
-                      onChange={(e) => setNewArtistTwitter(e.target.value)}
-                      className="px-3 py-1.5 bg-neutral-900 border border-white/10 rounded-lg text-white"
-                    />
-                  </div>
-                </div>
-
-                <div className="pt-2">
-                  <button
-                    type="submit"
-                    className="w-full py-3 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs tracking-wider uppercase shadow-xl shadow-purple-600/30 transition-all hover:scale-[1.01]"
-                  >
-                    Publish Artist Profile
-                  </button>
-                </div>
-              </form>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* ============================================================== */}
-      {/* MODAL: CREATE RELEASE (SINGLE, EP, OR ALBUM) WITH TRACKLIST     */}
-      {/* ============================================================== */}
-      {isCreateReleaseModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-[#121214] border border-white/10 rounded-3xl max-w-2xl w-full p-6 sm:p-8 space-y-6 shadow-2xl animate-in zoom-in-95 duration-150 my-8 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-white/[0.08] pb-4">
-              <div>
-                <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                  <FolderPlus className="w-5 h-5 text-purple-400" />
-                  <span>Create Release (Single, EP, or Album)</span>
-                </h3>
-                <p className="text-xs text-neutral-400 mt-0.5">
-                  Multi-track ingestion with standard ISRC, UPC, audio quality validation, and metadata
-                </p>
               </div>
-              <button
-                onClick={() => setIsCreateReleaseModalOpen(false)}
-                className="p-1.5 rounded-full text-neutral-400 hover:text-white hover:bg-white/10"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
 
-            {releaseNotice ? (
-              <div className="p-6 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-center space-y-2">
-                <CheckCircle2 className="w-8 h-8 text-emerald-400 mx-auto" />
-                <h4 className="text-sm font-bold text-white">{releaseNotice}</h4>
-                <p className="text-xs text-neutral-400">Tracks have been registered successfully.</p>
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                  Assign to Managed Record Label (Optional)
+                </label>
+                <select
+                  value={newArtistLabelId}
+                  onChange={(e) => setNewArtistLabelId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white"
+                >
+                  <option value="">-- Independent / Direct --</option>
+                  {dbLabels.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                  Avatar Image URL (Optional)
+                </label>
+                <input
+                  type="url"
+                  value={newArtistAvatar}
+                  onChange={(e) => setNewArtistAvatar(e.target.value)}
+                  placeholder="https://..."
+                  className="w-full px-3.5 py-2 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                  Artist Biography
+                </label>
+                <textarea
+                  rows={3}
+                  value={newArtistBio}
+                  onChange={(e) => setNewArtistBio(e.target.value)}
+                  placeholder="Official artist biography..."
+                  className="w-full px-3.5 py-2 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={creatingArtist}
+                className="w-full py-2.5 rounded-xl bg-white text-black font-bold text-xs hover:bg-neutral-200 transition-all cursor-pointer"
+              >
+                {creatingArtist ? 'Creating Artist...' : 'Create Artist in My Roster'}
+              </button>
+            </form>
+          </div>
+
+          <div className="lg:col-span-7 p-6 rounded-2xl bg-neutral-900/40 border border-white/[0.08] space-y-4">
+            <h3 className="text-base font-bold text-white">
+              My Managed Artists ({dbArtists.length})
+            </h3>
+            {dbArtists.length === 0 ? (
+              <div className="py-12 text-center text-xs text-neutral-500">
+                No artists created under your distributor account yet. Use the form on the left to add your first artist.
               </div>
             ) : (
-              <div className="space-y-5 text-xs">
-                {/* Validation error banner */}
-                {validationErrors.length > 0 && (
-                  <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/30 space-y-1 text-red-300">
-                    <div className="flex items-center gap-2 font-bold text-red-400">
-                      <AlertTriangle className="w-4 h-4" />
-                      <span>Release Validation Errors:</span>
-                    </div>
-                    <ul className="list-disc list-inside text-[11px] space-y-0.5">
-                      {validationErrors.map((err, i) => (
-                        <li key={i}>{err}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                {/* Artist Selector & Release Type */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-neutral-300 font-medium block mb-1">Artist Profile</label>
-                    <select
-                      value={selectedArtistForRelease}
-                      onChange={(e) => setSelectedArtistForRelease(e.target.value)}
-                      className="w-full px-3 py-2 bg-neutral-900 border border-white/10 rounded-xl text-white"
-                    >
-                      {artistList.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.name} ({a.primaryGenre || 'Artist'})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="text-neutral-300 font-medium block mb-1">Release Type</label>
-                    <select
-                      value={releaseType}
-                      onChange={(e) => setReleaseType(e.target.value as any)}
-                      className="w-full px-3 py-2 bg-neutral-900 border border-white/10 rounded-xl text-white"
-                    >
-                      <option value="Single">Single (1 Track)</option>
-                      <option value="EP">EP (3–6 Tracks)</option>
-                      <option value="Album">Album (7+ Tracks)</option>
-                    </select>
-                  </div>
-                </div>
-
-                {/* Release Title & UPC */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-neutral-300 font-medium block mb-1">Release / Album Title *</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="e.g. Celestial Horizon Deluxe"
-                      value={releaseTitle}
-                      onChange={(e) => setReleaseTitle(e.target.value)}
-                      className="w-full px-3 py-2 bg-neutral-900 border border-white/10 rounded-xl text-white"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-neutral-300 font-medium block mb-1">UPC / Barcode (EAN)</label>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={releaseUpc}
-                        onChange={(e) => setReleaseUpc(e.target.value)}
-                        className="w-full px-3 py-2 bg-neutral-900 border border-white/10 rounded-xl text-white font-mono"
+              <div className="space-y-2.5 max-h-[520px] overflow-y-auto pr-1">
+                {dbArtists.map((art) => (
+                  <div
+                    key={art.id}
+                    className="p-3.5 rounded-xl bg-white/[0.02] border border-white/[0.06] flex items-center justify-between gap-3"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <img
+                        src={resolveArtworkUrl(art.avatar_url, 'artist', art.name)}
+                        alt={art.name}
+                        onError={(e) => handleImageError(e, art.name, 'artist')}
+                        className="w-11 h-11 rounded-full object-cover bg-neutral-800 shrink-0"
                       />
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-white truncate">{art.name}</p>
+                        <p className="text-[11px] text-neutral-400 truncate">
+                          {art.primary_genre || 'Music'} · {art.country || 'US'} {art.label_name ? `· ${art.label_name}` : ''}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
                       <button
-                        type="button"
-                        onClick={() => setReleaseUpc(`8401928${Math.floor(10000 + Math.random() * 90000)}`)}
-                        className="px-2.5 py-1 rounded-lg bg-white/10 text-[10px] text-neutral-300 hover:text-white shrink-0"
+                        onClick={() => setEditingArtist(art)}
+                        className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-neutral-300 hover:text-white text-xs cursor-pointer"
+                        title="Edit Artist"
                       >
-                        Auto
+                        <Edit3 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={async () => {
+                          try {
+                            await api.deleteDistributorArtist(art.id);
+                            notify('success', `Removed artist "${art.name}".`);
+                            fetchDistributorPortal();
+                          } catch (err: any) {
+                            notify('error', err?.message || 'Delete failed.');
+                          }
+                        }}
+                        className="p-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 text-xs cursor-pointer"
+                        title="Delete Artist"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   </div>
-                </div>
-
-                {/* Genre & Audio Format */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div>
-                    <label className="text-neutral-300 font-medium block mb-1">Primary Genre</label>
-                    <select
-                      value={releaseGenre}
-                      onChange={(e) => setReleaseGenre(e.target.value as MusicGenre)}
-                      className="w-full px-3 py-2 bg-neutral-900 border border-white/10 rounded-xl text-white capitalize"
-                    >
-                      <option value="afrobeat">Afrobeat</option>
-                      <option value="pop">Pop</option>
-                      <option value="rap">Rap & Hip-Hop</option>
-                      <option value="synthwave">Synthwave</option>
-                      <option value="lo-fi">Lo-Fi</option>
-                      <option value="ambient">Ambient</option>
-                      <option value="oldschool">Old School</option>
-                      <option value="r&b">R&B</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="text-neutral-300 font-medium block mb-1">Audio Specification</label>
-                    <select
-                      value={audioFormat}
-                      onChange={(e) => setAudioFormat(e.target.value as any)}
-                      className="w-full px-3 py-2 bg-neutral-900 border border-white/10 rounded-xl text-white font-mono text-[11px]"
-                    >
-                      <option value="24-bit FLAC (Lossless)">24-bit FLAC (Lossless)</option>
-                      <option value="WAV 48kHz / 24-bit">WAV 48kHz / 24-bit</option>
-                      <option value="MP3 320kbps CBR">MP3 320kbps CBR</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="text-neutral-300 font-medium block mb-1">Release Date</label>
-                    <input
-                      type="date"
-                      value={releaseDate}
-                      onChange={(e) => setReleaseDate(e.target.value)}
-                      className="w-full px-3 py-2 bg-neutral-900 border border-white/10 rounded-xl text-white"
-                    />
-                  </div>
-                </div>
-
-                {/* Multi-Track Listing Builder */}
-                <div className="space-y-3 pt-3 border-t border-white/[0.08]">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h4 className="font-bold text-white text-xs uppercase tracking-wider flex items-center gap-1.5">
-                        <Disc className="w-4 h-4 text-purple-400" />
-                        <span>Track Listing ({releaseTracks.length} tracks)</span>
-                      </h4>
-                      <p className="text-[11px] text-neutral-400">
-                        Add and configure songs for this release with credits and ISRC
-                      </p>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={handleAddTrackToRelease}
-                      className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-purple-600/20 text-purple-300 hover:bg-purple-600/30 text-xs font-semibold"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Add Track</span>
-                    </button>
-                  </div>
-
-                  <div className="space-y-2.5 max-h-60 overflow-y-auto pr-1">
-                    {releaseTracks.map((trk, idx) => (
-                      <div
-                        key={trk.id}
-                        className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.06] space-y-2"
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="font-mono text-[11px] text-neutral-400 font-bold">
-                            Track #{trk.trackNumber}
-                          </span>
-
-                          <div className="flex items-center gap-2">
-                            <label className="flex items-center gap-1 text-[11px] text-neutral-400 cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={trk.isExplicit}
-                                onChange={(e) => handleUpdateReleaseTrack(idx, { isExplicit: e.target.checked })}
-                                className="rounded accent-red-500"
-                              />
-                              <span>Explicit</span>
-                            </label>
-
-                            {releaseTracks.length > 1 && (
-                              <button
-                                type="button"
-                                onClick={() => handleRemoveTrackFromRelease(idx)}
-                                className="text-neutral-500 hover:text-red-400 p-1"
-                                title="Remove track"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                          <input
-                            type="text"
-                            required
-                            placeholder="Track Title *"
-                            value={trk.title}
-                            onChange={(e) => handleUpdateReleaseTrack(idx, { title: e.target.value })}
-                            className="px-2.5 py-1.5 bg-neutral-900 border border-white/10 rounded-lg text-white"
-                          />
-
-                          <input
-                            type="text"
-                            placeholder="Featured Artists"
-                            value={trk.featuredArtists || ''}
-                            onChange={(e) => handleUpdateReleaseTrack(idx, { featuredArtists: e.target.value })}
-                            className="px-2.5 py-1.5 bg-neutral-900 border border-white/10 rounded-lg text-white"
-                          />
-
-                          <div className="flex gap-1">
-                            <input
-                              type="text"
-                              placeholder="ISRC Code"
-                              value={trk.isrc}
-                              onChange={(e) => handleUpdateReleaseTrack(idx, { isrc: e.target.value })}
-                              className="w-full px-2.5 py-1.5 bg-neutral-900 border border-white/10 rounded-lg text-white font-mono text-[11px]"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => handleUpdateReleaseTrack(idx, { isrc: `US-FLN-26-${Math.floor(10000 + Math.random() * 90000)}` })}
-                              className="px-2 py-1 bg-white/10 text-[9px] rounded text-neutral-300 hover:text-white shrink-0"
-                            >
-                              Gen
-                            </button>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-3 text-[10px] text-neutral-400 font-mono">
-                          <span>File: {trk.audioFileName}</span>
-                          <span className="text-purple-400 cursor-pointer hover:underline">
-                            Replace Master Audio
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Action Buttons: Save Draft, Platform Review, Publish Live */}
-                <div className="flex flex-col sm:flex-row items-center gap-2 pt-3 border-t border-white/[0.08]">
-                  <button
-                    type="button"
-                    onClick={() => handleSubmitRelease('draft')}
-                    className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.12] text-neutral-200 text-xs font-semibold"
-                  >
-                    Save as Draft
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => handleSubmitRelease('under_review')}
-                    className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-purple-600/30 hover:bg-purple-600/40 text-purple-300 text-xs font-semibold border border-purple-500/30"
-                  >
-                    Submit for Platform Review
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => handleSubmitRelease('live')}
-                    className="w-full sm:flex-1 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-lg shadow-purple-600/30 tracking-wide"
-                  >
-                    Publish Directly to Live Platform
-                  </button>
-                </div>
+                ))}
               </div>
             )}
           </div>
         </div>
       )}
 
-      {/* ============================================================== */}
-      {/* MODAL: SAFEGUARDED DELETE CONFIRMATION                         */}
-      {/* ============================================================== */}
-      {itemToDelete && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#141416] border border-white/10 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl animate-in zoom-in-95 duration-100">
-            <div className="flex items-center gap-3 text-red-400">
-              <AlertTriangle className="w-6 h-6 shrink-0" />
-              <h3 className="text-base font-bold text-white">Safeguarded Release Deletion</h3>
-            </div>
-            <p className="text-xs text-neutral-300 leading-relaxed">
-              Are you sure you want to remove <strong className="text-white">"{itemToDelete.title}"</strong> from published releases? This will delete the playback availability for listeners and take down associated audio streams.
+      {/* TAB 3: CREATE & MANAGE RECORD LABELS */}
+      {activeTab === 'labels' && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="lg:col-span-5 p-6 rounded-2xl bg-neutral-900/40 border border-white/[0.08] space-y-4">
+            <h3 className="text-base font-bold text-white flex items-center gap-2">
+              <Building2 className="w-4 h-4 text-purple-400" />
+              <span>Create Record Label</span>
+            </h3>
+            <p className="text-xs text-neutral-400">
+              Register record labels managed under your distribution umbrella.
             </p>
-            <div className="flex items-center justify-end gap-3 pt-3 border-t border-white/[0.08]">
+
+            <form onSubmit={handleCreateLabel} className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                  Record Label Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={newLabelName}
+                  onChange={(e) => setNewLabelName(e.target.value)}
+                  placeholder="Official label name"
+                  className="w-full px-3.5 py-2 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                  Label Contact Email
+                </label>
+                <input
+                  type="email"
+                  value={newLabelEmail}
+                  onChange={(e) => setNewLabelEmail(e.target.value)}
+                  placeholder="contact@label.com"
+                  className="w-full px-3.5 py-2 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                  Country (ISO)
+                </label>
+                <input
+                  type="text"
+                  maxLength={2}
+                  value={newLabelCountry}
+                  onChange={(e) => setNewLabelCountry(e.target.value.toUpperCase())}
+                  placeholder="US"
+                  className="w-full px-3.5 py-2 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white uppercase font-mono"
+                />
+              </div>
+
               <button
-                onClick={() => setItemToDelete(null)}
-                className="px-4 py-2 rounded-xl text-xs text-neutral-400 hover:text-white"
+                type="submit"
+                disabled={creatingLabel}
+                className="w-full py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs cursor-pointer"
               >
-                Cancel
+                {creatingLabel ? 'Creating Label...' : 'Create Record Label'}
               </button>
+            </form>
+          </div>
+
+          <div className="lg:col-span-7 p-6 rounded-2xl bg-neutral-900/40 border border-white/[0.08] space-y-4">
+            <h3 className="text-base font-bold text-white">
+              My Managed Record Labels ({dbLabels.length})
+            </h3>
+            {dbLabels.length === 0 ? (
+              <div className="py-12 text-center text-xs text-neutral-500">
+                No record labels created under your distributor account yet.
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {dbLabels.map((lbl) => (
+                  <div
+                    key={lbl.id}
+                    className="p-3.5 rounded-xl bg-white/[0.02] border border-white/[0.06] flex items-center justify-between gap-3"
+                  >
+                    <div>
+                      <p className="text-sm font-bold text-white">{lbl.name}</p>
+                      <p className="text-[11px] text-neutral-400">
+                        {lbl.contact_email || 'No email set'} · {lbl.country || 'US'}
+                      </p>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        try {
+                          await api.deleteDistributorLabel(lbl.id);
+                          notify('success', `Removed label "${lbl.name}".`);
+                          fetchDistributorPortal();
+                        } catch (err: any) {
+                          notify('error', err?.message || 'Delete failed.');
+                        }
+                      }}
+                      className="p-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 text-xs cursor-pointer"
+                      title="Delete Label"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* TAB 4: MY RELEASES & TRACKS */}
+      {activeTab === 'catalog' && (
+        <div className="border border-white/[0.08] rounded-2xl overflow-hidden bg-neutral-900/30">
+          <div className="p-4 border-b border-white/[0.06] flex items-center justify-between">
+            <h3 className="text-sm font-bold text-white">
+              Releases & Tracks Managed by Your Distributor Account ({dbTracks.length})
+            </h3>
+          </div>
+          {dbTracks.length === 0 ? (
+            <div className="py-16 text-center text-xs text-neutral-500">
+              No tracks uploaded by your distributor account yet. Use the "Upload Audio / Video / Lyrics" tab to ingest your first release.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left">
+                <thead className="bg-white/[0.03] text-neutral-400 uppercase text-[11px] border-b border-white/[0.06]">
+                  <tr>
+                    <th className="py-3 px-4">Track / Release</th>
+                    <th className="py-3 px-4">Artist</th>
+                    <th className="py-3 px-4">ISRC / UPC</th>
+                    <th className="py-3 px-4">Media Assets</th>
+                    <th className="py-3 px-4">Streams</th>
+                    <th className="py-3 px-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/[0.04]">
+                  {dbTracks.map((t) => (
+                    <tr key={t.id} className="hover:bg-white/[0.02]">
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-3">
+                          <img
+                            src={resolveArtworkUrl(t.cover_art_url, 'track', t.title)}
+                            alt={t.title}
+                            onError={(e) => handleImageError(e, t.title, 'track')}
+                            className="w-9 h-9 rounded object-cover bg-neutral-800 shrink-0"
+                          />
+                          <div>
+                            <div className="font-semibold text-white">{t.title}</div>
+                            <div className="text-[11px] text-neutral-500">{t.album_name || 'Single'} · {t.genre}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 text-neutral-300">{t.artist_name}</td>
+                      <td className="py-3 px-4 font-mono text-neutral-400">
+                        <div>{t.isrc || '—'}</div>
+                        {t.upc && <div className="text-[10px] text-neutral-500">UPC: {t.upc}</div>}
+                      </td>
+                      <td className="py-3 px-4">
+                        <div className="flex flex-wrap gap-1">
+                          <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 text-[10px] font-mono uppercase">
+                            {t.audio_format || 'Audio'}
+                          </span>
+                          {t.video_url && (
+                            <span className="px-2 py-0.5 rounded bg-sky-500/15 text-sky-300 text-[10px] font-mono">
+                              Video
+                            </span>
+                          )}
+                          {t.lyrics && (
+                            <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 text-[10px] font-mono">
+                              Lyrics
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 font-mono text-neutral-300">
+                        {Number(t.stream_count || 0).toLocaleString()}
+                      </td>
+                      <td className="py-3 px-4 text-right space-x-1.5 whitespace-nowrap">
+                        <button
+                          onClick={() => onPlayTrack(api.mapDbTrack(t))}
+                          className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white font-semibold inline-flex items-center gap-1 cursor-pointer"
+                        >
+                          <Play className="w-3 h-3" />
+                          <span>Play</span>
+                        </button>
+                        <button
+                          onClick={() => setEditingTrack(t)}
+                          className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-neutral-300 font-semibold inline-flex items-center gap-1 cursor-pointer"
+                        >
+                          <Edit3 className="w-3 h-3" />
+                          <span>Edit</span>
+                        </button>
+                        <button
+                          onClick={async () => {
+                            try {
+                              await api.deleteDistributorTrack(t.id);
+                              notify('success', `Removed track "${t.title}".`);
+                              fetchDistributorPortal();
+                            } catch (err: any) {
+                              notify('error', err?.message || 'Delete failed.');
+                            }
+                          }}
+                          className="px-2.5 py-1 rounded-lg bg-red-500/15 hover:bg-red-500/25 text-red-300 font-semibold inline-flex items-center gap-1 cursor-pointer"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB 5: ARTIST CLAIMS */}
+      {activeTab === 'claims' && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="lg:col-span-5 p-6 rounded-2xl bg-neutral-900/40 border border-white/[0.08] space-y-4">
+            <h3 className="text-base font-bold text-white">Submit Artist Profile Verification Claim</h3>
+            {dbArtists.length === 0 ? (
+              <p className="text-xs text-neutral-500">
+                Create an artist profile in your roster first before submitting a verification claim.
+              </p>
+            ) : (
+              <form onSubmit={handleSubmitClaim} className="space-y-3">
+                <div>
+                  <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                    Select Managed Artist
+                  </label>
+                  <select
+                    value={claimArtistId}
+                    onChange={(e) => setClaimArtistId(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white"
+                  >
+                    {dbArtists.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                    Representative Full Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={claimantName}
+                    onChange={(e) => setClaimantName(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                    Official Verification Email *
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    value={claimantEmail}
+                    onChange={(e) => setClaimantEmail(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-neutral-300 mb-1">
+                    Verification Notes & ISRC/UPC Reference
+                  </label>
+                  <textarea
+                    rows={3}
+                    required
+                    value={evidenceDetails}
+                    onChange={(e) => setEvidenceDetails(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={submittingClaim}
+                  className="w-full py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs cursor-pointer"
+                >
+                  {submittingClaim ? 'Submitting...' : 'Submit Claim to Administrator'}
+                </button>
+              </form>
+            )}
+          </div>
+
+          <div className="lg:col-span-7 p-6 rounded-2xl bg-neutral-900/40 border border-white/[0.08] space-y-4">
+            <h3 className="text-base font-bold text-white">Submitted Claims ({dbClaims.length})</h3>
+            {dbClaims.length === 0 ? (
+              <p className="text-xs text-neutral-500 py-8 text-center">No verification claims submitted yet.</p>
+            ) : (
+              <div className="space-y-2.5">
+                {dbClaims.map((clm) => (
+                  <div key={clm.id} className="p-3.5 rounded-xl bg-white/[0.02] border border-white/[0.06] flex items-center justify-between text-xs">
+                    <div>
+                      <p className="font-bold text-white">{clm.artist_name || clm.artist_id}</p>
+                      <p className="text-neutral-400">{clm.claimant_name} · {clm.claimant_email}</p>
+                    </div>
+                    <span className="px-2.5 py-1 rounded-full bg-amber-500/20 text-amber-300 font-bold uppercase text-[10px]">
+                      {clm.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Edit Artist Modal */}
+      {editingArtist && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-neutral-900 border border-white/15 rounded-2xl max-w-md w-full p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white">Edit Artist: {editingArtist.name}</h3>
+              <button onClick={() => setEditingArtist(null)} className="text-neutral-400 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block text-neutral-400 mb-1">Artist Name</label>
+                <input
+                  type="text"
+                  value={editingArtist.name || ''}
+                  onChange={(e) => setEditingArtist({ ...editingArtist, name: e.target.value })}
+                  className="w-full px-3 py-2 rounded-xl bg-neutral-950 border border-white/10 text-white"
+                />
+              </div>
+              <div>
+                <label className="block text-neutral-400 mb-1">Primary Genre</label>
+                <input
+                  type="text"
+                  value={editingArtist.primary_genre || ''}
+                  onChange={(e) => setEditingArtist({ ...editingArtist, primary_genre: e.target.value })}
+                  className="w-full px-3 py-2 rounded-xl bg-neutral-950 border border-white/10 text-white"
+                />
+              </div>
+              <div>
+                <label className="block text-neutral-400 mb-1">Biography</label>
+                <textarea
+                  rows={3}
+                  value={editingArtist.bio || ''}
+                  onChange={(e) => setEditingArtist({ ...editingArtist, bio: e.target.value })}
+                  className="w-full px-3 py-2 rounded-xl bg-neutral-950 border border-white/10 text-white"
+                />
+              </div>
               <button
-                onClick={handleConfirmDelete}
-                className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold shadow-lg shadow-red-600/30"
+                onClick={async () => {
+                  try {
+                    await api.updateDistributorArtist({
+                      artist_id: editingArtist.id,
+                      name: editingArtist.name,
+                      primary_genre: editingArtist.primary_genre,
+                      bio: editingArtist.bio,
+                      country: editingArtist.country,
+                      avatar_url: editingArtist.avatar_url,
+                    });
+                    notify('success', 'Artist updated.');
+                    setEditingArtist(null);
+                    fetchDistributorPortal();
+                  } catch (err: any) {
+                    notify('error', err?.message || 'Update failed.');
+                  }
+                }}
+                className="w-full py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold cursor-pointer"
               >
-                Confirm Delete
+                Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Track Modal */}
+      {editingTrack && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-neutral-900 border border-white/15 rounded-2xl max-w-lg w-full p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white">Edit Track Metadata & Lyrics</h3>
+              <button onClick={() => setEditingTrack(null)} className="text-neutral-400 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="space-y-3 text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-neutral-400 mb-1">Track Title</label>
+                  <input
+                    type="text"
+                    value={editingTrack.title || ''}
+                    onChange={(e) => setEditingTrack({ ...editingTrack, title: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl bg-neutral-950 border border-white/10 text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-neutral-400 mb-1">Genre</label>
+                  <input
+                    type="text"
+                    value={editingTrack.genre || ''}
+                    onChange={(e) => setEditingTrack({ ...editingTrack, genre: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl bg-neutral-950 border border-white/10 text-white"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-neutral-400 mb-1">ISRC</label>
+                  <input
+                    type="text"
+                    value={editingTrack.isrc || ''}
+                    onChange={(e) => setEditingTrack({ ...editingTrack, isrc: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl bg-neutral-950 border border-white/10 text-white font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-neutral-400 mb-1">UPC</label>
+                  <input
+                    type="text"
+                    value={editingTrack.upc || ''}
+                    onChange={(e) => setEditingTrack({ ...editingTrack, upc: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl bg-neutral-950 border border-white/10 text-white font-mono"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-neutral-400 mb-1">Lyrics</label>
+                <textarea
+                  rows={4}
+                  value={editingTrack.lyrics || ''}
+                  onChange={(e) => setEditingTrack({ ...editingTrack, lyrics: e.target.value })}
+                  className="w-full px-3 py-2 rounded-xl bg-neutral-950 border border-white/10 text-white font-mono"
+                />
+              </div>
+              <button
+                onClick={async () => {
+                  try {
+                    await api.updateDistributorTrack({
+                      track_id: editingTrack.id,
+                      title: editingTrack.title,
+                      genre: editingTrack.genre,
+                      isrc: editingTrack.isrc,
+                      upc: editingTrack.upc,
+                      lyrics: editingTrack.lyrics,
+                    });
+                    notify('success', 'Track metadata updated.');
+                    setEditingTrack(null);
+                    fetchDistributorPortal();
+                  } catch (err: any) {
+                    notify('error', err?.message || 'Track update failed.');
+                  }
+                }}
+                className="w-full py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold cursor-pointer"
+              >
+                Save Track Updates
               </button>
             </div>
           </div>

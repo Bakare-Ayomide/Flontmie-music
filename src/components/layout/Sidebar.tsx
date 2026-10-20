@@ -13,9 +13,11 @@ import {
   ChevronRight,
   PanelLeftClose,
   PanelLeftOpen,
-  User
+  User,
+  ShieldCheck
 } from 'lucide-react';
 import { Playlist, Persona } from '../../types/music';
+import { AuthUser } from '../auth/AuthModal';
 
 interface SidebarProps {
   currentTab: string;
@@ -28,6 +30,7 @@ interface SidebarProps {
   onSelectPersona: (p: Persona) => void;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
+  currentUser?: AuthUser | null;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -41,7 +44,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectPersona,
   isCollapsed,
   onToggleCollapse,
+  currentUser,
 }) => {
+  const canAccessArtist = currentUser?.role === 'artist' || currentUser?.role === 'admin';
+  const canAccessLabel = currentUser?.role === 'label' || currentUser?.role === 'admin';
+  const canAccessDistributor = currentUser?.role === 'distributor' || currentUser?.role === 'admin';
+  const canAccessAdmin = currentUser?.role === 'admin';
+  const hasAnyIndustryPortal = canAccessArtist || canAccessLabel || canAccessDistributor || canAccessAdmin;
+
   return (
     <aside
       className={`hidden md:flex shrink-0 bg-[#030303] border-r border-white/[0.08] flex-col h-[calc(100vh-57px-80px)] select-none transition-all duration-200 ${
@@ -198,6 +208,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
         )}
 
         <div className="space-y-1">
+          {playlists.length === 0 && !isCollapsed && (
+            <p className="px-2 py-3 text-[11px] text-neutral-500">No playlists yet.</p>
+          )}
           {playlists.map((playlist) => {
             const isSelected = selectedPlaylistId === playlist.id && currentPersona === 'listener';
             return (
@@ -244,82 +257,119 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       </div>
 
-      <div className="h-px bg-white/[0.08] mx-2 my-1" />
+      {/* Industry Portals Quick Nav (Only visible to authorized roles) */}
+      {hasAnyIndustryPortal && (
+        <>
+          <div className="h-px bg-white/[0.08] mx-2 my-1" />
+          <div className={`p-2 bg-neutral-950/70 border-t border-white/[0.06] space-y-1 ${isCollapsed ? 'text-center' : ''}`}>
+            {!isCollapsed && (
+              <p className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wider px-2 mb-1">
+                Industry Portals
+              </p>
+            )}
 
-      {/* Industry Portals Quick Nav */}
-      <div className={`p-2 bg-neutral-950/70 border-t border-white/[0.06] space-y-1 ${isCollapsed ? 'text-center' : ''}`}>
-        {!isCollapsed && (
-          <p className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wider px-2 mb-1">
-            Industry Portals
-          </p>
-        )}
+            {canAccessArtist && (
+              <button
+                onClick={() => onSelectPersona('artist')}
+                className={`w-full flex items-center rounded-xl transition-all ${
+                  isCollapsed
+                    ? 'justify-center p-2 h-11'
+                    : 'gap-2.5 px-2.5 py-2 text-xs font-medium'
+                } ${
+                  currentPersona === 'artist'
+                    ? 'bg-red-500/15 text-red-300 font-semibold border border-red-500/30'
+                    : 'text-neutral-400 hover:text-white hover:bg-white/[0.04]'
+                }`}
+                title="Artist Studio"
+              >
+                <Mic2 className="w-4 h-4 shrink-0 text-red-400" />
+                {!isCollapsed && (
+                  <div className="text-left truncate">
+                    <span className="block truncate font-medium">Artist Studio</span>
+                    <span className="block text-[10px] text-neutral-500 truncate">
+                      {currentUser?.display_name || 'Creator Workspace'}
+                    </span>
+                  </div>
+                )}
+              </button>
+            )}
 
-        <button
-          onClick={() => onSelectPersona('artist')}
-          className={`w-full flex items-center rounded-xl transition-all ${
-            isCollapsed
-              ? 'justify-center p-2 h-11'
-              : 'gap-2.5 px-2.5 py-2 text-xs font-medium'
-          } ${
-            currentPersona === 'artist'
-              ? 'bg-red-500/15 text-red-300 font-semibold border border-red-500/30'
-              : 'text-neutral-400 hover:text-white hover:bg-white/[0.04]'
-          }`}
-          title="Artist Studio (Nova Waves)"
-        >
-          <Mic2 className="w-4 h-4 shrink-0 text-red-400" />
-          {!isCollapsed && (
-            <div className="text-left truncate">
-              <span className="block truncate font-medium">Artist Studio</span>
-              <span className="block text-[10px] text-neutral-500 truncate">Nova Waves</span>
-            </div>
-          )}
-        </button>
+            {canAccessLabel && (
+              <button
+                onClick={() => onSelectPersona('label')}
+                className={`w-full flex items-center rounded-xl transition-all ${
+                  isCollapsed
+                    ? 'justify-center p-2 h-11'
+                    : 'gap-2.5 px-2.5 py-2 text-xs font-medium'
+                } ${
+                  currentPersona === 'label'
+                    ? 'bg-blue-500/15 text-blue-300 font-semibold border border-blue-500/30'
+                    : 'text-neutral-400 hover:text-white hover:bg-white/[0.04]'
+                }`}
+                title="Record Label Hub"
+              >
+                <Building2 className="w-4 h-4 shrink-0 text-blue-400" />
+                {!isCollapsed && (
+                  <div className="text-left truncate">
+                    <span className="block truncate font-medium">Record Label Hub</span>
+                    <span className="block text-[10px] text-neutral-500 truncate">
+                      {currentUser?.display_name || 'Roster & Releases'}
+                    </span>
+                  </div>
+                )}
+              </button>
+            )}
 
-        <button
-          onClick={() => onSelectPersona('label')}
-          className={`w-full flex items-center rounded-xl transition-all ${
-            isCollapsed
-              ? 'justify-center p-2 h-11'
-              : 'gap-2.5 px-2.5 py-2 text-xs font-medium'
-          } ${
-            currentPersona === 'label'
-              ? 'bg-blue-500/15 text-blue-300 font-semibold border border-blue-500/30'
-              : 'text-neutral-400 hover:text-white hover:bg-white/[0.04]'
-          }`}
-          title="Record Label Hub (Astral Horizon)"
-        >
-          <Building2 className="w-4 h-4 shrink-0 text-blue-400" />
-          {!isCollapsed && (
-            <div className="text-left truncate">
-              <span className="block truncate font-medium">Record Label Hub</span>
-              <span className="block text-[10px] text-neutral-500 truncate">Astral Horizon</span>
-            </div>
-          )}
-        </button>
+            {canAccessDistributor && (
+              <button
+                onClick={() => onSelectPersona('distributor')}
+                className={`w-full flex items-center rounded-xl transition-all ${
+                  isCollapsed
+                    ? 'justify-center p-2 h-11'
+                    : 'gap-2.5 px-2.5 py-2 text-xs font-medium'
+                } ${
+                  currentPersona === 'distributor'
+                    ? 'bg-purple-500/15 text-purple-300 font-semibold border border-purple-500/30'
+                    : 'text-neutral-400 hover:text-white hover:bg-white/[0.04]'
+                }`}
+                title="Distributor Portal"
+              >
+                <Network className="w-4 h-4 shrink-0 text-purple-400" />
+                {!isCollapsed && (
+                  <div className="text-left truncate">
+                    <span className="block truncate font-medium">Distributor Portal</span>
+                    <span className="block text-[10px] text-neutral-500 truncate">
+                      {currentUser?.display_name || 'Distribution Hub'}
+                    </span>
+                  </div>
+                )}
+              </button>
+            )}
 
-        <button
-          onClick={() => onSelectPersona('distributor')}
-          className={`w-full flex items-center rounded-xl transition-all ${
-            isCollapsed
-              ? 'justify-center p-2 h-11'
-              : 'gap-2.5 px-2.5 py-2 text-xs font-medium'
-          } ${
-            currentPersona === 'distributor'
-              ? 'bg-purple-500/15 text-purple-300 font-semibold border border-purple-500/30'
-              : 'text-neutral-400 hover:text-white hover:bg-white/[0.04]'
-          }`}
-          title="Distributor Engine (SoundGate)"
-        >
-          <Network className="w-4 h-4 shrink-0 text-purple-400" />
-          {!isCollapsed && (
-            <div className="text-left truncate">
-              <span className="block truncate font-medium">Distributor Engine</span>
-              <span className="block text-[10px] text-neutral-500 truncate">SoundGate Global</span>
-            </div>
-          )}
-        </button>
-      </div>
+            {canAccessAdmin && (
+              <button
+                onClick={() => onSelectPersona('admin')}
+                className={`w-full flex items-center rounded-xl transition-all ${
+                  isCollapsed
+                    ? 'justify-center p-2 h-11'
+                    : 'gap-2.5 px-2.5 py-2 text-xs font-medium'
+                } text-amber-300 hover:text-white hover:bg-amber-500/15 border border-amber-500/25`}
+                title="Owner Admin Console"
+              >
+                <ShieldCheck className="w-4 h-4 shrink-0 text-amber-400" />
+                {!isCollapsed && (
+                  <div className="text-left truncate">
+                    <span className="block truncate font-semibold text-amber-300">Admin Console</span>
+                    <span className="block text-[10px] text-amber-500/80 truncate">
+                      Platform Governance
+                    </span>
+                  </div>
+                )}
+              </button>
+            )}
+          </div>
+        </>
+      )}
     </aside>
   );
 };

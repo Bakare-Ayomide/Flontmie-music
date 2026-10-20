@@ -1,6 +1,7 @@
 <?php
 /**
- * Flontmie API - Tracks Catalog, Streaming Counter, Likes & Management
+ * Flontmie API - Tracks Catalog, Streaming Counter, Likes, Comments & Authorized Management
+ * Connects every track operation to real MySQL records with zero mock fallbacks.
  */
 
 require_once __DIR__ . '/../config.php';
@@ -10,49 +11,57 @@ require_once __DIR__ . '/../artist_enrichment.php';
 
 $method = $_SERVER['REQUEST_METHOD'];
 $action = $_GET['action'] ?? '';
-$id = $_GET['id'] ?? '';
+$id = trim($_GET['id'] ?? '');
 $pdo = Database::getConnection();
 
-try {
-    $colCheck = $pdo->query("SHOW COLUMNS FROM tracks LIKE 'flontmie_plays'")->fetch();
-    if (!$colCheck) {
-        $pdo->exec("ALTER TABLE tracks ADD COLUMN flontmie_plays BIGINT DEFAULT 0 AFTER stream_count");
+// Helper to enrich track row for API output
+function formatTrackForOutput(array $t, array $likedMap = []): array {
+    $t['mood_tags'] = !empty($t['mood_tags_json']) ? json_decode($t['mood_tags_json'], true) : [];
+    $t['cover_art_url'] = ArtistEnrichment::resolveArtworkUrl($t['cover_art_url'] ?? '', $t['video_id'] ?? $t['id']);
+    $t['yt_plays'] = ArtistEnrichment::parseMetric((string)($t['stream_count'] ?? '0'))['compact'];
+    $t['flontmie_plays'] = (int)($t['flontmie_plays'] ?? 0);
+    $t['is_liked'] = isset($likedMap[$t['id']]);
+    $t['has_local_audio'] = !empty($t['local_audio_path']);
+    $t['has_local_video'] = !empty($t['local_video_path']) || !empty($t['video_url']);
+    $t['audio_url'] = '/phpbackend/api/stream.php?id=' . urlencode($t['id']);
+    if (!empty($t['local_video_path'])) {
+        $t['video_url'] = '/phpbackend/api/stream.php?id=' . urlencode($t['id']) . '&type=video';
     }
-} catch (Throwable $e) {}
+    unset($t['local_audio_path'], $t['local_artwork_path'], $t['local_video_path'], $t['local_lyrics_path']);
+    return $t;
+}
 
-// --- STREAM COUNT INCREMENT ---
+// --- 1. STREAM COUNT INCREMENT & LISTENING HISTORY ---
 if ($method === 'POST' && $action === 'stream' && !empty($id)) {
-    $stmt = $pdo->prepare("UPDATE tracks SET stream_count = stream_count + 1, flontmie_plays = COALESCE(flontmie_plays, 0) + 1 WHERE id = ?");
-    $stmt->execute([$id]);
+    $stmt = $pdo->prepare("UPDATE tracks SET stream_count = stream_count + 1, flontmie_plays = COALESCE(flontmie_plays, 0) + 1 WHERE id = ? OR video_id = ?");
+    $stmt->execute([$id, $id]);
 
-    // Record user history if logged in
     $user = Auth::getCurrentUser();
     if ($user) {
-        $hist = $pdo->prepare("INSERT INTO user_history (user_id, track_id) VALUES (?, ?)");
-        $hist->execute([$user['id'], $id]);
+        try {
+            $hist = $pdo->prepare("INSERT INTO user_history (user_id, track_id) VALUES (?, ?)");
+            $hist->execute([$user['id'], $id]);
+        } catch (Exception $e) {}
     }
 
     json_response(['status' => 'success', 'message' => 'Stream registered']);
 }
 
-// --- TOGGLE LIKE / FAVORITE ---
+// --- 2. TOGGLE LIKE / FAVORITE ---
 if ($method === 'POST' && $action === 'like' && !empty($id)) {
     $user = Auth::requireAuth();
     $userId = $user['id'];
 
-    // Check if already liked
     $check = $pdo->prepare("SELECT id FROM user_favorites WHERE user_id = ? AND track_id = ?");
     $check->execute([$userId, $id]);
     $existing = $check->fetch();
 
     if ($existing) {
-        // Unlike
         $del = $pdo->prepare("DELETE FROM user_favorites WHERE user_id = ? AND track_id = ?");
         $del->execute([$userId, $id]);
         $pdo->prepare("UPDATE tracks SET likes_count = GREATEST(0, likes_count - 1) WHERE id = ?")->execute([$id]);
         json_response(['status' => 'success', 'liked' => false, 'message' => 'Removed from favorites']);
     } else {
-        // Like
         $ins = $pdo->prepare("INSERT INTO user_favorites (user_id, track_id) VALUES (?, ?)");
         $ins->execute([$userId, $id]);
         $pdo->prepare("UPDATE tracks SET likes_count = likes_count + 1 WHERE id = ?")->execute([$id]);
@@ -60,7 +69,41 @@ if ($method === 'POST' && $action === 'like' && !empty($id)) {
     }
 }
 
-// --- GET LIKED TRACKS ---
+// --- 3. REAL TRACK COMMENTS (GET & POST) ---
+if ($method === 'GET' && $action === 'comments' && !empty($id)) {
+    $stmt = $pdo->prepare("SELECT id, track_id, user_id, author_name, author_avatar, body, created_at FROM track_comments WHERE track_id = ? ORDER BY created_at DESC LIMIT 100");
+    $stmt->execute([$id]);
+    json_response(['status' => 'success', 'comments' => $stmt->fetchAll()]);
+}
+
+if ($method === 'POST' && $action === 'comment' && !empty($id)) {
+    $user = Auth::requireAuth();
+    $input = get_json_input();
+    $body = trim($input['body'] ?? '');
+    if (empty($body)) {
+        json_response(['status' => 'error', 'message' => 'Comment text cannot be empty.'], 400);
+    }
+    $commentId = 'cmt_' . bin2hex(random_bytes(6));
+    $pdo->prepare("
+        INSERT INTO track_comments (id, track_id, user_id, author_name, author_avatar, body)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ")->execute([$commentId, $id, $user['id'], $user['display_name'], $user['avatar_url'] ?? null, substr($body, 0, 1000)]);
+
+    json_response([
+        'status' => 'success',
+        'comment' => [
+            'id' => $commentId,
+            'track_id' => $id,
+            'user_id' => $user['id'],
+            'author_name' => $user['display_name'],
+            'author_avatar' => $user['avatar_url'] ?? null,
+            'body' => substr($body, 0, 1000),
+            'created_at' => date('Y-m-d H:i:s')
+        ]
+    ], 201);
+}
+
+// --- 4. GET LIKED TRACKS ---
 if ($method === 'GET' && $action === 'liked') {
     $user = Auth::requireAuth();
     $stmt = $pdo->prepare("
@@ -72,56 +115,71 @@ if ($method === 'GET' && $action === 'liked') {
     $stmt->execute([$user['id']]);
     $tracks = $stmt->fetchAll();
 
+    $likedMap = [];
+    foreach ($tracks as $t) {
+        $likedMap[$t['id']] = true;
+    }
     foreach ($tracks as &$t) {
-        $t['mood_tags'] = !empty($t['mood_tags_json']) ? json_decode($t['mood_tags_json'], true) : [];
-        $t['cover_art_url'] = ArtistEnrichment::resolveArtworkUrl($t['cover_art_url'] ?? '', $t['video_id'] ?? $t['id']);
-        $t['yt_plays'] = ArtistEnrichment::parseMetric((string)($t['stream_count'] ?? ''))['compact'];
-        $t['flontmie_plays'] = (int)($t['flontmie_plays'] ?? 0);
-        $t['is_liked'] = true;
-        $t['audio_url'] = '/phpbackend/api/stream.php?id=' . urlencode($t['id']);
-        unset($t['local_audio_path'], $t['local_artwork_path']);
+        $t = formatTrackForOutput($t, $likedMap);
     }
     json_response(['status' => 'success', 'tracks' => $tracks]);
 }
 
-// --- GET SINGLE TRACK ---
+// --- 5. GET LISTENING HISTORY ---
+if ($method === 'GET' && $action === 'history') {
+    $user = Auth::requireAuth();
+    $stmt = $pdo->prepare("
+        SELECT t.*, MAX(h.played_at) AS last_played_at
+        FROM user_history h
+        JOIN tracks t ON t.id = h.track_id
+        WHERE h.user_id = ? AND t.is_deleted = 0
+        GROUP BY t.id
+        ORDER BY last_played_at DESC
+        LIMIT 50
+    ");
+    $stmt->execute([$user['id']]);
+    $tracks = $stmt->fetchAll();
+    foreach ($tracks as &$t) {
+        $t = formatTrackForOutput($t);
+    }
+    json_response(['status' => 'success', 'tracks' => $tracks]);
+}
+
+// --- 6. GET SINGLE TRACK ---
 if ($method === 'GET' && !empty($id)) {
-    $stmt = $pdo->prepare("SELECT * FROM tracks WHERE id = ? AND is_deleted = 0");
-    $stmt->execute([$id]);
+    $stmt = $pdo->prepare("SELECT * FROM tracks WHERE (id = ? OR video_id = ?) AND is_deleted = 0 LIMIT 1");
+    $stmt->execute([$id, $id]);
     $track = $stmt->fetch();
 
     if (!$track) {
         json_response(['status' => 'error', 'message' => 'Track not found'], 404);
     }
 
-    $track['mood_tags'] = !empty($track['mood_tags_json']) ? json_decode($track['mood_tags_json'], true) : [];
-    $track['cover_art_url'] = ArtistEnrichment::resolveArtworkUrl($track['cover_art_url'] ?? '', $track['video_id'] ?? $track['id']);
-    $track['yt_plays'] = ArtistEnrichment::parseMetric((string)($track['stream_count'] ?? ''))['compact'];
-    $track['flontmie_plays'] = (int)($track['flontmie_plays'] ?? 0);
-    $track['audio_url'] = '/phpbackend/api/stream.php?id=' . urlencode($track['id']);
-    unset($track['local_audio_path'], $track['local_artwork_path']);
-
-    // Check liked status if user logged in
     $user = Auth::getCurrentUser();
-    $track['is_liked'] = false;
+    $likedMap = [];
     if ($user) {
         $chk = $pdo->prepare("SELECT id FROM user_favorites WHERE user_id = ? AND track_id = ?");
-        $chk->execute([$user['id'], $id]);
-        $track['is_liked'] = (bool)$chk->fetch();
+        $chk->execute([$user['id'], $track['id']]);
+        if ($chk->fetch()) {
+            $likedMap[$track['id']] = true;
+        }
     }
 
+    $track = formatTrackForOutput($track, $likedMap);
     json_response(['status' => 'success', 'track' => $track]);
 }
 
-// --- GET TRACKS CATALOG ---
+// --- 7. GET TRACKS CATALOG ---
 if ($method === 'GET') {
-    $genre = $_GET['genre'] ?? '';
-    $artistId = $_GET['artist_id'] ?? '';
-    $albumId = $_GET['album_id'] ?? '';
-    $country = $_GET['country'] ?? '';
-    $year = $_GET['year'] ?? '';
-    $search = $_GET['q'] ?? '';
-    $limit = min(100, max(1, (int)($_GET['limit'] ?? 50)));
+    $genre = trim($_GET['genre'] ?? '');
+    $artistId = trim($_GET['artist_id'] ?? '');
+    $albumId = trim($_GET['album_id'] ?? '');
+    $distributorId = trim($_GET['distributor_id'] ?? '');
+    $labelId = trim($_GET['label_id'] ?? '');
+    $country = trim($_GET['country'] ?? '');
+    $year = trim($_GET['year'] ?? '');
+    $search = trim($_GET['q'] ?? '');
+    $limit = min(200, max(1, (int)($_GET['limit'] ?? 60)));
     $offset = max(0, (int)($_GET['offset'] ?? 0));
 
     $sql = "SELECT * FROM tracks WHERE is_deleted = 0 AND (status IS NULL OR status = 'published' OR status = 'active') AND audio_url NOT LIKE '%soundhelix%'";
@@ -143,6 +201,16 @@ if ($method === 'GET') {
         $params[] = $albumId;
     }
 
+    if (!empty($distributorId)) {
+        $sql .= " AND distributor_id = ?";
+        $params[] = $distributorId;
+    }
+
+    if (!empty($labelId)) {
+        $sql .= " AND label_id = ?";
+        $params[] = $labelId;
+    }
+
     if (!empty($country) && strtolower($country) !== 'all') {
         $sql .= " AND country = ?";
         $params[] = strtoupper($country);
@@ -154,14 +222,15 @@ if ($method === 'GET') {
     }
 
     if (!empty($search)) {
-        $sql .= " AND (title LIKE ? OR artist_name LIKE ? OR album_name LIKE ?)";
+        $sql .= " AND (title LIKE ? OR artist_name LIKE ? OR album_name LIKE ? OR genre LIKE ?)";
         $searchTerm = '%' . $search . '%';
+        $params[] = $searchTerm;
         $params[] = $searchTerm;
         $params[] = $searchTerm;
         $params[] = $searchTerm;
     }
 
-    $sql .= " ORDER BY featured_on_home DESC, stream_count DESC, created_at DESC LIMIT {$limit} OFFSET {$offset}";
+    $sql .= " ORDER BY featured_on_home DESC, editorial_boost DESC, flontmie_plays DESC, stream_count DESC, created_at DESC LIMIT {$limit} OFFSET {$offset}";
 
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
@@ -180,7 +249,6 @@ if ($method === 'GET') {
         } catch (Exception $e) {}
     }
 
-    // Check user liked tracks map
     $user = Auth::getCurrentUser();
     $likedMap = [];
     if ($user) {
@@ -192,14 +260,7 @@ if ($method === 'GET') {
     }
 
     foreach ($tracks as &$t) {
-        $t['mood_tags'] = !empty($t['mood_tags_json']) ? json_decode($t['mood_tags_json'], true) : [];
-        $t['cover_art_url'] = ArtistEnrichment::resolveArtworkUrl($t['cover_art_url'] ?? '', $t['video_id'] ?? $t['id']);
-        $t['yt_plays'] = ArtistEnrichment::parseMetric((string)($t['stream_count'] ?? ''))['compact'];
-        $t['flontmie_plays'] = (int)($t['flontmie_plays'] ?? 0);
-        $t['is_liked'] = isset($likedMap[$t['id']]);
-        $t['audio_url'] = '/phpbackend/api/stream.php?id=' . urlencode($t['id']);
-        $t['has_local_audio'] = !empty($t['local_audio_path']);
-        unset($t['local_audio_path'], $t['local_artwork_path']);
+        $t = formatTrackForOutput($t, $likedMap);
     }
 
     json_response([
@@ -209,67 +270,110 @@ if ($method === 'GET') {
     ]);
 }
 
-// --- CREATE TRACK (POST) ---
+// --- 8. CREATE TRACK METADATA RECORD (POST) ---
 if ($method === 'POST') {
     $user = Auth::requireRole(['artist', 'distributor', 'label', 'admin']);
     $input = get_json_input();
 
     $title = trim($input['title'] ?? '');
     $artistName = trim($input['artist_name'] ?? $user['display_name']);
-    $artistId = trim($input['artist_id'] ?? 'art_' . $user['id']);
+    $artistId = trim($input['artist_id'] ?? ($user['artist_id'] ?? 'art_' . substr(md5(strtolower($artistName)), 0, 12)));
     $audioUrl = trim($input['audio_url'] ?? '');
 
-    if (empty($title) || empty($audioUrl)) {
-        json_response(['status' => 'error', 'message' => 'Track title and audio URL are required.'], 400);
+    if (empty($title)) {
+        json_response(['status' => 'error', 'message' => 'Track title is required.'], 400);
+    }
+
+    // Verify ownership for distributors
+    if ($user['role'] === 'distributor' && !empty($input['artist_id'])) {
+        $aChk = $pdo->prepare("SELECT distributor_id, created_by_user_id FROM artists WHERE id = ? LIMIT 1");
+        $aChk->execute([$artistId]);
+        $aRow = $aChk->fetch();
+        if ($aRow && $aRow['distributor_id'] !== $user['distributor_id'] && $aRow['created_by_user_id'] !== $user['id']) {
+            json_response(['status' => 'error', 'message' => 'Forbidden: You can only create tracks for artists managed by your distributor account.'], 403);
+        }
     }
 
     $trackId = 'trk_' . bin2hex(random_bytes(6));
-    $albumId = $input['album_id'] ?? null;
-    $albumName = $input['album_name'] ?? null;
-    $genre = $input['genre'] ?? 'Afrobeats';
-    $cover = $input['cover_art_url'] ?? 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600';
+    if (empty($audioUrl)) {
+        $audioUrl = '/phpbackend/api/stream.php?id=' . urlencode($trackId);
+    }
+
+    $albumId = !empty($input['album_id']) ? trim($input['album_id']) : null;
+    $albumName = trim($input['album_name'] ?? ($title . ' - Single'));
+    $genre = trim($input['genre'] ?? 'Afrobeats');
+    $cover = trim($input['cover_art_url'] ?? '');
+    $videoUrl = !empty($input['video_url']) ? trim($input['video_url']) : null;
     $duration = (int)($input['duration'] ?? 180);
-    $lyrics = $input['lyrics'] ?? '';
-    $isrc = $input['isrc'] ?? 'US-FLN-' . date('y') . '-' . rand(10000, 99999);
+    $lyrics = trim($input['lyrics'] ?? '');
+    $isrc = !empty($input['isrc']) ? trim($input['isrc']) : null;
     $explicit = !empty($input['explicit']) ? 1 : 0;
-    $scale = $input['scale'] ?? 'C Major';
-    $bpm = (int)($input['bpm'] ?? 120);
+    $scale = !empty($input['scale']) ? trim($input['scale']) : null;
+    $bpm = !empty($input['bpm']) ? (int)$input['bpm'] : null;
     $moodTags = is_array($input['mood_tags'] ?? null) ? $input['mood_tags'] : [$genre];
-    $featured = $input['featured_artists'] ?? null;
-    $producer = $input['producer'] ?? null;
-    $composer = $input['composer'] ?? null;
+    $featured = !empty($input['featured_artists']) ? trim($input['featured_artists']) : null;
+    $producer = !empty($input['producer']) ? trim($input['producer']) : null;
+    $composer = !empty($input['composer']) ? trim($input['composer']) : null;
+    $distributorId = $user['distributor_id'] ?? ($input['distributor_id'] ?? null);
+    $labelId = $user['label_id'] ?? ($input['label_id'] ?? null);
 
     $stmt = $pdo->prepare("
-        INSERT INTO tracks (id, title, artist_id, artist_name, album_id, album_name, duration, genre, cover_art_url, audio_url, lyrics, isrc, explicit, scale, bpm, mood_tags_json, featured_artists, producer, composer)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO tracks (
+            id, title, artist_id, artist_name, album_id, album_name, duration, genre,
+            cover_art_url, audio_url, video_url, lyrics, isrc, explicit, scale, bpm,
+            mood_tags_json, featured_artists, producer, composer,
+            distributor_id, label_id, uploaded_by_user_id, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'published')
     ");
     $stmt->execute([
-        $trackId, $title, $artistId, $artistName, $albumId, $albumName, $duration, $genre, $cover, $audioUrl,
-        $lyrics, $isrc, $explicit, $scale, $bpm, json_encode($moodTags), $featured, $producer, $composer
+        $trackId, $title, $artistId, $artistName, $albumId, $albumName, $duration, $genre,
+        $cover, $audioUrl, $videoUrl, $lyrics, $isrc, $explicit, $scale, $bpm,
+        json_encode($moodTags), $featured, $producer, $composer,
+        $distributorId, $labelId, $user['id']
     ]);
 
+    Auth::logAudit($user['id'], 'TRACK_CREATED', 'TRACK', $trackId, ['title' => $title, 'artist' => $artistName]);
     json_response([
         'status' => 'success',
-        'message' => 'Track uploaded successfully',
+        'message' => 'Track saved to database.',
         'track_id' => $trackId
     ], 201);
 }
 
-// --- UPDATE TRACK (PUT) ---
+// --- 9. UPDATE TRACK (PUT) ---
 if ($method === 'PUT' && !empty($id)) {
     $user = Auth::requireRole(['artist', 'distributor', 'label', 'admin']);
     $input = get_json_input();
 
+    $chk = $pdo->prepare("SELECT * FROM tracks WHERE id = ? AND is_deleted = 0 LIMIT 1");
+    $chk->execute([$id]);
+    $existing = $chk->fetch();
+    if (!$existing) {
+        json_response(['status' => 'error', 'message' => 'Track not found'], 404);
+    }
+
+    if ($user['role'] !== 'admin') {
+        $ownsTrack = ($existing['uploaded_by_user_id'] === $user['id'])
+            || ($user['role'] === 'distributor' && !empty($user['distributor_id']) && $existing['distributor_id'] === $user['distributor_id'])
+            || ($user['role'] === 'label' && !empty($user['label_id']) && $existing['label_id'] === $user['label_id'])
+            || ($user['role'] === 'artist' && !empty($user['artist_id']) && $existing['artist_id'] === $user['artist_id']);
+        if (!$ownsTrack) {
+            json_response(['status' => 'error', 'message' => 'Forbidden: You do not have permission to edit this track.'], 403);
+        }
+    }
+
     $stmt = $pdo->prepare("
         UPDATE tracks 
-        SET title = COALESCE(?, title),
-            genre = COALESCE(?, genre),
-            cover_art_url = COALESCE(?, cover_art_url),
-            audio_url = COALESCE(?, audio_url),
+        SET title = COALESCE(NULLIF(?, ''), title),
+            genre = COALESCE(NULLIF(?, ''), genre),
+            cover_art_url = COALESCE(NULLIF(?, ''), cover_art_url),
+            audio_url = COALESCE(NULLIF(?, ''), audio_url),
+            video_url = COALESCE(NULLIF(?, ''), video_url),
             lyrics = COALESCE(?, lyrics),
-            isrc = COALESCE(?, isrc),
-            scale = COALESCE(?, scale),
-            bpm = COALESCE(?, bpm)
+            isrc = COALESCE(NULLIF(?, ''), isrc),
+            scale = COALESCE(NULLIF(?, ''), scale),
+            bpm = COALESCE(?, bpm),
+            explicit = COALESCE(?, explicit)
         WHERE id = ?
     ");
     $stmt->execute([
@@ -277,29 +381,44 @@ if ($method === 'PUT' && !empty($id)) {
         $input['genre'] ?? null,
         $input['cover_art_url'] ?? null,
         $input['audio_url'] ?? null,
+        $input['video_url'] ?? null,
         $input['lyrics'] ?? null,
         $input['isrc'] ?? null,
         $input['scale'] ?? null,
         $input['bpm'] ?? null,
+        isset($input['explicit']) ? (!empty($input['explicit']) ? 1 : 0) : null,
         $id
     ]);
 
     json_response(['status' => 'success', 'message' => 'Track updated successfully']);
 }
 
-// --- DELETE TRACK (DELETE) ---
+// --- 10. DELETE TRACK (DELETE) ---
 if ($method === 'DELETE' && !empty($id)) {
-    $user = Auth::requireRole(['distributor', 'admin']);
-    
-    // Soft delete for safety & recoverability
-    $stmt = $pdo->prepare("UPDATE tracks SET is_deleted = 1 WHERE id = ?");
+    $user = Auth::requireRole(['artist', 'distributor', 'label', 'admin']);
+
+    $chk = $pdo->prepare("SELECT * FROM tracks WHERE id = ? LIMIT 1");
+    $chk->execute([$id]);
+    $existing = $chk->fetch();
+    if (!$existing) {
+        json_response(['status' => 'error', 'message' => 'Track not found'], 404);
+    }
+
+    if ($user['role'] !== 'admin') {
+        $ownsTrack = ($existing['uploaded_by_user_id'] === $user['id'])
+            || ($user['role'] === 'distributor' && !empty($user['distributor_id']) && $existing['distributor_id'] === $user['distributor_id'])
+            || ($user['role'] === 'label' && !empty($user['label_id']) && $existing['label_id'] === $user['label_id'])
+            || ($user['role'] === 'artist' && !empty($user['artist_id']) && $existing['artist_id'] === $user['artist_id']);
+        if (!$ownsTrack) {
+            json_response(['status' => 'error', 'message' => 'Forbidden: You do not have permission to delete this track.'], 403);
+        }
+    }
+
+    $stmt = $pdo->prepare("UPDATE tracks SET is_deleted = 1, status = 'removed' WHERE id = ?");
     $stmt->execute([$id]);
 
-    // Audit log
-    $log = $pdo->prepare("INSERT INTO audit_logs (user_id, action, entity_type, entity_id, details_json, ip_address) VALUES (?, ?, ?, ?, ?, ?)");
-    $log->execute([$user['id'], 'TRACK_DELETED', 'TRACK', $id, json_encode(['soft_delete' => true]), $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1']);
-
-    json_response(['status' => 'success', 'message' => 'Track moved to trash (soft deleted).']);
+    Auth::logAudit($user['id'], 'TRACK_DELETED', 'TRACK', $id, ['soft_delete' => true]);
+    json_response(['status' => 'success', 'message' => 'Track deleted.']);
 }
 
 json_response(['status' => 'error', 'message' => 'Method not allowed'], 405);

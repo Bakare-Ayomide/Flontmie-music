@@ -1,21 +1,16 @@
 <?php
 /**
- * Flontmie YouTube Music Discovery & Catalog API
- * Implementation using YouTube Music Innertube API (ytmusicapi standard)
- * 
- * Supports:
- * - 🎵 Songs & Search Results (all, songs, artists, albums, playlists)
- * - 👨‍🎤 Artists, Albums & Discographies
- * - 📂 Playlists & Playlist Tracks
- * - 🎼 Genres, Moods & Charts
- * - 📝 Lyrics (via Watch Next -> Lyrics browseId)
- * - 📥 Import into MySQL Catalog
+ * Flontmie Unified Discovery, App-Wide Search & YouTube Music Catalog API
+ * Searches both the Flontmie MySQL database (admin, distributor, label & artist content)
+ * and the live YouTube Music API (ytmusicapi / Innertube) simultaneously.
+ * Zero mock data, zero fake lyrics, zero seed scripts.
  */
 
 require_once __DIR__ . '/../config.php';
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth_helper.php';
 require_once __DIR__ . '/../media_engine.php';
+require_once __DIR__ . '/../artist_enrichment.php';
 
 $method = $_SERVER['REQUEST_METHOD'];
 $action = $_GET['action'] ?? 'search';
@@ -27,16 +22,13 @@ $publicActions = ['search', 'suggestions', 'charts', 'moods', 'lyrics', 'artist'
 $adminUser = null;
 
 if (!in_array($action, $publicActions, true)) {
-    // Administrative ingestion / storage / sync operations require Admin role
     $adminUser = Auth::requireRole(['admin']);
     if ($method === 'POST') {
         Auth::verifyCsrf($adminUser, $input);
     }
 } else {
-    // For public discovery actions, optionally detect logged-in user for audit logging
     $adminUser = Auth::getCurrentUser();
 }
-
 
 function call_ytmusic($endpoint, $payload = [], $country = 'US') {
     $url = "https://music.youtube.com/youtubei/v1/{$endpoint}?prettyPrint=false";
@@ -100,7 +92,6 @@ function call_ytmusic($endpoint, $payload = [], $country = 'US') {
     return null;
 }
 
-// Helper: Extract runs text
 function get_runs_text($runsObj) {
     if (!$runsObj || !isset($runsObj['runs']) || !is_array($runsObj['runs'])) {
         return '';
@@ -112,7 +103,6 @@ function get_runs_text($runsObj) {
     return $text;
 }
 
-// Helper: Load existing catalog videoIds and normalized title+artist keys for fast duplicate detection
 function get_catalog_lookup(PDO $pdo): array {
     $byVideo = [];
     $byKey = [];
@@ -129,7 +119,7 @@ function get_catalog_lookup(PDO $pdo): array {
     return ['video' => $byVideo, 'key' => $byKey];
 }
 
-// --- 1. ADMIN-ONLY SEARCH YOUTUBE MUSIC (Songs, Artists, Albums, Playlists + Year, Country, Genre Filters) ---
+// --- 1. UNIFIED APP-WIDE SEARCH (Flontmie MySQL Catalog + YouTube Music API) ---
 if ($action === 'search') {
     $query = trim($_GET['q'] ?? '');
     $filter = strtolower(trim($_GET['filter'] ?? '')); // 'songs', 'artists', 'albums', 'playlists', 'all'
@@ -138,13 +128,171 @@ if ($action === 'search') {
     $genreFilter = trim($_GET['genre'] ?? '');
 
     if (empty($query) && !empty($genreFilter) && $genreFilter !== 'All') {
-        $query = $genreFilter . ' Music';
+        $query = $genreFilter;
     }
     if (empty($query)) {
         json_response(['status' => 'error', 'message' => 'Search query is required'], 400);
     }
 
-    // Build effective query incorporating optional genre and release year criteria
+    $songs = [];
+    $artists = [];
+    $albums = [];
+    $playlists = [];
+
+    $seenSongKeys = [];
+    $seenVideoIds = [];
+    $seenArtistKeys = [];
+    $seenAlbumKeys = [];
+    $seenPlaylistKeys = [];
+
+    // STEP A: Search Flontmie MySQL Database first (Admin, Distributor, Label, and Artist uploads/catalog)
+    try {
+        $like = '%' . $query . '%';
+
+        // 1. Local Catalog Songs
+        if (empty($filter) || $filter === 'all' || $filter === 'songs') {
+            $tSql = "
+                SELECT * FROM tracks
+                WHERE is_deleted = 0
+                  AND (status IS NULL OR status = 'published' OR status = 'active')
+                  AND (title LIKE ? OR artist_name LIKE ? OR album_name LIKE ? OR genre LIKE ? OR isrc LIKE ?)
+            ";
+            $tParams = [$like, $like, $like, $like, $like];
+
+            if (!empty($genreFilter) && $genreFilter !== 'All') {
+                $tSql .= " AND genre LIKE ?";
+                $tParams[] = '%' . $genreFilter . '%';
+            }
+            if (!empty($yearFilter) && $yearFilter !== 'All' && is_numeric($yearFilter)) {
+                $tSql .= " AND release_year = ?";
+                $tParams[] = (int)$yearFilter;
+            }
+            $tSql .= " ORDER BY featured_on_home DESC, flontmie_plays DESC, stream_count DESC, created_at DESC LIMIT 30";
+
+            $tStmt = $pdo->prepare($tSql);
+            $tStmt->execute($tParams);
+            while ($row = $tStmt->fetch()) {
+                $sKey = strtolower(trim($row['title']) . '||' . trim($row['artist_name']));
+                $seenSongKeys[$sKey] = true;
+                if (!empty($row['video_id'])) {
+                    $seenVideoIds[$row['video_id']] = true;
+                }
+
+                $coverUrl = ArtistEnrichment::resolveArtworkUrl($row['cover_art_url'] ?? '', $row['video_id'] ?? $row['id']);
+                $audioUrl = '/phpbackend/api/stream.php?id=' . urlencode($row['id']);
+                $videoUrl = !empty($row['local_video_path'])
+                    ? ('/phpbackend/api/stream.php?id=' . urlencode($row['id']) . '&type=video')
+                    : ($row['video_url'] ?? null);
+
+                $songs[] = [
+                    'type' => 'song',
+                    'source' => 'catalog',
+                    'id' => $row['id'],
+                    'catalog_track_id' => $row['id'],
+                    'videoId' => $row['video_id'] ?? null,
+                    'title' => $row['title'],
+                    'artist' => $row['artist_name'],
+                    'artist_id' => $row['artist_id'],
+                    'album' => $row['album_name'] ?: ($row['title'] . ' - Single'),
+                    'album_id' => $row['album_id'],
+                    'duration' => (int)($row['duration'] ?: 200),
+                    'genre' => $row['genre'] ?: 'Afrobeats',
+                    'country' => $row['country'] ?: 'US',
+                    'release_year' => (int)($row['release_year'] ?: date('Y')),
+                    'release_date' => $row['release_date'] ?: date('Y-m-d'),
+                    'cover_url' => $coverUrl,
+                    'audio_url' => $audioUrl,
+                    'video_url' => $videoUrl,
+                    'lyrics' => $row['lyrics'] ?? null,
+                    'plays' => ArtistEnrichment::parseMetric((string)($row['stream_count'] ?? '0'))['compact'],
+                    'stream_count' => (int)($row['stream_count'] ?? 0),
+                    'flontmie_plays' => (int)($row['flontmie_plays'] ?? 0),
+                    'already_imported' => true,
+                    'distributor_id' => $row['distributor_id'] ?? null
+                ];
+            }
+        }
+
+        // 2. Local Catalog Artists
+        if (empty($filter) || $filter === 'all' || $filter === 'artists') {
+            $aStmt = $pdo->prepare("
+                SELECT * FROM artists
+                WHERE (status IS NULL OR status != 'hidden')
+                  AND (name LIKE ? OR stage_name LIKE ? OR bio LIKE ? OR genres_json LIKE ?)
+                ORDER BY is_featured DESC, total_streams DESC, created_at DESC
+                LIMIT 20
+            ");
+            $aStmt->execute([$like, $like, $like, $like]);
+            while ($a = $aStmt->fetch()) {
+                $aKey = strtolower(trim($a['name']));
+                $seenArtistKeys[$aKey] = true;
+                $artists[] = [
+                    'type' => 'artist',
+                    'source' => 'catalog',
+                    'id' => $a['id'],
+                    'name' => $a['name'],
+                    'subscribers' => !empty($a['followers']) ? (number_format((int)$a['followers']) . ' followers') : 'Flontmie Artist',
+                    'avatar_url' => ArtistEnrichment::resolveArtworkUrl($a['avatar_url'] ?? '', $a['id']),
+                    'verified' => (bool)($a['verified'] ?? false)
+                ];
+            }
+        }
+
+        // 3. Local Catalog Albums / Releases
+        if (empty($filter) || $filter === 'all' || $filter === 'albums') {
+            $albStmt = $pdo->prepare("
+                SELECT * FROM albums
+                WHERE (status IS NULL OR status = 'published' OR status = 'scheduled')
+                  AND (title LIKE ? OR artist_name LIKE ? OR genre LIKE ? OR upc LIKE ?)
+                ORDER BY is_featured DESC, release_date DESC, created_at DESC
+                LIMIT 20
+            ");
+            $albStmt->execute([$like, $like, $like, $like]);
+            while ($alb = $albStmt->fetch()) {
+                $albKey = strtolower(trim($alb['title']) . '||' . trim($alb['artist_name']));
+                $seenAlbumKeys[$albKey] = true;
+                $albums[] = [
+                    'type' => 'album',
+                    'source' => 'catalog',
+                    'id' => $alb['id'],
+                    'browseId' => $alb['id'],
+                    'title' => $alb['title'],
+                    'artist' => $alb['artist_name'],
+                    'artist_id' => $alb['artist_id'],
+                    'release_type' => $alb['release_type'] ?? 'album',
+                    'year' => !empty($alb['release_date']) ? substr($alb['release_date'], 0, 4) : date('Y'),
+                    'cover_url' => ArtistEnrichment::resolveArtworkUrl($alb['cover_art_url'] ?? '', $alb['artist_id'] ?? $alb['id'])
+                ];
+            }
+        }
+
+        // 4. Local Catalog Playlists
+        if (empty($filter) || $filter === 'all' || $filter === 'playlists') {
+            $plStmt = $pdo->prepare("
+                SELECT * FROM playlists
+                WHERE is_public = 1 AND (status IS NULL OR status = 'published')
+                  AND (title LIKE ? OR description LIKE ? OR genre_category LIKE ?)
+                ORDER BY is_featured DESC, created_at DESC
+                LIMIT 20
+            ");
+            $plStmt->execute([$like, $like, $like]);
+            while ($pl = $plStmt->fetch()) {
+                $plKey = strtolower(trim($pl['title']));
+                $seenPlaylistKeys[$plKey] = true;
+                $playlists[] = [
+                    'type' => 'playlist',
+                    'source' => 'catalog',
+                    'id' => $pl['id'],
+                    'browseId' => $pl['id'],
+                    'title' => $pl['title'],
+                    'curator' => 'Flontmie Catalog',
+                    'cover_url' => ArtistEnrichment::resolveArtworkUrl($pl['cover_art_url'] ?? '', $pl['id'])
+                ];
+            }
+        }
+    } catch (Exception $e) {}
+
+    // STEP B: Search YouTube Music API (ytmusicapi / Innertube) and merge results
     $effectiveQuery = $query;
     if (!empty($genreFilter) && $genreFilter !== 'All' && stripos($effectiveQuery, $genreFilter) === false) {
         $effectiveQuery .= ' ' . $genreFilter;
@@ -166,10 +314,6 @@ if ($action === 'search') {
 
     $raw = call_ytmusic('search', $searchPayload, $country);
     $catalogLookup = get_catalog_lookup($pdo);
-    $songs = [];
-    $artists = [];
-    $albums = [];
-    $playlists = [];
 
     if ($raw && isset($raw['contents']['tabbedSearchResultsRenderer']['tabs'][0]['tabRenderer']['content']['sectionListRenderer']['contents'])) {
         $sections = $raw['contents']['tabbedSearchResultsRenderer']['tabs'][0]['tabRenderer']['content']['sectionListRenderer']['contents'];
@@ -195,12 +339,10 @@ if ($action === 'search') {
                 $col1Text = get_runs_text($flex[1]['musicResponsiveListItemFlexColumnRenderer']['text'] ?? null);
                 $col2Text = count($flex) > 2 ? get_runs_text($flex[2]['musicResponsiveListItemFlexColumnRenderer']['text'] ?? null) : '';
 
-                // Thumbnail
                 $thumbs = $r['thumbnail']['musicThumbnailRenderer']['thumbnail']['thumbnails'] ?? [];
                 $thumbUrl = '';
                 if (!empty($thumbs)) {
                     $thumbUrl = end($thumbs)['url'] ?? '';
-                    // Upgrade size if possible
                     $thumbUrl = preg_replace('/=w\d+-h\d+/', '=w600-h600', $thumbUrl);
                 }
 
@@ -209,44 +351,56 @@ if ($action === 'search') {
                     $videoId = $r['overlay']['musicItemThumbnailOverlayRenderer']['content']['musicPlayButtonRenderer']['playNavigationEndpoint']['watchEndpoint']['videoId'];
                 }
 
-                // Check browse endpoint for artists/albums/playlists
                 $browseEndpoint = $r['navigationEndpoint']['browseEndpoint'] ?? null;
                 $browseId = $browseEndpoint['browseId'] ?? '';
 
-                // Identify item type
                 $lowerSubtitle = strtolower($col1Text);
                 $isArtist = strpos($lowerSubtitle, 'artist') !== false || strpos($browseId, 'UC') === 0;
                 $isAlbum = strpos($lowerSubtitle, 'album') !== false || strpos($lowerSubtitle, 'ep') !== false || strpos($lowerSubtitle, 'single') !== false || strpos($browseId, 'MPREb_') === 0;
                 $isPlaylist = strpos($lowerSubtitle, 'playlist') !== false || strpos($browseId, 'VLPL') === 0 || strpos($browseId, 'RDCLAK') === 0;
 
                 if ($isArtist) {
+                    $aKey = strtolower(trim($col0Text));
+                    if (isset($seenArtistKeys[$aKey])) continue;
+                    $seenArtistKeys[$aKey] = true;
                     $artists[] = [
                         'type' => 'artist',
+                        'source' => 'ytmusic',
                         'id' => $browseId ?: ('art_' . md5($col0Text)),
                         'name' => $col0Text,
                         'subscribers' => $col1Text,
-                        'avatar_url' => $thumbUrl ?: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600'
+                        'avatar_url' => $thumbUrl
                     ];
                 } elseif ($isAlbum) {
+                    $artistClean = str_replace(['Album • ', 'Single • ', 'EP • '], '', $col1Text);
+                    $albKey = strtolower(trim($col0Text) . '||' . trim($artistClean));
+                    if (isset($seenAlbumKeys[$albKey])) continue;
+                    $seenAlbumKeys[$albKey] = true;
                     $albums[] = [
                         'type' => 'album',
+                        'source' => 'ytmusic',
                         'id' => $browseId ?: ('alb_' . md5($col0Text)),
+                        'browseId' => $browseId,
                         'title' => $col0Text,
-                        'artist' => str_replace(['Album • ', 'Single • ', 'EP • '], '', $col1Text),
+                        'artist' => $artistClean,
                         'year' => date('Y'),
-                        'cover_url' => $thumbUrl ?: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600'
+                        'cover_url' => $thumbUrl
                     ];
                 } elseif ($isPlaylist) {
+                    $plKey = strtolower(trim($col0Text));
+                    if (isset($seenPlaylistKeys[$plKey])) continue;
+                    $seenPlaylistKeys[$plKey] = true;
                     $playlists[] = [
                         'type' => 'playlist',
+                        'source' => 'ytmusic',
                         'id' => $browseId ?: ('ply_' . md5($col0Text)),
+                        'browseId' => $browseId,
                         'title' => $col0Text,
                         'curator' => $col1Text,
-                        'cover_url' => $thumbUrl ?: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600'
+                        'cover_url' => $thumbUrl
                     ];
                 } else {
-                    // Song
-                    $artistName = 'YouTube Music Artist';
+                    $artistName = 'Artist';
                     $parts = explode('•', $col1Text);
                     if (count($parts) >= 2) {
                         $artistName = trim($parts[1]);
@@ -254,19 +408,26 @@ if ($action === 'search') {
                         $artistName = trim($col1Text);
                     }
 
+                    $lookupKey = strtolower(trim($col0Text) . '||' . trim($artistName));
+                    if (($videoId && isset($seenVideoIds[$videoId])) || isset($seenSongKeys[$lookupKey])) {
+                        continue;
+                    }
+                    if ($videoId) $seenVideoIds[$videoId] = true;
+                    $seenSongKeys[$lookupKey] = true;
+
                     $inferredYear = (int)($yearFilter && is_numeric($yearFilter) ? $yearFilter : date('Y'));
                     if (preg_match('/\b(19\d\d|20[0-2]\d)\b/', $col1Text . ' ' . $col2Text, $ym)) {
                         $inferredYear = (int)$ym[1];
                     }
                     $inferredGenre = (!empty($genreFilter) && $genreFilter !== 'All') ? $genreFilter : 'Pop';
-                    $lookupKey = strtolower(trim($col0Text) . '||' . trim($artistName));
                     $existingTrackId = ($videoId && isset($catalogLookup['video'][$videoId]))
                         ? $catalogLookup['video'][$videoId]
                         : ($catalogLookup['key'][$lookupKey] ?? null);
 
                     $songs[] = [
                         'type' => 'song',
-                        'id' => $videoId ? ('yt_' . $videoId) : ('yt_' . md5($col0Text . $artistName)),
+                        'source' => $existingTrackId ? 'catalog' : 'ytmusic',
+                        'id' => $existingTrackId ?: ($videoId ? ('yt_' . $videoId) : ('yt_' . md5($col0Text . $artistName))),
                         'videoId' => $videoId,
                         'title' => $col0Text,
                         'artist' => $artistName,
@@ -276,8 +437,9 @@ if ($action === 'search') {
                         'country' => $country,
                         'release_year' => $inferredYear,
                         'release_date' => "{$inferredYear}-" . date('m-d'),
-                        'cover_url' => $thumbUrl ?: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600',
-                        'plays' => $col2Text ?: 'Popular',
+                        'cover_url' => $thumbUrl,
+                        'audio_url' => $existingTrackId ? ('/phpbackend/api/stream.php?id=' . urlencode($existingTrackId)) : null,
+                        'plays' => $col2Text ?: '',
                         'already_imported' => !empty($existingTrackId),
                         'catalog_track_id' => $existingTrackId
                     ];
@@ -315,7 +477,7 @@ if ($action === 'search') {
     ]);
 }
 
-// --- 1b. LIVE SEARCH SUGGESTIONS WHILE TYPING (PUBLIC TO ALL USERS) ---
+// --- 1b. LIVE SEARCH SUGGESTIONS WHILE TYPING (COMBINES FLONTMIE DB + YTMUSICAPI) ---
 if ($action === 'suggestions') {
     $q = trim($_GET['q'] ?? '');
     if (empty($q)) {
@@ -325,7 +487,55 @@ if ($action === 'suggestions') {
     $suggestions = [];
     $seen = [];
 
-    // Query external music suggestions
+    // 1. Match Flontmie database tracks and artists first
+    try {
+        $like = '%' . $q . '%';
+        $stmt = $pdo->prepare("
+            SELECT id, title, artist_name, cover_art_url, video_id 
+            FROM tracks 
+            WHERE is_deleted = 0 AND (status IS NULL OR status = 'published' OR status = 'active')
+              AND (title LIKE ? OR artist_name LIKE ? OR album_name LIKE ?) 
+            ORDER BY flontmie_plays DESC, stream_count DESC LIMIT 6
+        ");
+        $stmt->execute([$like, $like, $like]);
+        while ($row = $stmt->fetch()) {
+            $tKey = strtolower(trim($row['title']) . '||' . trim($row['artist_name']));
+            if (!isset($seen[$tKey])) {
+                $seen[$tKey] = true;
+                $suggestions[] = [
+                    'text' => $row['title'],
+                    'type' => 'song',
+                    'source' => 'catalog',
+                    'artist' => $row['artist_name'],
+                    'track_id' => $row['id'],
+                    'videoId' => $row['video_id'],
+                    'cover_url' => ArtistEnrichment::resolveArtworkUrl($row['cover_art_url'] ?? '', $row['video_id'] ?? $row['id'])
+                ];
+            }
+        }
+
+        $artStmt = $pdo->prepare("
+            SELECT id, name, avatar_url FROM artists
+            WHERE (status IS NULL OR status != 'hidden') AND name LIKE ?
+            ORDER BY total_streams DESC LIMIT 3
+        ");
+        $artStmt->execute([$like]);
+        while ($aRow = $artStmt->fetch()) {
+            $aKey = 'artist||' . strtolower(trim($aRow['name']));
+            if (!isset($seen[$aKey])) {
+                $seen[$aKey] = true;
+                $suggestions[] = [
+                    'text' => $aRow['name'],
+                    'type' => 'artist',
+                    'source' => 'catalog',
+                    'artist_id' => $aRow['id'],
+                    'cover_url' => ArtistEnrichment::resolveArtworkUrl($aRow['avatar_url'] ?? '', $aRow['id'])
+                ];
+            }
+        }
+    } catch (Exception $e) {}
+
+    // 2. Query YouTube Music search suggestions
     $raw = call_ytmusic('music/get_search_suggestions', ['input' => $q]);
     if ($raw && isset($raw['contents'][0]['searchSuggestionsSectionRenderer']['contents'])) {
         $items = $raw['contents'][0]['searchSuggestionsSectionRenderer']['contents'];
@@ -339,39 +549,14 @@ if ($action === 'suggestions') {
                         $seen[$k] = true;
                         $suggestions[] = [
                             'text' => $text,
-                            'type' => 'query'
+                            'type' => 'query',
+                            'source' => 'ytmusic'
                         ];
                     }
                 }
             }
         }
     }
-
-    // Match local database tracks and artists
-    try {
-        $like = '%' . $q . '%';
-        $stmt = $pdo->prepare("
-            SELECT id, title, artist_name, cover_art_url, video_id 
-            FROM tracks 
-            WHERE is_deleted = 0 AND (title LIKE ? OR artist_name LIKE ?) 
-            ORDER BY stream_count DESC LIMIT 5
-        ");
-        $stmt->execute([$like, $like]);
-        while ($row = $stmt->fetch()) {
-            $tKey = strtolower(trim($row['title']));
-            if (!isset($seen[$tKey])) {
-                $seen[$tKey] = true;
-                $suggestions[] = [
-                    'text' => $row['title'],
-                    'type' => 'song',
-                    'artist' => $row['artist_name'],
-                    'track_id' => $row['id'],
-                    'videoId' => $row['video_id'],
-                    'cover_url' => $row['cover_art_url']
-                ];
-            }
-        }
-    } catch (Exception $e) {}
 
     json_response([
         'status' => 'success',
@@ -380,13 +565,12 @@ if ($action === 'suggestions') {
     ]);
 }
 
-
-// --- 2. YOUTUBE MUSIC CHARTS (Top songs, top music videos, trending artists) ---
+// --- 2. CHARTS (REAL YOUTUBE MUSIC CHARTS + REAL FLONTMIE TOP TRACKS) ---
 if ($action === 'charts') {
-    $raw = call_ytmusic('browse', ['browseId' => 'FEmusic_charts']);
     $chartTracks = [];
-    $chartArtists = [];
 
+    // First fetch live YouTube Music charts
+    $raw = call_ytmusic('browse', ['browseId' => 'FEmusic_charts']);
     if ($raw && isset($raw['contents']['singleColumnBrowseResultsRenderer']['tabs'][0]['tabRenderer']['content']['sectionListRenderer']['contents'])) {
         $sections = $raw['contents']['singleColumnBrowseResultsRenderer']['tabs'][0]['tabRenderer']['content']['sectionListRenderer']['contents'];
 
@@ -402,12 +586,11 @@ if ($action === 'charts') {
                 if (!$r) continue;
 
                 $thumbs = $r['thumbnailRenderer']['musicThumbnailRenderer']['thumbnail']['thumbnails'] ?? $r['thumbnail']['musicThumbnailRenderer']['thumbnail']['thumbnails'] ?? [];
-                $thumbUrl = !empty($thumbs) ? end($thumbs)['url'] : 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600';
+                $thumbUrl = !empty($thumbs) ? end($thumbs)['url'] : '';
                 $thumbUrl = preg_replace('/=w\d+-h\d+/', '=w600-h600', $thumbUrl);
 
                 $title = get_runs_text($r['title'] ?? ($r['flexColumns'][0]['musicResponsiveListItemFlexColumnRenderer']['text'] ?? null));
                 $subtitle = get_runs_text($r['subtitle'] ?? ($r['flexColumns'][1]['musicResponsiveListItemFlexColumnRenderer']['text'] ?? null));
-                
                 $videoId = $r['navigationEndpoint']['watchEndpoint']['videoId'] ?? ($r['playlistItemData']['videoId'] ?? null);
 
                 if (!empty($title)) {
@@ -415,97 +598,83 @@ if ($action === 'charts') {
                         'id' => $videoId ? ('yt_' . $videoId) : ('yt_chart_' . md5($title)),
                         'videoId' => $videoId,
                         'title' => $title,
-                        'artist' => $subtitle ?: 'Top Chart Artist',
+                        'artist' => $subtitle ?: 'Artist',
                         'cover_url' => $thumbUrl,
                         'shelf' => $shelfTitle ?: 'Top Charts',
-                        'streams' => rand(850000, 4500000)
+                        'streams' => 0
                     ];
                 }
             }
         }
     }
 
-    // High quality fallbacks if regional charts are restricted
+    // Also include top tracks from the Flontmie database ordered by real stream counts
     if (empty($chartTracks)) {
-        $chartTracks = [
-            [
-                'id' => 'yt_chart_1',
-                'videoId' => 'AUEfYlWQwxE',
-                'title' => 'City Boys',
-                'artist' => 'Burna Boy',
-                'cover_url' => 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=600',
-                'shelf' => 'Global Top 50',
-                'streams' => 162000000
-            ],
-            [
-                'id' => 'yt_chart_2',
-                'videoId' => 'h_D3VFfhvs4',
-                'title' => 'Lonely At The Top',
-                'artist' => 'Asake',
-                'cover_url' => 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600',
-                'shelf' => 'Global Top 50',
-                'streams' => 98000000
-            ],
-            [
-                'id' => 'yt_chart_3',
-                'videoId' => 'm7Bc3pLyij0',
-                'title' => 'Calm Down',
-                'artist' => 'Rema',
-                'cover_url' => 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600',
-                'shelf' => 'Trending Worldwide',
-                'streams' => 450000000
-            ]
-        ];
+        try {
+            $stmt = $pdo->query("
+                SELECT id, video_id, title, artist_name, cover_art_url, stream_count
+                FROM tracks
+                WHERE is_deleted = 0 AND (status IS NULL OR status = 'published' OR status = 'active')
+                ORDER BY flontmie_plays DESC, stream_count DESC
+                LIMIT 25
+            ");
+            while ($row = $stmt->fetch()) {
+                $chartTracks[] = [
+                    'id' => $row['id'],
+                    'videoId' => $row['video_id'],
+                    'title' => $row['title'],
+                    'artist' => $row['artist_name'],
+                    'cover_url' => ArtistEnrichment::resolveArtworkUrl($row['cover_art_url'] ?? '', $row['video_id'] ?? $row['id']),
+                    'shelf' => 'Flontmie Top Chart',
+                    'streams' => (int)($row['stream_count'] ?? 0)
+                ];
+            }
+        } catch (Exception $e) {}
     }
 
     json_response([
         'status' => 'success',
-        'source' => 'YouTube Music Innertube API',
+        'source' => 'Flontmie & YouTube Music Charts',
         'count' => count($chartTracks),
         'charts' => $chartTracks
     ]);
 }
 
-// --- 3. YOUTUBE MUSIC MOODS & GENRES ---
+// --- 3. MOODS & GENRES ---
 if ($action === 'moods') {
-    $raw = call_ytmusic('browse', ['browseId' => 'FEmusic_moods_and_genres']);
     $categories = [];
 
+    // Load active genres from database first
+    try {
+        $gStmt = $pdo->query("SELECT name, slug, color FROM genres WHERE is_active = 1 ORDER BY sort_order ASC");
+        while ($g = $gStmt->fetch()) {
+            $categories[] = [
+                'name' => $g['name'],
+                'browseId' => 'genre_' . $g['slug'],
+                'color' => $g['color'] ?: '#e11d48'
+            ];
+        }
+    } catch (Exception $e) {}
+
+    $raw = call_ytmusic('browse', ['browseId' => 'FEmusic_moods_and_genres']);
     if ($raw && isset($raw['contents']['singleColumnBrowseResultsRenderer']['tabs'][0]['tabRenderer']['content']['sectionListRenderer']['contents'])) {
         $sections = $raw['contents']['singleColumnBrowseResultsRenderer']['tabs'][0]['tabRenderer']['content']['sectionListRenderer']['contents'];
-
         foreach ($sections as $sec) {
             $items = $sec['gridRenderer']['items'] ?? [];
             foreach ($items as $item) {
                 $btn = $item['musicNavigationButtonRenderer'] ?? null;
                 if (!$btn) continue;
-
                 $name = get_runs_text($btn['buttonText'] ?? null);
                 $endpoint = $btn['clickCommand']['browseEndpoint']['browseId'] ?? '';
-                $color = sprintf('#%06X', mt_rand(0x330000, 0x882222));
-
                 if (!empty($name)) {
                     $categories[] = [
                         'name' => $name,
                         'browseId' => $endpoint,
-                        'color' => $color
+                        'color' => '#e11d48'
                     ];
                 }
             }
         }
-    }
-
-    if (empty($categories)) {
-        $categories = [
-            ['name' => 'Afrobeats & Dancehall', 'browseId' => 'FEmusic_genre_afrobeats', 'color' => '#f97316'],
-            ['name' => 'Hip-Hop & Rap', 'browseId' => 'FEmusic_genre_hip_hop', 'color' => '#8b5cf6'],
-            ['name' => 'Pop & Anthems', 'browseId' => 'FEmusic_genre_pop', 'color' => '#ec4899'],
-            ['name' => 'Lo-Fi & Study', 'browseId' => 'FEmusic_genre_chill', 'color' => '#10b981'],
-            ['name' => 'R&B & Neo-Soul', 'browseId' => 'FEmusic_genre_rnb', 'color' => '#6366f1'],
-            ['name' => 'Electronic & Synthwave', 'browseId' => 'FEmusic_genre_dance_electronic', 'color' => '#06b6d4'],
-            ['name' => 'Workout & Motivation', 'browseId' => 'FEmusic_mood_workout', 'color' => '#ef4444'],
-            ['name' => 'Focus & Flow State', 'browseId' => 'FEmusic_mood_focus', 'color' => '#14b8a6']
-        ];
     }
 
     json_response([
@@ -515,47 +684,69 @@ if ($action === 'moods') {
     ]);
 }
 
-// --- 4. YOUTUBE MUSIC REAL LYRICS (via Watch Next -> Lyrics BrowseId) ---
+// --- 4. REAL LYRICS (CHECKS FLONTMIE MYSQL CATALOG FIRST, THEN YOUTUBE MUSIC INNERTUBE) ---
 if ($action === 'lyrics') {
     $videoId = trim($_GET['videoId'] ?? $_GET['id'] ?? '');
-    if (empty($videoId)) {
-        json_response(['status' => 'error', 'message' => 'videoId is required for lyrics'], 400);
-    }
-
-    // Step 1: Call next endpoint to get Lyrics browseId
-    $nextData = call_ytmusic('next', ['videoId' => $videoId]);
-    $lyricsBrowseId = null;
-
-    if ($nextData && isset($nextData['contents']['singleColumnMusicWatchNextResultsRenderer']['tabbedRenderer']['watchNextTabbedResultsRenderer']['tabs'])) {
-        $tabs = $nextData['contents']['singleColumnMusicWatchNextResultsRenderer']['tabbedRenderer']['watchNextTabbedResultsRenderer']['tabs'];
-        foreach ($tabs as $t) {
-            $tabRenderer = $t['tabRenderer'] ?? [];
-            if (($tabRenderer['title'] ?? '') === 'Lyrics') {
-                $lyricsBrowseId = $tabRenderer['endpoint']['browseEndpoint']['browseId'] ?? null;
-                break;
-            }
-        }
+    $trackId = trim($_GET['track_id'] ?? $_GET['id'] ?? '');
+    if (empty($videoId) && empty($trackId)) {
+        json_response(['status' => 'error', 'message' => 'track_id or videoId is required for lyrics'], 400);
     }
 
     $lyrics = null;
-    $source = 'YouTube Music Lyrics';
+    $source = null;
 
-    if ($lyricsBrowseId) {
-        // Step 2: Browse lyrics
-        $browseData = call_ytmusic('browse', ['browseId' => $lyricsBrowseId]);
-        if ($browseData && isset($browseData['contents']['sectionListRenderer']['contents'][0]['musicDescriptionShelfRenderer']['description']['runs'])) {
-            $runs = $browseData['contents']['sectionListRenderer']['contents'][0]['musicDescriptionShelfRenderer']['description']['runs'];
-            $lyrics = '';
-            foreach ($runs as $r) {
-                $lyrics .= $r['text'] ?? '';
+    // 1. Check Flontmie MySQL database for uploaded/stored lyrics
+    try {
+        $stmt = $pdo->prepare("SELECT lyrics, local_lyrics_path, video_id FROM tracks WHERE id = ? OR video_id = ? LIMIT 1");
+        $stmt->execute([$trackId ?: $videoId, $videoId ?: $trackId]);
+        $row = $stmt->fetch();
+        if ($row) {
+            if (!empty($row['lyrics'])) {
+                $lyrics = trim($row['lyrics']);
+                $source = 'Flontmie Catalog Lyrics';
+            } elseif (!empty($row['local_lyrics_path'])) {
+                $fullLyricsPath = STORAGE_ROOT . '/' . ltrim($row['local_lyrics_path'], '/');
+                if (is_file($fullLyricsPath)) {
+                    $lyrics = trim((string)file_get_contents($fullLyricsPath));
+                    $source = 'Flontmie Uploaded Lyrics File';
+                }
             }
-            $source = get_runs_text($browseData['contents']['sectionListRenderer']['contents'][0]['musicDescriptionShelfRenderer']['footer'] ?? null) ?: 'YouTube Music';
+            if (empty($videoId) && !empty($row['video_id'])) {
+                $videoId = $row['video_id'];
+            }
         }
-    }
+    } catch (Exception $e) {}
 
-    if (empty($lyrics)) {
-        $lyrics = "Official verified lyrics for this track on Flontmie.\n\n[Verse 1]\nFeel the rhythm moving through the night\nMelodies echoing under neon lights\n\n[Chorus]\nEvery heartbeat singing along\nThis is Flontmie, this is our song";
-        $source = 'Flontmie Editorial Sync';
+    // 2. If not in local DB and we have a YouTube videoId, query YouTube Music Watch Next -> Lyrics browseId
+    if (empty($lyrics) && !empty($videoId) && strpos($videoId, 'trk_') !== 0) {
+        $nextData = call_ytmusic('next', ['videoId' => $videoId]);
+        $lyricsBrowseId = null;
+
+        if ($nextData && isset($nextData['contents']['singleColumnMusicWatchNextResultsRenderer']['tabbedRenderer']['watchNextTabbedResultsRenderer']['tabs'])) {
+            $tabs = $nextData['contents']['singleColumnMusicWatchNextResultsRenderer']['tabbedRenderer']['watchNextTabbedResultsRenderer']['tabs'];
+            foreach ($tabs as $t) {
+                $tabRenderer = $t['tabRenderer'] ?? [];
+                if (($tabRenderer['title'] ?? '') === 'Lyrics') {
+                    $lyricsBrowseId = $tabRenderer['endpoint']['browseEndpoint']['browseId'] ?? null;
+                    break;
+                }
+            }
+        }
+
+        if ($lyricsBrowseId) {
+            $browseData = call_ytmusic('browse', ['browseId' => $lyricsBrowseId]);
+            if ($browseData && isset($browseData['contents']['sectionListRenderer']['contents'][0]['musicDescriptionShelfRenderer']['description']['runs'])) {
+                $runs = $browseData['contents']['sectionListRenderer']['contents'][0]['musicDescriptionShelfRenderer']['description']['runs'];
+                $lyricsText = '';
+                foreach ($runs as $r) {
+                    $lyricsText .= $r['text'] ?? '';
+                }
+                if (!empty(trim($lyricsText))) {
+                    $lyrics = trim($lyricsText);
+                    $source = get_runs_text($browseData['contents']['sectionListRenderer']['contents'][0]['musicDescriptionShelfRenderer']['footer'] ?? null) ?: 'YouTube Music';
+                }
+            }
+        }
     }
 
     json_response([
@@ -575,10 +766,10 @@ if ($action === 'artist') {
     $albums = [];
     $singles = [];
     $artistInfo = [
-        'name' => $artistName ?: 'YouTube Music Artist',
-        'subscribers' => 'Artist',
+        'name' => $artistName ?: 'Artist',
+        'subscribers' => '',
         'description' => '',
-        'avatar_url' => 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600'
+        'avatar_url' => ''
     ];
 
     if ($browseId) {
@@ -595,7 +786,6 @@ if ($action === 'artist') {
                 }
             }
 
-            // Extract sections
             $sections = $raw['contents']['singleColumnBrowseResultsRenderer']['tabs'][0]['tabRenderer']['content']['sectionListRenderer']['contents'] ?? [];
             foreach ($sections as $sec) {
                 $shelf = $sec['musicShelfRenderer'] ?? $sec['musicCarouselShelfRenderer'] ?? null;
@@ -648,7 +838,6 @@ if ($action === 'artist') {
         }
     }
 
-    // If browse is empty or restricted, search for artist's songs
     if (empty($topSongs) && ($artistName || $artistInfo['name'])) {
         $searchQuery = $artistName ?: $artistInfo['name'];
         $rawSearch = call_ytmusic('search', ['query' => $searchQuery, 'params' => 'EgWKAQIIAWoQEAMQBBAJEAoQBRAREBAQFA%3D%3D']);
@@ -674,7 +863,7 @@ if ($action === 'artist') {
                             'artist' => $artist,
                             'cover_url' => $thumbUrl,
                             'duration' => 210,
-                            'plays' => 'Popular'
+                            'plays' => ''
                         ];
                     }
                 }
@@ -691,11 +880,44 @@ if ($action === 'artist') {
     ]);
 }
 
-// --- 6. YOUTUBE MUSIC ALBUM DETAILS & TRACKLIST ---
+// --- 6. ALBUM DETAILS & TRACKLIST (SUPPORTS BOTH FLONTMIE ALBUMS AND YTMUSIC ALBUMS) ---
 if ($action === 'album') {
     $browseId = trim($_GET['browseId'] ?? $_GET['id'] ?? '');
     if (empty($browseId)) {
         json_response(['status' => 'error', 'message' => 'browseId is required for album'], 400);
+    }
+
+    // Check if this is a local Flontmie catalog album first
+    $albStmt = $pdo->prepare("SELECT * FROM albums WHERE id = ? LIMIT 1");
+    $albStmt->execute([$browseId]);
+    $localAlbum = $albStmt->fetch();
+    if ($localAlbum) {
+        $tStmt = $pdo->prepare("SELECT * FROM tracks WHERE album_id = ? AND is_deleted = 0 ORDER BY id ASC");
+        $tStmt->execute([$browseId]);
+        $localTracks = [];
+        while ($t = $tStmt->fetch()) {
+            $localTracks[] = [
+                'id' => $t['id'],
+                'catalog_track_id' => $t['id'],
+                'videoId' => $t['video_id'],
+                'title' => $t['title'],
+                'artist' => $t['artist_name'],
+                'duration' => (int)($t['duration'] ?: 200),
+                'cover_url' => ArtistEnrichment::resolveArtworkUrl($t['cover_art_url'] ?? '', $t['video_id'] ?? $t['id']),
+                'audio_url' => '/phpbackend/api/stream.php?id=' . urlencode($t['id'])
+            ];
+        }
+        json_response([
+            'status' => 'success',
+            'album' => [
+                'id' => $localAlbum['id'],
+                'title' => $localAlbum['title'],
+                'artist' => $localAlbum['artist_name'],
+                'year' => !empty($localAlbum['release_date']) ? substr($localAlbum['release_date'], 0, 4) : date('Y'),
+                'cover_url' => ArtistEnrichment::resolveArtworkUrl($localAlbum['cover_art_url'] ?? '', $localAlbum['id']),
+                'tracks' => $localTracks
+            ]
+        ]);
     }
 
     $raw = call_ytmusic('browse', ['browseId' => $browseId]);
@@ -704,7 +926,7 @@ if ($action === 'album') {
         'title' => 'Album',
         'artist' => 'Artist',
         'year' => date('Y'),
-        'cover_url' => 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600',
+        'cover_url' => '',
         'tracks' => []
     ];
 
@@ -751,7 +973,7 @@ if ($action === 'album') {
     ]);
 }
 
-// --- 7. YOUTUBE MUSIC PLAYLIST DETAILS & TRACKS ---
+// --- 7. PLAYLIST DETAILS & TRACKS ---
 if ($action === 'playlist') {
     $browseId = trim($_GET['browseId'] ?? $_GET['id'] ?? '');
     if (empty($browseId)) {
@@ -761,10 +983,10 @@ if ($action === 'playlist') {
     $raw = call_ytmusic('browse', ['browseId' => $browseId]);
     $playlistInfo = [
         'id' => $browseId,
-        'title' => 'YouTube Music Playlist',
-        'curator' => 'YouTube Music Curators',
-        'description' => 'Curated playlist stream',
-        'cover_url' => 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600',
+        'title' => 'Playlist',
+        'curator' => '',
+        'description' => '',
+        'cover_url' => '',
         'tracks' => []
     ];
 
@@ -892,7 +1114,7 @@ if ($action === 'bulk_import' && $method === 'POST') {
 
 // --- 8c. IMPORT ENTIRE ALBUM, ARTIST DISCOGRAPHY, OR PLAYLIST COLLECTION ---
 if ($action === 'import_collection' && $method === 'POST') {
-    $collectionType = strtolower(trim($input['collection_type'] ?? 'album')); // album, artist, playlist
+    $collectionType = strtolower(trim($input['collection_type'] ?? 'album'));
     $collectionTitle = trim($input['title'] ?? 'Imported Collection');
     $collectionArtist = trim($input['artist'] ?? 'Various Artists');
     $collectionCover = trim($input['cover_url'] ?? '');
@@ -930,7 +1152,6 @@ if ($action === 'import_collection' && $method === 'POST') {
         } catch (Exception $e) {}
     }
 
-    // If importing a Playlist, also create/update the Playlist in MySQL
     $createdPlaylistId = null;
     if ($collectionType === 'playlist' && !empty($importedTrackIds)) {
         $createdPlaylistId = 'ply_' . substr(md5($collectionTitle), 0, 12);
@@ -946,8 +1167,8 @@ if ($action === 'import_collection' && $method === 'POST') {
             $createdPlaylistId,
             $adminUser['id'],
             $collectionTitle,
-            $input['description'] ?? "Imported & curated via Flontmie Admin YT Music Engine ({$collectionArtist})",
-            $collectionCover ?: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600',
+            $input['description'] ?? "Curated collection ({$collectionArtist})",
+            $collectionCover,
             json_encode(array_values(array_unique($importedTrackIds)))
         ]);
     }
@@ -983,7 +1204,6 @@ if (($action === 'retry_job' || $action === 'cancel_job') && $method === 'POST')
         json_response(['status' => 'success', 'message' => "Import job '{$job['title']}' cancelled."]);
     }
 
-    // Retry job with force_resync = true
     $payload = !empty($job['raw_payload_json']) ? json_decode($job['raw_payload_json'], true) : [];
     if (!is_array($payload) || empty($payload['title'])) {
         $payload = [
@@ -1172,484 +1392,6 @@ if ($action === 'sync_all_storage' && $method === 'POST') {
         'storage' => MediaEngine::getStorageStats($pdo),
         'message' => "Synchronized & verified local audio and artwork files for {$syncedCount} catalog tracks."
     ]);
-}
-
-// --- 9. PURGE MOCK SONGS & SEED REAL YOUTUBE MUSIC CATALOG INTO MYSQL ---
-if ($action === 'purge_and_seed_ytmusic' || $action === 'seed_catalog') {
-    try {
-        // Ensure video_id column exists
-        try {
-            $pdo->exec("ALTER TABLE tracks ADD COLUMN video_id VARCHAR(64) NULL");
-            $pdo->exec("ALTER TABLE tracks ADD INDEX idx_track_video (video_id)");
-        } catch (Exception $e) {}
-
-        try {
-            $pdo->exec("ALTER TABLE playlists ADD COLUMN genre_category VARCHAR(64) NULL");
-        } catch (Exception $e) {}
-
-        // Delete all mock songs
-        $pdo->exec("
-            DELETE FROM tracks 
-            WHERE audio_url LIKE '%soundhelix%' 
-               OR id LIKE 'track-%' 
-               OR id LIKE 'trk_pop%' 
-               OR id LIKE 'trk_lofi%' 
-               OR id LIKE 'trk_rap%' 
-               OR id LIKE 'trk_afro%' 
-               OR id LIKE 'trk_synth%' 
-               OR title LIKE '%Concrete Kingdom%' 
-               OR title LIKE '%Electric Heartbeat%' 
-               OR title LIKE '%Tea Leaves%' 
-               OR title LIKE '%Solar Wave%' 
-               OR title LIKE '%Amapiano Sunset%' 
-               OR title LIKE '%Midnight Cyber Drive%'
-               OR title LIKE '%Windowpane Rainfall%'
-               OR title LIKE '%Silk & Honey%'
-        ");
-
-        // Real verified YouTube Music hits with real videoId, album art, streams
-        $ytTracks = [
-            [
-                'id' => 'trk_yt_c2gK9tq57iQ',
-                'videoId' => 'c2gK9tq57iQ',
-                'title' => 'City Boys',
-                'artist' => 'Burna Boy',
-                'artist_id' => 'art_burna_boy',
-                'album' => 'I Told Them...',
-                'album_id' => 'alb_itoldthem',
-                'duration' => 153,
-                'genre' => 'Afrobeats',
-                'cover_url' => 'https://i.ytimg.com/vi/c2gK9tq57iQ/maxresdefault.jpg',
-                'audio_url' => 'https://music.youtube.com/watch?v=c2gK9tq57iQ',
-                'streams' => 184500000,
-                'likes' => 1920000,
-                'lyrics' => "Turn me up, turn me up, turn me up\nIt's that city boys season\nWe don't do drama, we do numbers\nEvery night we celebrate the wins."
-            ],
-            [
-                'id' => 'trk_yt_eE3p9qE1fO8',
-                'videoId' => 'eE3p9qE1fO8',
-                'title' => 'Lonely At The Top',
-                'artist' => 'Asake',
-                'artist_id' => 'art_asake',
-                'album' => 'Work of Art',
-                'album_id' => 'alb_workofart',
-                'duration' => 157,
-                'genre' => 'Afrobeats',
-                'cover_url' => 'https://i.ytimg.com/vi/eE3p9qE1fO8/maxresdefault.jpg',
-                'audio_url' => 'https://music.youtube.com/watch?v=eE3p9qE1fO8',
-                'streams' => 142000000,
-                'likes' => 1650000,
-                'lyrics' => "It's lonely at the top, lonely at the top\nNothing wey I do wey dem no go talk\nMoney on my mind, joy in my heart\nLiving my life from the very start."
-            ],
-            [
-                'id' => 'trk_yt_CQLsdmU69GD',
-                'videoId' => 'CQLsdmU69GD',
-                'title' => 'Calm Down',
-                'artist' => 'Rema',
-                'artist_id' => 'art_rema',
-                'album' => 'Rave & Roses',
-                'album_id' => 'alb_raveroses',
-                'duration' => 219,
-                'genre' => 'Afrobeats',
-                'cover_url' => 'https://i.ytimg.com/vi/CQLsdmU69GD/maxresdefault.jpg',
-                'audio_url' => 'https://music.youtube.com/watch?v=CQLsdmU69GD',
-                'streams' => 980000000,
-                'likes' => 8400000,
-                'lyrics' => "Baby, calm down, calm down\nGirl, this your body e put my heart for lockdown\nFor lockdown, oh, lockdown\nGirl, you sweet like Fanta, ooh-ooh."
-            ],
-            [
-                'id' => 'trk_yt_4NRXx6U8ABQ',
-                'videoId' => '4NRXx6U8ABQ',
-                'title' => 'Blinding Lights',
-                'artist' => 'The Weeknd',
-                'artist_id' => 'art_the_weeknd',
-                'album' => 'After Hours',
-                'album_id' => 'alb_afterhours',
-                'duration' => 200,
-                'genre' => 'Pop',
-                'cover_url' => 'https://i.ytimg.com/vi/4NRXx6U8ABQ/maxresdefault.jpg',
-                'audio_url' => 'https://music.youtube.com/watch?v=4NRXx6U8ABQ',
-                'streams' => 4100000000,
-                'likes' => 28000000,
-                'lyrics' => "I said, ooh, I'm blinded by the lights\nNo, I can't sleep until I feel your touch\nI said, ooh, I'm drowning in the night\nOh, when I'm like this, you're the one I trust."
-            ],
-            [
-                'id' => 'trk_yt_mSDfxde8fSg',
-                'videoId' => 'mSDfxde8fSg',
-                'title' => 'Kill Bill',
-                'artist' => 'SZA',
-                'artist_id' => 'art_sza',
-                'album' => 'SOS',
-                'album_id' => 'alb_sos',
-                'duration' => 153,
-                'genre' => 'R&B',
-                'cover_url' => 'https://i.ytimg.com/vi/mSDfxde8fSg/maxresdefault.jpg',
-                'audio_url' => 'https://music.youtube.com/watch?v=mSDfxde8fSg',
-                'streams' => 1890000000,
-                'likes' => 14000000,
-                'lyrics' => "I might kill my ex, not the best idea\nHis new girlfriend's next, how'd I get here?\nI might kill my ex, I still love him though\nRather be in hell than alone."
-            ],
-            [
-                'id' => 'trk_yt_H58vbez_m4E',
-                'videoId' => 'H58vbez_m4E',
-                'title' => 'Not Like Us',
-                'artist' => 'Kendrick Lamar',
-                'artist_id' => 'art_kendrick',
-                'album' => 'Not Like Us - Single',
-                'album_id' => 'alb_notlikeus',
-                'duration' => 274,
-                'genre' => 'Rap',
-                'cover_url' => 'https://i.ytimg.com/vi/H58vbez_m4E/maxresdefault.jpg',
-                'audio_url' => 'https://music.youtube.com/watch?v=H58vbez_m4E',
-                'streams' => 890000000,
-                'likes' => 7900000,
-                'lyrics' => "Psst, I see dead people\nMustard on the beat, ho\nThey not like us, they not like us, they not like us\nWop, wop, wop, wop, wop, Dot, fuck 'em up."
-            ],
-            [
-                'id' => 'trk_yt_d5gf9dXFKCA',
-                'videoId' => 'd5gf9dXFKCA',
-                'title' => 'BIRDS OF A FEATHER',
-                'artist' => 'Billie Eilish',
-                'artist_id' => 'art_billie',
-                'album' => 'HIT ME HARD AND SOFT',
-                'album_id' => 'alb_hitmehard',
-                'duration' => 196,
-                'genre' => 'Pop',
-                'cover_url' => 'https://i.ytimg.com/vi/d5gf9dXFKCA/maxresdefault.jpg',
-                'audio_url' => 'https://music.youtube.com/watch?v=d5gf9dXFKCA',
-                'streams' => 1250000000,
-                'likes' => 11000000,
-                'lyrics' => "I want you to stay 'til I'm in the grave\n'Til I'm rotting away, dead and buried\n'Til I'm in the casket you carry\nIf you go, I'm going too, uh."
-            ],
-            [
-                'id' => 'trk_yt_eVli-tstM5E',
-                'videoId' => 'eVli-tstM5E',
-                'title' => 'Espresso',
-                'artist' => 'Sabrina Carpenter',
-                'artist_id' => 'art_sabrina',
-                'album' => "Short n' Sweet",
-                'album_id' => 'alb_shortnsweet',
-                'duration' => 175,
-                'genre' => 'Pop',
-                'cover_url' => 'https://i.ytimg.com/vi/eVli-tstM5E/maxresdefault.jpg',
-                'audio_url' => 'https://music.youtube.com/watch?v=eVli-tstM5E',
-                'streams' => 1560000000,
-                'likes' => 13500000,
-                'lyrics' => "Now he's thinkin' 'bout me every night, oh\nIs it that sweet? I guess so\nSay you can't sleep, baby, I know\nThat's that me, espresso."
-            ],
-            [
-                'id' => 'trk_yt_ic8j13piAhQ',
-                'videoId' => 'ic8j13piAhQ',
-                'title' => 'Cruel Summer',
-                'artist' => 'Taylor Swift',
-                'artist_id' => 'art_taylor',
-                'album' => 'Lover',
-                'album_id' => 'alb_lover',
-                'duration' => 178,
-                'genre' => 'Pop',
-                'cover_url' => 'https://i.ytimg.com/vi/ic8j13piAhQ/maxresdefault.jpg',
-                'audio_url' => 'https://music.youtube.com/watch?v=ic8j13piAhQ',
-                'streams' => 2200000000,
-                'likes' => 16000000,
-                'lyrics' => "It's cool, that's what I tell 'em, no rules in breakable heaven\nBut ooh, whoa-oh\nIt's a cruel summer with you."
-            ],
-            [
-                'id' => 'trk_yt_VwzP7mZ7mRk',
-                'videoId' => 'VwzP7mZ7mRk',
-                'title' => 'Love Me JeJe',
-                'artist' => 'Tems',
-                'artist_id' => 'art_tems',
-                'album' => 'Born in the Wild',
-                'album_id' => 'alb_borninthewild',
-                'duration' => 178,
-                'genre' => 'Afrobeats',
-                'cover_url' => 'https://i.ytimg.com/vi/VwzP7mZ7mRk/maxresdefault.jpg',
-                'audio_url' => 'https://music.youtube.com/watch?v=VwzP7mZ7mRk',
-                'streams' => 85000000,
-                'likes' => 920000,
-                'lyrics' => "Love me jeje, love me tender\nSweet like water from a mountain spring\nEverything you do dey bring me joy\nMy one and only."
-            ],
-            [
-                'id' => 'trk_yt_5W8HjA2Gz54',
-                'videoId' => '5W8HjA2Gz54',
-                'title' => 'fukumean',
-                'artist' => 'Gunna',
-                'artist_id' => 'art_gunna',
-                'album' => 'a Gift & a Curse',
-                'album_id' => 'alb_giftcurse',
-                'duration' => 125,
-                'genre' => 'Rap',
-                'cover_url' => 'https://i.ytimg.com/vi/5W8HjA2Gz54/maxresdefault.jpg',
-                'audio_url' => 'https://music.youtube.com/watch?v=5W8HjA2Gz54',
-                'streams' => 740000000,
-                'likes' => 5800000,
-                'lyrics' => "Fuck you mean? Yeah, yeah, eyah\nTop floor suites, panoramic scene\nDiamond chains on me, you know what I mean."
-            ],
-            [
-                'id' => 'trk_yt_5qap5aO4i9A',
-                'videoId' => '5qap5aO4i9A',
-                'title' => 'Lofi Hip Hop Study Beats (Snowman)',
-                'artist' => 'Lofi Girl',
-                'artist_id' => 'art_lofigirl',
-                'album' => 'Lofi Study Sessions Vol. 1',
-                'album_id' => 'alb_lofistudy',
-                'duration' => 160,
-                'genre' => 'Lo-Fi',
-                'cover_url' => 'https://i.ytimg.com/vi/5qap5aO4i9A/maxresdefault.jpg',
-                'audio_url' => 'https://music.youtube.com/watch?v=5qap5aO4i9A',
-                'streams' => 310000000,
-                'likes' => 4500000,
-                'lyrics' => "[Peaceful instrumental lo-fi chillhop beats with vinyl rain crackle for deep focus and study]"
-            ],
-            [
-                'id' => 'trk_yt_o2n_5_rN2qA',
-                'videoId' => 'o2n_5_rN2qA',
-                'title' => 'MILLION DOLLAR BABY',
-                'artist' => 'Tommy Richman',
-                'artist_id' => 'art_tommy',
-                'album' => 'COYOTE',
-                'album_id' => 'alb_coyote',
-                'duration' => 155,
-                'genre' => 'R&B',
-                'cover_url' => 'https://i.ytimg.com/vi/o2n_5_rN2qA/maxresdefault.jpg',
-                'audio_url' => 'https://music.youtube.com/watch?v=o2n_5_rN2qA',
-                'streams' => 910000000,
-                'likes' => 8700000,
-                'lyrics' => "Yeah, hell nah\nI ain't never did this before\nMillion dollar baby, tell me where you wanna go\nDrive it to the coast, watch the sunset glow."
-            ],
-            [
-                'id' => 'trk_yt_uzS3WG6__G4',
-                'videoId' => 'uzS3WG6__G4',
-                'title' => 'Pink + White',
-                'artist' => 'Frank Ocean',
-                'artist_id' => 'art_frank_ocean',
-                'album' => 'Blonde',
-                'album_id' => 'alb_blonde',
-                'duration' => 184,
-                'genre' => 'R&B',
-                'cover_url' => 'https://i.ytimg.com/vi/uzS3WG6__G4/maxresdefault.jpg',
-                'audio_url' => 'https://music.youtube.com/watch?v=uzS3WG6__G4',
-                'streams' => 1600000000,
-                'likes' => 12500000,
-                'lyrics' => "That's the way everyday goes\nEvery time we have no control\nIf the sky is pink and white\nIf the ground is black and yellow."
-            ],
-            [
-                'id' => 'trk_yt_1FIxYVbK_oA',
-                'videoId' => '1FIxYVbK_oA',
-                'title' => 'Good Luck, Babe!',
-                'artist' => 'Chappell Roan',
-                'artist_id' => 'art_chappell',
-                'album' => 'Good Luck, Babe! - Single',
-                'album_id' => 'alb_goodluck',
-                'duration' => 218,
-                'genre' => 'Pop',
-                'cover_url' => 'https://i.ytimg.com/vi/1FIxYVbK_oA/maxresdefault.jpg',
-                'audio_url' => 'https://music.youtube.com/watch?v=1FIxYVbK_oA',
-                'streams' => 840000000,
-                'likes' => 7400000,
-                'lyrics' => "You can kiss a hundred boys in bars\nShoot another shot, try to stop the feeling\nYou'd have to stop the world just to stop the feeling\nGood luck, babe!"
-            ]
-        ];
-
-        // Ensure Artists exist
-        $artStmt = $pdo->prepare("
-            INSERT INTO artists (id, name, stage_name, slug, avatar_url, header_url, bio, verified, monthly_listeners, total_streams, followers, genres_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
-            ON DUPLICATE KEY UPDATE
-                avatar_url = VALUES(avatar_url),
-                monthly_listeners = VALUES(monthly_listeners),
-                total_streams = VALUES(total_streams)
-        ");
-
-        // Ensure Albums exist
-        $albStmt = $pdo->prepare("
-            INSERT INTO albums (id, title, artist_id, artist_name, cover_art_url, release_date, genre, release_type, tracks_count)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'album', 10)
-            ON DUPLICATE KEY UPDATE
-                cover_art_url = VALUES(cover_art_url)
-        ");
-
-        // Insert / Update Tracks
-        $trkStmt = $pdo->prepare("
-            INSERT INTO tracks (id, video_id, title, artist_id, artist_name, album_id, album_name, duration, genre, cover_art_url, audio_url, stream_count, likes_count, release_date, lyrics, mood_tags_json, bpm)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON DUPLICATE KEY UPDATE
-                video_id = VALUES(video_id),
-                title = VALUES(title),
-                cover_art_url = VALUES(cover_art_url),
-                audio_url = VALUES(audio_url),
-                stream_count = VALUES(stream_count),
-                likes_count = VALUES(likes_count),
-                lyrics = VALUES(lyrics)
-        ");
-
-        $artistsMap = [
-            'art_burna_boy' => ['name' => 'Burna Boy', 'genre' => 'Afrobeats', 'avatar' => 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=600'],
-            'art_asake' => ['name' => 'Asake', 'genre' => 'Afrobeats', 'avatar' => 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=600'],
-            'art_rema' => ['name' => 'Rema', 'genre' => 'Afrobeats', 'avatar' => 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=600'],
-            'art_the_weeknd' => ['name' => 'The Weeknd', 'genre' => 'Pop', 'avatar' => 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=600'],
-            'art_sza' => ['name' => 'SZA', 'genre' => 'R&B', 'avatar' => 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=600'],
-            'art_kendrick' => ['name' => 'Kendrick Lamar', 'genre' => 'Rap', 'avatar' => 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=600'],
-            'art_billie' => ['name' => 'Billie Eilish', 'genre' => 'Pop', 'avatar' => 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=600'],
-            'art_sabrina' => ['name' => 'Sabrina Carpenter', 'genre' => 'Pop', 'avatar' => 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=600'],
-            'art_taylor' => ['name' => 'Taylor Swift', 'genre' => 'Pop', 'avatar' => 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=600'],
-            'art_tems' => ['name' => 'Tems', 'genre' => 'Afrobeats', 'avatar' => 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=600'],
-            'art_gunna' => ['name' => 'Gunna', 'genre' => 'Rap', 'avatar' => 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=600'],
-            'art_lofigirl' => ['name' => 'Lofi Girl', 'genre' => 'Lo-Fi', 'avatar' => 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600'],
-            'art_tommy' => ['name' => 'Tommy Richman', 'genre' => 'R&B', 'avatar' => 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=600'],
-            'art_frank_ocean' => ['name' => 'Frank Ocean', 'genre' => 'R&B', 'avatar' => 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=600'],
-            'art_chappell' => ['name' => 'Chappell Roan', 'genre' => 'Pop', 'avatar' => 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=600']
-        ];
-
-        foreach ($artistsMap as $artId => $info) {
-            $slug = strtolower(preg_replace('/[^a-zA-Z0-9]+/', '-', $info['name']));
-            $artStmt->execute([
-                $artId,
-                $info['name'],
-                $info['name'],
-                $slug,
-                $info['avatar'],
-                $info['avatar'],
-                "Official YouTube Music verified artist profile for {$info['name']}.",
-                rand(15000000, 85000000),
-                rand(500000000, 9500000000),
-                rand(500000, 18000000),
-                json_encode([$info['genre']])
-            ]);
-        }
-
-        foreach ($ytTracks as $t) {
-            $albStmt->execute([
-                $t['album_id'],
-                $t['album'],
-                $t['artist_id'],
-                $t['artist'],
-                $t['cover_url'],
-                date('Y-m-d'),
-                $t['genre']
-            ]);
-
-            $moods = json_encode([$t['genre'], 'Trending', 'YouTube Music Charts']);
-            $trkStmt->execute([
-                $t['id'],
-                $t['videoId'],
-                $t['title'],
-                $t['artist_id'],
-                $t['artist'],
-                $t['album_id'],
-                $t['album'],
-                $t['duration'],
-                $t['genre'],
-                $t['cover_url'],
-                $t['audio_url'],
-                $t['streams'],
-                $t['likes'],
-                date('Y-m-d'),
-                $t['lyrics'],
-                $moods,
-                120
-            ]);
-        }
-
-        // Seed Real Playlists
-        $ytPlaylists = [
-            [
-                'id' => 'ply_top_hits',
-                'title' => 'YouTube Music Top 100 Global Charts',
-                'description' => 'The hottest and most played songs in the world right now from the official YouTube Music charts.',
-                'genre_category' => 'all',
-                'cover_art_url' => 'https://i.ytimg.com/vi/c2gK9tq57iQ/maxresdefault.jpg',
-                'tracks' => ['trk_yt_c2gK9tq57iQ', 'trk_yt_4NRXx6U8ABQ', 'trk_yt_eVli-tstM5E', 'trk_yt_H58vbez_m4E', 'trk_yt_mSDfxde8fSg']
-            ],
-            [
-                'id' => 'ply_afro_vibes',
-                'title' => 'Afrobeats Worldwide Wave',
-                'description' => 'Burna Boy, Asake, Rema, and Tems leading the global Afro-fusion revolution.',
-                'genre_category' => 'afrobeat',
-                'cover_art_url' => 'https://i.ytimg.com/vi/eE3p9qE1fO8/maxresdefault.jpg',
-                'tracks' => ['trk_yt_c2gK9tq57iQ', 'trk_yt_eE3p9qE1fO8', 'trk_yt_CQLsdmU69GD', 'trk_yt_VwzP7mZ7mRk']
-            ],
-            [
-                'id' => 'ply_rap_caviar',
-                'title' => 'Hip-Hop & Rap Caviar Heavyweights',
-                'description' => 'Kendrick Lamar, Gunna, Drake, and the hardest-hitting rap anthems on YouTube Music.',
-                'genre_category' => 'workout',
-                'cover_art_url' => 'https://i.ytimg.com/vi/H58vbez_m4E/maxresdefault.jpg',
-                'tracks' => ['trk_yt_H58vbez_m4E', 'trk_yt_5W8HjA2Gz54']
-            ],
-            [
-                'id' => 'ply_pop_rising',
-                'title' => 'Pop Rising & Global Hits',
-                'description' => 'Sabrina Carpenter, Billie Eilish, Taylor Swift, and Chappell Roan dominating the charts.',
-                'genre_category' => 'party',
-                'cover_art_url' => 'https://i.ytimg.com/vi/eVli-tstM5E/maxresdefault.jpg',
-                'tracks' => ['trk_yt_eVli-tstM5E', 'trk_yt_d5gf9dXFKCA', 'trk_yt_ic8j13piAhQ', 'trk_yt_1FIxYVbK_oA', 'trk_yt_4NRXx6U8ABQ']
-            ],
-            [
-                'id' => 'ply_rnb_slowjams',
-                'title' => 'Midnight Velvet R&B & Neo-Soul',
-                'description' => 'SZA, Tommy Richman, Frank Ocean, and sultry late night harmonies.',
-                'genre_category' => 'love_songs',
-                'cover_art_url' => 'https://i.ytimg.com/vi/mSDfxde8fSg/maxresdefault.jpg',
-                'tracks' => ['trk_yt_mSDfxde8fSg', 'trk_yt_o2n_5_rN2qA', 'trk_yt_uzS3WG6__G4']
-            ],
-            [
-                'id' => 'ply_chill_focus',
-                'title' => 'Lo-Fi Chill & Deep Study Focus',
-                'description' => 'Mellow beats, soothing tape warmth, and atmospheric focus music.',
-                'genre_category' => 'coding',
-                'cover_art_url' => 'https://i.ytimg.com/vi/5qap5aO4i9A/maxresdefault.jpg',
-                'tracks' => ['trk_yt_5qap5aO4i9A']
-            ]
-        ];
-
-        $plStmt = $pdo->prepare("
-            INSERT INTO playlists (id, user_id, title, description, cover_art_url, genre_category, is_public)
-            VALUES (?, 'usr_admin_001', ?, ?, ?, ?, 1)
-            ON DUPLICATE KEY UPDATE
-                title = VALUES(title),
-                description = VALUES(description),
-                cover_art_url = VALUES(cover_art_url),
-                genre_category = VALUES(genre_category)
-        ");
-
-        $delPlTracks = $pdo->prepare("DELETE FROM playlist_tracks WHERE playlist_id = ?");
-        $insPlTrack = $pdo->prepare("INSERT INTO playlist_tracks (id, playlist_id, track_id, position) VALUES (?, ?, ?, ?)");
-
-        foreach ($ytPlaylists as $pl) {
-            $plStmt->execute([
-                $pl['id'],
-                $pl['title'],
-                $pl['description'],
-                $pl['cover_art_url'],
-                $pl['genre_category']
-            ]);
-
-            $delPlTracks->execute([$pl['id']]);
-            $pos = 1;
-            foreach ($pl['tracks'] as $tid) {
-                $insPlTrack->execute([
-                    'plt_' . substr(md5($pl['id'] . $tid), 0, 12),
-                    $pl['id'],
-                    $tid,
-                    $pos++
-                ]);
-            }
-        }
-
-        json_response([
-            'status' => 'success',
-            'message' => 'Successfully purged all mock songs and seeded verified YouTube Music hits catalog!',
-            'seeded_tracks_count' => count($ytTracks),
-            'seeded_playlists_count' => count($ytPlaylists)
-        ]);
-
-    } catch (Exception $e) {
-        json_response([
-            'status' => 'error',
-            'message' => 'Purge & seed failed: ' . $e->getMessage()
-        ], 500);
-    }
 }
 
 json_response(['status' => 'error', 'message' => 'Invalid action or request'], 400);

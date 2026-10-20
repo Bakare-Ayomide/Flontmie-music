@@ -1,339 +1,1045 @@
 <?php
 /**
- * Flontmie API - Dedicated Protected Administrator Governance & Control Backend
- * Strictly enforced server-side: only authenticated users with role === 'admin' can access.
+ * Flontmie API - Owner & Super-Admin Governance Controller
+ * Enforces strict server-side RBAC (role = 'admin'), CSRF validation on state changes,
+ * and complete database persistence for Users, Roles, Artists, Albums/EPs/Singles,
+ * Tracks, Playlists, Record Labels, Distributors, Genres, Claims, Moderation, and Settings.
+ * Zero mock data or simulated records.
  */
 
 require_once __DIR__ . '/../config.php';
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../auth_helper.php';
 require_once __DIR__ . '/../media_engine.php';
+require_once __DIR__ . '/../artist_enrichment.php';
 
-// Strict Server-Side RBAC Enforcement
-$user = Auth::requireRole(['admin']);
+// Enforce Admin-only access on every action in this endpoint
+$admin = Auth::requireRole(['admin']);
 $method = $_SERVER['REQUEST_METHOD'];
-$action = $_GET['action'] ?? 'dashboard';
-$input = get_json_input();
+$action = $_GET['action'] ?? 'overview';
 $pdo = Database::getConnection();
+$input = get_json_input();
 
-if ($method === 'POST') {
-    Auth::verifyCsrf($user, $input);
+if ($method === 'POST' || $method === 'PUT' || $method === 'DELETE') {
+    Auth::verifyCsrf($admin, $input);
 }
 
-// Helper for fetching overview metrics
-function getOverviewData(PDO $pdo): array {
+// --- 1. COMPREHENSIVE ADMIN OVERVIEW & CATALOG TELEMETRY ---
+if ($method === 'GET' && ($action === 'overview' || $action === 'dashboard')) {
     $totalUsers = (int)$pdo->query("SELECT COUNT(*) FROM users")->fetchColumn();
     $activeUsers = (int)$pdo->query("SELECT COUNT(*) FROM users WHERE status = 'active'")->fetchColumn();
     $suspendedUsers = (int)$pdo->query("SELECT COUNT(*) FROM users WHERE status IN ('suspended', 'banned')")->fetchColumn();
-    $totalArtists = (int)$pdo->query("SELECT COUNT(*) FROM artists")->fetchColumn();
-    $totalDistributors = (int)$pdo->query("SELECT COUNT(*) FROM distributors")->fetchColumn();
-    $totalLabels = (int)$pdo->query("SELECT COUNT(*) FROM labels")->fetchColumn();
+    $adminCount = (int)$pdo->query("SELECT COUNT(*) FROM users WHERE role = 'admin'")->fetchColumn();
+    $distributorUsersCount = (int)$pdo->query("SELECT COUNT(*) FROM users WHERE role = 'distributor'")->fetchColumn();
+    $artistUsersCount = (int)$pdo->query("SELECT COUNT(*) FROM users WHERE role = 'artist'")->fetchColumn();
+    $labelUsersCount = (int)$pdo->query("SELECT COUNT(*) FROM users WHERE role = 'label'")->fetchColumn();
+
     $totalTracks = (int)$pdo->query("SELECT COUNT(*) FROM tracks WHERE is_deleted = 0")->fetchColumn();
+    $publishedTracks = (int)$pdo->query("SELECT COUNT(*) FROM tracks WHERE is_deleted = 0 AND (status = 'published' OR status = 'active' OR status IS NULL)")->fetchColumn();
+    $totalArtists = (int)$pdo->query("SELECT COUNT(*) FROM artists")->fetchColumn();
     $totalAlbums = (int)$pdo->query("SELECT COUNT(*) FROM albums")->fetchColumn();
     $totalPlaylists = (int)$pdo->query("SELECT COUNT(*) FROM playlists")->fetchColumn();
+    $totalDistributors = (int)$pdo->query("SELECT COUNT(*) FROM distributors")->fetchColumn();
+    $totalLabels = (int)$pdo->query("SELECT COUNT(*) FROM labels")->fetchColumn();
+    $pendingClaims = (int)$pdo->query("SELECT COUNT(*) FROM artist_claims WHERE status IN ('pending', 'escalated')")->fetchColumn();
+    $openFlags = (int)$pdo->query("SELECT COUNT(*) FROM content_flags WHERE status = 'open'")->fetchColumn();
     $totalStreams = (int)$pdo->query("SELECT COALESCE(SUM(stream_count), 0) FROM tracks WHERE is_deleted = 0")->fetchColumn();
-    $pendingClaims = (int)$pdo->query("SELECT COUNT(*) FROM artist_claims WHERE status IN ('pending', 'escalated', 'disputed')")->fetchColumn();
-    $openReports = (int)$pdo->query("SELECT COUNT(*) FROM moderation_reports WHERE status IN ('open', 'investigating', 'appealed')")->fetchColumn();
-    $activeSessions = (int)$pdo->query("SELECT COUNT(*) FROM user_sessions WHERE is_revoked = 0 AND expires_at > NOW()")->fetchColumn();
+    $totalFlontmiePlays = (int)$pdo->query("SELECT COALESCE(SUM(flontmie_plays), 0) FROM tracks WHERE is_deleted = 0")->fetchColumn();
+    $totalLikes = (int)$pdo->query("SELECT COALESCE(SUM(likes_count), 0) FROM tracks WHERE is_deleted = 0")->fetchColumn();
 
-    $recentActivity = $pdo->query("
-        SELECT l.*, u.email AS user_email, u.display_name AS user_name, u.role AS user_role
-        FROM audit_logs l
-        LEFT JOIN users u ON l.user_id = u.id
-        ORDER BY l.created_at DESC
-        LIMIT 15
+    // Users list
+    $users = $pdo->query("
+        SELECT id, username, email, role, status, display_name, avatar_url, bio, country, distributor_id, label_id, artist_id, email_verified, last_login_at, created_at
+        FROM users
+        ORDER BY created_at DESC
+        LIMIT 250
     ")->fetchAll();
 
-    try {
-        require_once __DIR__ . '/../media_matcher.php';
-        $mediaCounts = MediaMatcher::getDatabaseCounts($pdo);
-    } catch (Throwable $e) {
-        $mediaCounts = ['total_scanned' => 0, 'matched' => 0, 'ambiguous' => 0, 'unmatched' => 0, 'unsupported' => 0, 'error' => 0, 'video_files' => 0];
+    // Tracks list
+    $tracks = $pdo->query("
+        SELECT id, video_id, title, artist_id, artist_name, album_id, album_name, duration, genre, country, release_year, release_date,
+               cover_art_url, audio_url, video_url, local_audio_path, local_video_path, local_artwork_path, local_lyrics_path,
+               audio_file_size, audio_format, import_status, stream_count, flontmie_plays, likes_count, explicit, isrc,
+               status, featured_on_home, editorial_boost, license_status, license_notes, lyrics, distributor_id, label_id, uploaded_by_user_id, created_at
+        FROM tracks
+        WHERE is_deleted = 0
+        ORDER BY created_at DESC
+        LIMIT 300
+    ")->fetchAll();
+
+    foreach ($tracks as &$t) {
+        $t['cover_art_url'] = ArtistEnrichment::resolveArtworkUrl($t['cover_art_url'] ?? '', $t['video_id'] ?? $t['id']);
+        $t['yt_plays'] = ArtistEnrichment::parseMetric((string)($t['stream_count'] ?? '0'))['compact'];
+        $t['flontmie_plays'] = (int)($t['flontmie_plays'] ?? 0);
+        $t['has_local_audio'] = !empty($t['local_audio_path']);
+        $t['has_local_video'] = !empty($t['local_video_path']) || !empty($t['video_url']);
+        $t['has_lyrics'] = !empty($t['lyrics']) || !empty($t['local_lyrics_path']);
+        $t['audio_url'] = '/phpbackend/api/stream.php?id=' . urlencode($t['id']);
+        if (!empty($t['local_video_path'])) {
+            $t['video_url'] = '/phpbackend/api/stream.php?id=' . urlencode($t['id']) . '&type=video';
+        }
+        unset($t['local_audio_path'], $t['local_artwork_path'], $t['local_video_path'], $t['local_lyrics_path']);
     }
 
-    return [
-        'total_users' => $totalUsers,
-        'active_users' => $activeUsers,
-        'suspended_users' => $suspendedUsers,
-        'total_artists' => $totalArtists,
-        'total_distributors' => $totalDistributors,
-        'total_labels' => $totalLabels,
-        'total_tracks' => $totalTracks,
-        'total_albums' => $totalAlbums,
-        'total_playlists' => $totalPlaylists,
-        'total_streams' => $totalStreams,
-        'pending_claims' => $pendingClaims,
-        'open_reports' => $openReports,
-        'active_sessions' => $activeSessions,
-        'recent_activity' => $recentActivity,
-        'media_counts' => $mediaCounts
-    ];
-}
-
-// --- 1. OVERVIEW / FULL DASHBOARD SNAPSHOT ---
-if ($method === 'GET' && ($action === 'stats' || $action === 'overview' || $action === 'dashboard')) {
-    $overview = getOverviewData($pdo);
-
-    $users = $pdo->query("
-        SELECT id, username, email, role, status, display_name, avatar_url, country, distributor_id, label_id, email_verified, must_change_password, last_login_at, last_login_ip, failed_login_attempts, locked_until, created_at 
-        FROM users 
+    // Artists list
+    $artists = $pdo->query("
+        SELECT id, name, stage_name, slug, avatar_url, header_url, bio, country, verified, is_featured, status,
+               monthly_listeners, total_streams, followers, genres_json, social_links_json,
+               created_by_distributor, distributor_name, distributor_id, label_id, label_name,
+               claimed_status, claimed_user_id, created_by_user_id, created_at
+        FROM artists
         ORDER BY created_at DESC
+        LIMIT 250
     ")->fetchAll();
+    foreach ($artists as &$a) {
+        $a['avatar_url'] = ArtistEnrichment::resolveArtworkUrl($a['avatar_url'] ?? '', $a['id']);
+        $a['header_url'] = ArtistEnrichment::resolveArtworkUrl($a['header_url'] ?? $a['avatar_url'], $a['id']);
+        $a['genres'] = !empty($a['genres_json']) ? json_decode($a['genres_json'], true) : [];
+        $a['social_links'] = !empty($a['social_links_json']) ? json_decode($a['social_links_json'], true) : [];
+    }
 
-    $artists = $pdo->query("SELECT * FROM artists ORDER BY total_streams DESC")->fetchAll();
+    // Albums list
+    $albums = $pdo->query("
+        SELECT id, title, artist_id, artist_name, cover_art_url, release_date, release_type, genre,
+               status, is_featured, upc, tracks_count, distributor_id, label_id, created_by_user_id, created_at
+        FROM albums
+        ORDER BY created_at DESC
+        LIMIT 250
+    ")->fetchAll();
+    foreach ($albums as &$alb) {
+        $alb['cover_art_url'] = ArtistEnrichment::resolveArtworkUrl($alb['cover_art_url'] ?? '', $alb['artist_id'] ?? $alb['id']);
+    }
+
+    // Playlists list
+    $playlists = $pdo->query("
+        SELECT id, user_id, title, description, cover_art_url, genre_category, is_public, is_featured, status, track_ids_json, created_at
+        FROM playlists
+        ORDER BY created_at DESC
+        LIMIT 150
+    ")->fetchAll();
+    foreach ($playlists as &$pl) {
+        $pl['cover_art_url'] = ArtistEnrichment::resolveArtworkUrl($pl['cover_art_url'] ?? '', $pl['id']);
+        $tIds = !empty($pl['track_ids_json']) ? json_decode($pl['track_ids_json'], true) : [];
+        $pl['track_ids'] = is_array($tIds) ? $tIds : [];
+        $pl['track_count'] = count($pl['track_ids']);
+    }
+
+    // Genres list
+    $genres = $pdo->query("SELECT * FROM genres ORDER BY sort_order ASC, name ASC")->fetchAll();
+
+    // Distributors list
+    $distributors = $pdo->query("SELECT * FROM distributors ORDER BY created_at DESC")->fetchAll();
+
+    // Labels list
+    $labels = $pdo->query("SELECT * FROM labels ORDER BY created_at DESC")->fetchAll();
+
+    // Claims list
     $claims = $pdo->query("
-        SELECT c.*, a.name AS artist_name, a.avatar_url AS artist_avatar, a.verified AS artist_verified
+        SELECT c.*, a.name AS artist_name, a.avatar_url AS artist_avatar
         FROM artist_claims c
         LEFT JOIN artists a ON c.artist_id = a.id
         ORDER BY c.created_at DESC
-    ")->fetchAll();
-
-    $tracks = $pdo->query("SELECT * FROM tracks WHERE is_deleted = 0 ORDER BY stream_count DESC")->fetchAll();
-    foreach ($tracks as &$t) {
-        $t['has_local_audio'] = !empty($t['local_audio_path']);
-        $t['has_local_artwork'] = !empty($t['local_artwork_path']);
-        $t['audio_url'] = '/phpbackend/api/stream.php?id=' . urlencode($t['id']);
-        unset($t['local_audio_path'], $t['local_artwork_path']);
-    }
-
-    $albums = $pdo->query("SELECT * FROM albums ORDER BY created_at DESC")->fetchAll();
-    $playlists = $pdo->query("SELECT * FROM playlists ORDER BY created_at DESC")->fetchAll();
-    foreach ($playlists as &$pl) {
-        $pl['track_ids'] = !empty($pl['track_ids_json']) ? json_decode($pl['track_ids_json'], true) : [];
-    }
-
-    $distributors = $pdo->query("SELECT * FROM distributors ORDER BY created_at DESC")->fetchAll();
-    $labels = $pdo->query("SELECT * FROM labels ORDER BY created_at DESC")->fetchAll();
-    $rolePermissions = $pdo->query("SELECT * FROM role_permissions ORDER BY max_upload_per_month DESC")->fetchAll();
-
-    $reports = $pdo->query("SELECT * FROM moderation_reports ORDER BY created_at DESC")->fetchAll();
-    $genres = $pdo->query("SELECT * FROM platform_genres ORDER BY display_order ASC")->fetchAll();
-    $settingsRows = $pdo->query("SELECT * FROM system_settings ORDER BY category ASC, setting_key ASC")->fetchAll();
-
-    $importJobs = [];
-    try {
-        $importJobs = $pdo->query("SELECT * FROM import_jobs ORDER BY created_at DESC LIMIT 80")->fetchAll();
-        foreach ($importJobs as &$jb) {
-            $jb['has_local_audio'] = !empty($jb['local_audio_path']);
-            unset($jb['local_audio_path'], $jb['local_artwork_path'], $jb['raw_payload_json']);
-        }
-    } catch (Exception $e) {}
-
-    $importSchedules = [];
-    try {
-        $importSchedules = $pdo->query("SELECT * FROM import_schedules ORDER BY created_at DESC")->fetchAll();
-    } catch (Exception $e) {}
-
-    $storageStats = MediaEngine::getStorageStats($pdo);
-
-    $auditLogs = $pdo->query("
-        SELECT l.*, u.email AS user_email, u.display_name AS user_name
-        FROM audit_logs l
-        LEFT JOIN users u ON l.user_id = u.id
-        ORDER BY l.created_at DESC
         LIMIT 100
     ")->fetchAll();
 
-    $sessions = $pdo->query("
-        SELECT s.id, s.user_id, s.ip_address, s.user_agent, s.is_revoked, s.created_at, s.last_active_at, s.expires_at,
-               u.email, u.display_name, u.role
+    // Flags / Moderation queue
+    $flags = $pdo->query("SELECT * FROM content_flags ORDER BY created_at DESC LIMIT 100")->fetchAll();
+
+    // System settings
+    $settingsRows = $pdo->query("SELECT setting_key, setting_value, updated_at FROM system_settings")->fetchAll();
+    $settings = [];
+    foreach ($settingsRows as $r) {
+        $settings[$r['setting_key']] = $r['setting_value'];
+    }
+
+    // Top searches & recent searches
+    $topSearches = $pdo->query("
+        SELECT query, COUNT(*) AS searches, MAX(results_count) AS results_count, MAX(created_at) AS last_searched
+        FROM search_logs
+        GROUP BY query
+        ORDER BY searches DESC
+        LIMIT 20
+    ")->fetchAll();
+
+    // Top tracks by plays
+    $topTracks = $pdo->query("
+        SELECT id, title, artist_name, genre, stream_count, flontmie_plays, likes_count, cover_art_url
+        FROM tracks
+        WHERE is_deleted = 0
+        ORDER BY flontmie_plays DESC, stream_count DESC
+        LIMIT 15
+    ")->fetchAll();
+
+    // Recent audit logs & security events
+    $auditLogs = $pdo->query("
+        SELECT l.*, u.email AS actor_email, u.display_name AS actor_name
+        FROM audit_logs l
+        LEFT JOIN users u ON l.user_id = u.id
+        ORDER BY l.created_at DESC
+        LIMIT 60
+    ")->fetchAll();
+
+    $securityEvents = $pdo->query("
+        SELECT * FROM security_events
+        ORDER BY created_at DESC
+        LIMIT 60
+    ")->fetchAll();
+
+    // Active sessions
+    $activeSessions = $pdo->query("
+        SELECT s.id, s.user_id, s.ip_address, s.user_agent, s.last_active_at, s.expires_at, u.email, u.role
         FROM user_sessions s
-        LEFT JOIN users u ON s.user_id = u.id
+        JOIN users u ON s.user_id = u.id
+        WHERE s.is_revoked = 0 AND s.expires_at > NOW()
         ORDER BY s.last_active_at DESC
         LIMIT 50
     ")->fetchAll();
 
-    $securityEvents = $pdo->query("
-        SELECT * FROM security_events ORDER BY created_at DESC LIMIT 80
-    ")->fetchAll();
+    // Import jobs & schedules
+    $importJobs = [];
+    $importSchedules = [];
+    $storageStats = [];
+    try {
+        $importJobs = $pdo->query("SELECT * FROM import_jobs ORDER BY created_at DESC LIMIT 60")->fetchAll();
+        $importSchedules = $pdo->query("SELECT * FROM import_schedules ORDER BY created_at DESC LIMIT 30")->fetchAll();
+        $storageStats = MediaEngine::getStorageStats($pdo);
+    } catch (Exception $e) {}
 
-    // Analytics aggregations
-    $genreStats = $pdo->query("
-        SELECT genre, COUNT(*) AS track_count, COALESCE(SUM(stream_count), 0) AS total_streams, COALESCE(SUM(likes_count), 0) AS total_likes
-        FROM tracks
-        WHERE is_deleted = 0
-        GROUP BY genre
-        ORDER BY total_streams DESC
-    ")->fetchAll();
-
-    $roleBreakdown = $pdo->query("
-        SELECT role, COUNT(*) AS count
-        FROM users
-        GROUP BY role
-    ")->fetchAll();
-
-    $recentSearches = $pdo->query("
-        SELECT query, COUNT(*) AS searches, MAX(created_at) AS last_searched
-        FROM search_logs
-        GROUP BY query
-        ORDER BY searches DESC, last_searched DESC
-        LIMIT 15
-    ")->fetchAll();
+    $metricsPayload = [
+        'total_users' => $totalUsers,
+        'active_users' => $activeUsers,
+        'suspended_users' => $suspendedUsers,
+        'admin_count' => $adminCount,
+        'distributor_users_count' => $distributorUsersCount,
+        'artist_users_count' => $artistUsersCount,
+        'label_users_count' => $labelUsersCount,
+        'total_tracks' => $totalTracks,
+        'published_tracks' => $publishedTracks,
+        'total_artists' => $totalArtists,
+        'total_albums' => $totalAlbums,
+        'total_playlists' => $totalPlaylists,
+        'total_distributors' => $totalDistributors,
+        'total_labels' => $totalLabels,
+        'pending_claims' => $pendingClaims,
+        'open_flags' => $openFlags,
+        'open_reports' => $openFlags,
+        'total_streams' => $totalStreams,
+        'total_flontmie_plays' => $totalFlontmiePlays,
+        'total_likes' => $totalLikes
+    ];
 
     json_response([
         'status' => 'success',
-        'stats' => $overview,
+        'metrics' => $metricsPayload,
+        'stats' => $metricsPayload,
         'users' => $users,
-        'artists' => $artists,
-        'claims' => $claims,
         'tracks' => $tracks,
+        'artists' => $artists,
         'albums' => $albums,
         'playlists' => $playlists,
+        'genres' => $genres,
         'distributors' => $distributors,
         'labels' => $labels,
-        'role_permissions' => $rolePermissions,
-        'reports' => $reports,
-        'genres' => $genres,
-        'settings' => $settingsRows,
+        'claims' => $claims,
+        'flags' => $flags,
+        'reports' => $flags,
+        'settings' => $settings,
+        'settings_list' => $settingsRows,
+        'analytics' => [
+            'top_searches' => $topSearches,
+            'top_tracks' => $topTracks
+        ],
+        'audit_logs' => $auditLogs,
+        'security_events' => $securityEvents,
+        'active_sessions' => $activeSessions,
+        'sessions' => $activeSessions,
         'import_jobs' => $importJobs,
         'import_schedules' => $importSchedules,
-        'storage' => $storageStats,
-        'audit_logs' => $auditLogs,
-        'sessions' => $sessions,
-        'security_events' => $securityEvents,
-        'analytics' => [
-            'genre_stats' => $genreStats,
-            'role_breakdown' => $roleBreakdown,
-            'top_tracks' => array_slice($tracks, 0, 10),
-            'top_artists' => array_slice($artists, 0, 10),
-            'recent_searches' => $recentSearches
-        ]
+        'storage' => $storageStats
     ]);
 }
 
-// --- 2. USERS MANAGEMENT ---
-if ($method === 'GET' && $action === 'users') {
-    $q = trim($_GET['q'] ?? '');
-    $role = trim($_GET['role'] ?? '');
-    $status = trim($_GET['status'] ?? '');
+// --- 2. USER & ROLE MANAGEMENT ---
+if ($method === 'POST' && $action === 'create_user') {
+    $email = strtolower(trim($input['email'] ?? ''));
+    $displayName = trim($input['display_name'] ?? '');
+    $password = $input['password'] ?? '';
+    $role = in_array($input['role'] ?? '', ['listener', 'artist', 'distributor', 'label', 'admin'], true) ? $input['role'] : 'listener';
+    $distributorId = !empty($input['distributor_id']) ? trim($input['distributor_id']) : null;
+    $labelId = !empty($input['label_id']) ? trim($input['label_id']) : null;
+    $artistId = !empty($input['artist_id']) ? trim($input['artist_id']) : null;
+    $country = strtoupper(substr(trim($input['country'] ?? 'US'), 0, 2)) ?: 'US';
 
-    $sql = "SELECT id, username, email, role, status, display_name, avatar_url, country, distributor_id, label_id, email_verified, must_change_password, last_login_at, last_login_ip, failed_login_attempts, locked_until, created_at FROM users WHERE 1=1";
-    $params = [];
+    if (empty($email) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        json_response(['status' => 'error', 'message' => 'A valid email address is required.'], 400);
+    }
+    if (empty($displayName)) {
+        json_response(['status' => 'error', 'message' => 'Display name is required.'], 400);
+    }
+    if (strlen($password) < 8) {
+        json_response(['status' => 'error', 'message' => 'Password must be at least 8 characters long.'], 400);
+    }
 
-    if ($q !== '') {
-        $sql .= " AND (email LIKE ? OR username LIKE ? OR display_name LIKE ?)";
-        $params[] = "%$q%";
-        $params[] = "%$q%";
-        $params[] = "%$q%";
+    $chk = $pdo->prepare("SELECT id FROM users WHERE email = ? LIMIT 1");
+    $chk->execute([$email]);
+    if ($chk->fetch()) {
+        json_response(['status' => 'error', 'message' => 'A user with this email already exists.'], 409);
     }
-    if ($role !== '') {
-        $sql .= " AND role = ?";
-        $params[] = $role;
-    }
-    if ($status !== '') {
-        $sql .= " AND status = ?";
-        $params[] = $status;
-    }
-    $sql .= " ORDER BY created_at DESC";
 
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute($params);
-    json_response(['status' => 'success', 'users' => $stmt->fetchAll()]);
+    // If creating a distributor user and no distributor entity ID was passed, create a matching distributor entity automatically
+    if ($role === 'distributor' && empty($distributorId)) {
+        $distributorId = 'dist_' . bin2hex(random_bytes(5));
+        $pdo->prepare("
+            INSERT INTO distributors (id, name, contact_email, status, access_level, created_by_user_id)
+            VALUES (?, ?, ?, 'approved', 'full_ingestion', ?)
+        ")->execute([$distributorId, $displayName, $email, $admin['id']]);
+    }
+
+    // If creating a label user and no label entity ID was passed, create a matching label entity automatically
+    if ($role === 'label' && empty($labelId)) {
+        $labelId = 'lbl_' . bin2hex(random_bytes(5));
+        $pdo->prepare("
+            INSERT INTO labels (id, name, contact_email, country, status, distributor_id, created_by_user_id)
+            VALUES (?, ?, ?, ?, 'active', ?, ?)
+        ")->execute([$labelId, $displayName, $email, $country, $distributorId, $admin['id']]);
+    }
+
+    // If creating an artist user and no artist entity ID was passed, create an artist profile automatically
+    if ($role === 'artist' && empty($artistId)) {
+        $artistId = 'art_' . bin2hex(random_bytes(5));
+        $slug = strtolower(preg_replace('/[^a-zA-Z0-9]+/', '-', $displayName)) . '-' . rand(100, 999);
+        $pdo->prepare("
+            INSERT INTO artists (id, name, stage_name, slug, country, verified, claimed_status, distributor_id, label_id, created_by_user_id)
+            VALUES (?, ?, ?, ?, ?, 1, 'claimed', ?, ?, ?)
+        ")->execute([$artistId, $displayName, $displayName, $slug, $country, $distributorId, $labelId, $admin['id']]);
+    }
+
+    $userId = 'usr_' . bin2hex(random_bytes(6));
+    $username = strtolower(preg_replace('/[^a-zA-Z0-9_]/', '', explode('@', $email)[0])) . '_' . substr(bin2hex(random_bytes(2)), 0, 4);
+    $hash = password_hash($password, PASSWORD_BCRYPT);
+
+    $pdo->prepare("
+        INSERT INTO users (id, username, email, password_hash, role, status, display_name, country, distributor_id, label_id, artist_id, email_verified)
+        VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, 1)
+    ")->execute([$userId, $username, $email, $hash, $role, $displayName, $country, $distributorId, $labelId, $artistId]);
+
+    if ($role === 'artist' && !empty($artistId)) {
+        $pdo->prepare("UPDATE artists SET claimed_user_id = ?, claimed_status = 'claimed' WHERE id = ?")->execute([$userId, $artistId]);
+    }
+
+    Auth::logAudit($admin['id'], 'ADMIN_USER_CREATED', 'USER', $userId, ['email' => $email, 'role' => $role, 'distributor_id' => $distributorId, 'label_id' => $labelId, 'artist_id' => $artistId]);
+    json_response([
+        'status' => 'success',
+        'message' => "Created {$role} account for {$displayName} ({$email}).",
+        'user_id' => $userId,
+        'distributor_id' => $distributorId,
+        'label_id' => $labelId,
+        'artist_id' => $artistId
+    ], 201);
 }
 
-if ($method === 'POST' && ($action === 'update_user' || $action === 'update_role')) {
-    $targetUserId = trim($input['user_id'] ?? '');
-    if (empty($targetUserId)) {
+if ($method === 'POST' && $action === 'update_user') {
+    $userId = trim($input['user_id'] ?? '');
+    if (empty($userId)) {
         json_response(['status' => 'error', 'message' => 'Missing user_id'], 400);
     }
 
     $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ? LIMIT 1");
-    $stmt->execute([$targetUserId]);
-    $target = $stmt->fetch();
-    if (!$target) {
+    $stmt->execute([$userId]);
+    $targetUser = $stmt->fetch();
+    if (!$targetUser) {
         json_response(['status' => 'error', 'message' => 'User not found'], 404);
     }
 
-    $newRole = $input['role'] ?? $target['role'];
-    $newStatus = $input['status'] ?? $target['status'];
-    $newName = trim($input['display_name'] ?? $target['display_name']);
-    $emailVerified = isset($input['email_verified']) ? (int)((bool)$input['email_verified']) : (int)$target['email_verified'];
+    $newRole = in_array($input['role'] ?? '', ['listener', 'artist', 'distributor', 'label', 'admin'], true) ? $input['role'] : $targetUser['role'];
+    $newStatus = in_array($input['status'] ?? '', ['active', 'suspended', 'banned'], true) ? $input['status'] : $targetUser['status'];
+    $newName = isset($input['display_name']) ? trim($input['display_name']) : $targetUser['display_name'];
+    $newEmail = isset($input['email']) ? strtolower(trim($input['email'])) : $targetUser['email'];
+    $distributorId = array_key_exists('distributor_id', $input) ? (!empty($input['distributor_id']) ? trim($input['distributor_id']) : null) : $targetUser['distributor_id'];
+    $labelId = array_key_exists('label_id', $input) ? (!empty($input['label_id']) ? trim($input['label_id']) : null) : $targetUser['label_id'];
+    $artistId = array_key_exists('artist_id', $input) ? (!empty($input['artist_id']) ? trim($input['artist_id']) : null) : $targetUser['artist_id'];
 
-    if (!in_array($newRole, ['listener', 'artist', 'distributor', 'label', 'admin'], true)) {
-        json_response(['status' => 'error', 'message' => 'Invalid role specified.'], 400);
-    }
-    if (!in_array($newStatus, ['active', 'suspended', 'banned'], true)) {
-        json_response(['status' => 'error', 'message' => 'Invalid status specified.'], 400);
-    }
-
-    // Prevent locking out the last active admin
-    if ($target['id'] === $user['id'] && ($newRole !== 'admin' || $newStatus !== 'active')) {
-        json_response(['status' => 'error', 'message' => 'You cannot demote or suspend your own active administrator account.'], 400);
-    }
-
-    $upd = $pdo->prepare("UPDATE users SET role = ?, status = ?, display_name = ?, email_verified = ? WHERE id = ?");
-    $upd->execute([$newRole, $newStatus, $newName, $emailVerified, $targetUserId]);
-
-    if (in_array($newStatus, ['suspended', 'banned'], true)) {
-        $pdo->prepare("UPDATE user_sessions SET is_revoked = 1 WHERE user_id = ?")->execute([$targetUserId]);
+    // Prevent demoting or suspending the last active administrator
+    if ($targetUser['role'] === 'admin' && ($newRole !== 'admin' || $newStatus !== 'active')) {
+        $adminCount = (int)$pdo->query("SELECT COUNT(*) FROM users WHERE role = 'admin' AND status = 'active'")->fetchColumn();
+        if ($adminCount <= 1) {
+            json_response(['status' => 'error', 'message' => 'Cannot demote or suspend the last active administrator account.'], 400);
+        }
     }
 
-    Auth::logAudit($user['id'], 'ADMIN_USER_UPDATED', 'USER', $targetUserId, [
-        'email' => $target['email'],
-        'old_role' => $target['role'],
-        'new_role' => $newRole,
-        'old_status' => $target['status'],
-        'new_status' => $newStatus
-    ]);
-
-    json_response([
-        'status' => 'success',
-        'message' => "Account {$target['email']} updated (Role: {$newRole}, Status: {$newStatus})."
-    ]);
-}
-
-if ($method === 'POST' && $action === 'create_user') {
-    $email = strtolower(trim(filter_var($input['email'] ?? '', FILTER_VALIDATE_EMAIL) ?: ''));
-    $displayName = trim($input['display_name'] ?? '');
-    $username = preg_replace('/[^a-z0-9_]/', '', strtolower(trim($input['username'] ?? explode('@', $email)[0] ?? '')));
-    $password = $input['password'] ?? '';
-    $role = in_array($input['role'] ?? '', ['listener', 'artist', 'distributor', 'label', 'admin'], true) ? $input['role'] : 'listener';
-    $country = strtoupper(substr(trim($input['country'] ?? 'US'), 0, 2));
-    $mustChange = !empty($input['must_change_password']) ? 1 : 0;
-
-    if (empty($email) || strlen($password) < 6) {
-        json_response(['status' => 'error', 'message' => 'Valid email and password (min 6 chars) are required.'], 400);
+    // Auto-provision Distributor entity if promoted to distributor without one
+    if ($newRole === 'distributor' && empty($distributorId)) {
+        $distributorId = 'dist_' . bin2hex(random_bytes(5));
+        $pdo->prepare("
+            INSERT INTO distributors (id, name, contact_email, status, access_level, created_by_user_id)
+            VALUES (?, ?, ?, 'approved', 'full_ingestion', ?)
+        ")->execute([$distributorId, $newName, $newEmail, $admin['id']]);
     }
 
-    $check = $pdo->prepare("SELECT id FROM users WHERE email = ? OR username = ? LIMIT 1");
-    $check->execute([$email, $username]);
-    if ($check->fetch()) {
-        json_response(['status' => 'error', 'message' => 'Email or username already exists.'], 409);
+    // Auto-provision Label entity if promoted to label without one
+    if ($newRole === 'label' && empty($labelId)) {
+        $labelId = 'lbl_' . bin2hex(random_bytes(5));
+        $pdo->prepare("
+            INSERT INTO labels (id, name, contact_email, status, distributor_id, created_by_user_id)
+            VALUES (?, ?, ?, 'active', ?, ?)
+        ")->execute([$labelId, $newName, $newEmail, $distributorId, $admin['id']]);
     }
 
-    $newId = 'usr_' . bin2hex(random_bytes(8));
-    $hash = password_hash($password, PASSWORD_DEFAULT);
+    // Auto-provision Artist entity if promoted to artist without one
+    if ($newRole === 'artist' && empty($artistId)) {
+        $artistId = 'art_' . bin2hex(random_bytes(5));
+        $slug = strtolower(preg_replace('/[^a-zA-Z0-9]+/', '-', $newName)) . '-' . rand(100, 999);
+        $pdo->prepare("
+            INSERT INTO artists (id, name, stage_name, slug, verified, claimed_status, claimed_user_id, distributor_id, label_id, created_by_user_id)
+            VALUES (?, ?, ?, ?, 1, 'claimed', ?, ?, ?, ?)
+        ")->execute([$artistId, $newName, $newName, $slug, $userId, $distributorId, $labelId, $admin['id']]);
+    } elseif ($newRole === 'artist' && !empty($artistId)) {
+        $pdo->prepare("UPDATE artists SET claimed_user_id = ?, claimed_status = 'claimed' WHERE id = ?")->execute([$userId, $artistId]);
+    }
+
     $pdo->prepare("
-        INSERT INTO users (id, username, email, password_hash, role, status, display_name, avatar_url, country, email_verified, must_change_password)
-        VALUES (?, ?, ?, ?, ?, 'active', ?, 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150', ?, 1, ?)
-    ")->execute([$newId, $username, $email, $hash, $role, $displayName ?: $username, $country, $mustChange]);
+        UPDATE users
+        SET role = ?, status = ?, display_name = ?, email = ?, distributor_id = ?, label_id = ?, artist_id = ?
+        WHERE id = ?
+    ")->execute([$newRole, $newStatus, $newName, $newEmail, $distributorId, $labelId, $artistId, $userId]);
 
-    Auth::logAudit($user['id'], 'ADMIN_USER_CREATED', 'USER', $newId, ['email' => $email, 'role' => $role]);
+    if (!empty($input['new_password']) && strlen($input['new_password']) >= 8) {
+        $hash = password_hash($input['new_password'], PASSWORD_BCRYPT);
+        $pdo->prepare("UPDATE users SET password_hash = ? WHERE id = ?")->execute([$hash, $userId]);
+    }
 
-    json_response(['status' => 'success', 'message' => "Created {$role} account for {$email}."]);
+    if ($newStatus !== 'active') {
+        $pdo->prepare("UPDATE user_sessions SET is_revoked = 1 WHERE user_id = ?")->execute([$userId]);
+    }
+
+    Auth::logAudit($admin['id'], 'ADMIN_USER_UPDATED', 'USER', $userId, [
+        'role' => $newRole,
+        'status' => $newStatus,
+        'distributor_id' => $distributorId,
+        'label_id' => $labelId,
+        'artist_id' => $artistId
+    ]);
+
+    json_response(['status' => 'success', 'message' => "Updated user {$newName} ({$newRole})."]);
 }
 
 if ($method === 'POST' && $action === 'delete_user') {
-    $targetUserId = trim($input['user_id'] ?? '');
-    if (empty($targetUserId)) {
-        json_response(['status' => 'error', 'message' => 'Missing user_id'], 400);
+    $userId = trim($input['user_id'] ?? '');
+    if (empty($userId) || $userId === $admin['id']) {
+        json_response(['status' => 'error', 'message' => 'Cannot delete your own active administrator account.'], 400);
     }
-    if ($targetUserId === $user['id']) {
-        json_response(['status' => 'error', 'message' => 'You cannot delete your own active administrator account.'], 400);
-    }
-    $stmt = $pdo->prepare("SELECT id, email, role FROM users WHERE id = ? LIMIT 1");
-    $stmt->execute([$targetUserId]);
-    $target = $stmt->fetch();
-    if (!$target) {
+
+    $stmt = $pdo->prepare("SELECT role, email FROM users WHERE id = ? LIMIT 1");
+    $stmt->execute([$userId]);
+    $u = $stmt->fetch();
+    if (!$u) {
         json_response(['status' => 'error', 'message' => 'User not found'], 404);
     }
-    $pdo->prepare("DELETE FROM user_sessions WHERE user_id = ?")->execute([$targetUserId]);
-    $pdo->prepare("DELETE FROM users WHERE id = ?")->execute([$targetUserId]);
-    Auth::logAudit($user['id'], 'ADMIN_USER_DELETED', 'USER', $targetUserId, ['email' => $target['email'], 'role' => $target['role']]);
-    json_response(['status' => 'success', 'message' => "Deleted user account {$target['email']}."]);
+    if ($u['role'] === 'admin') {
+        $adminCount = (int)$pdo->query("SELECT COUNT(*) FROM users WHERE role = 'admin'")->fetchColumn();
+        if ($adminCount <= 1) {
+            json_response(['status' => 'error', 'message' => 'Cannot delete the last administrator account.'], 400);
+        }
+    }
+
+    $pdo->prepare("DELETE FROM user_sessions WHERE user_id = ?")->execute([$userId]);
+    $pdo->prepare("DELETE FROM users WHERE id = ?")->execute([$userId]);
+    Auth::logAudit($admin['id'], 'ADMIN_USER_DELETED', 'USER', $userId, ['email' => $u['email']]);
+    json_response(['status' => 'success', 'message' => 'User account permanently deleted.']);
 }
 
-// --- 3. ARTISTS & CLAIMS ---
+if ($method === 'POST' && $action === 'revoke_session') {
+    $sessionId = trim($input['session_id'] ?? '');
+    $pdo->prepare("UPDATE user_sessions SET is_revoked = 1 WHERE id = ?")->execute([$sessionId]);
+    Auth::logAudit($admin['id'], 'ADMIN_SESSION_REVOKED', 'SESSION', $sessionId);
+    json_response(['status' => 'success', 'message' => 'Session revoked immediately.']);
+}
+
+// --- 3. DISTRIBUTOR MANAGEMENT (CREATE, UPDATE, DELETE) ---
+if ($method === 'POST' && ($action === 'save_distributor' || $action === 'update_distributor')) {
+    $distId = trim($input['id'] ?? $input['distributor_id'] ?? '');
+    $name = trim($input['name'] ?? '');
+    $contactEmail = strtolower(trim($input['contact_email'] ?? ''));
+    $websiteUrl = trim($input['website_url'] ?? '');
+    $rawStatus = $input['status'] ?? 'approved';
+    if ($rawStatus === 'active') $rawStatus = 'approved';
+    $status = in_array($rawStatus, ['approved', 'pending', 'suspended', 'revoked'], true) ? $rawStatus : 'approved';
+    $accessLevel = in_array($input['access_level'] ?? '', ['full_ingestion', 'metadata_only', 'read_only'], true) ? $input['access_level'] : 'full_ingestion';
+    $autoApprove = !empty($input['auto_approve_releases']) ? 1 : 0;
+
+    if (empty($distId) && (empty($name) || empty($contactEmail))) {
+        json_response(['status' => 'error', 'message' => 'Distributor name and contact email are required.'], 400);
+    }
+
+    if (empty($distId)) {
+        $distId = 'dist_' . bin2hex(random_bytes(5));
+        $apiKeyPrefix = 'flnt_live_' . substr(bin2hex(random_bytes(4)), 0, 8);
+        $pdo->prepare("
+            INSERT INTO distributors (id, name, contact_email, website_url, status, access_level, auto_approve_releases, api_key_prefix, created_by_user_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ")->execute([$distId, $name, $contactEmail, $websiteUrl, $status, $accessLevel, $autoApprove, $apiKeyPrefix, $admin['id']]);
+        Auth::logAudit($admin['id'], 'ADMIN_DISTRIBUTOR_CREATED', 'DISTRIBUTOR', $distId, ['name' => $name]);
+        $msg = "Created distributor '{$name}'.";
+    } else {
+        $pdo->prepare("
+            UPDATE distributors
+            SET name = COALESCE(NULLIF(?, ''), name),
+                contact_email = COALESCE(NULLIF(?, ''), contact_email),
+                website_url = COALESCE(NULLIF(?, ''), website_url),
+                status = ?,
+                access_level = ?,
+                auto_approve_releases = ?
+            WHERE id = ?
+        ")->execute([$name, $contactEmail, $websiteUrl, $status, $accessLevel, $autoApprove, $distId]);
+        Auth::logAudit($admin['id'], 'ADMIN_DISTRIBUTOR_UPDATED', 'DISTRIBUTOR', $distId, ['name' => $name, 'status' => $status]);
+        $msg = "Updated distributor.";
+    }
+
+    // Optionally create or link a user account if password is provided
+    if (!empty($contactEmail) && !empty($input['account_password']) && strlen($input['account_password']) >= 8) {
+        $chk = $pdo->prepare("SELECT id FROM users WHERE email = ? LIMIT 1");
+        $chk->execute([$contactEmail]);
+        $existingUser = $chk->fetch();
+        $hash = password_hash($input['account_password'], PASSWORD_BCRYPT);
+        if ($existingUser) {
+            $pdo->prepare("UPDATE users SET role = 'distributor', distributor_id = ?, password_hash = ?, display_name = COALESCE(NULLIF(?, ''), display_name) WHERE id = ?")
+                ->execute([$distId, $hash, $name, $existingUser['id']]);
+        } else {
+            $uId = 'usr_' . bin2hex(random_bytes(6));
+            $uname = strtolower(preg_replace('/[^a-zA-Z0-9_]/', '', $name ?: explode('@', $contactEmail)[0])) . '_' . rand(100, 999);
+            $pdo->prepare("
+                INSERT INTO users (id, username, email, password_hash, role, status, display_name, distributor_id, email_verified)
+                VALUES (?, ?, ?, ?, 'distributor', 'active', ?, ?, 1)
+            ")->execute([$uId, $uname, $contactEmail, $hash, $name ?: $uname, $distId]);
+        }
+    }
+
+    json_response(['status' => 'success', 'message' => $msg, 'distributor_id' => $distId]);
+}
+
+if ($method === 'POST' && $action === 'delete_distributor') {
+    $distId = trim($input['id'] ?? $input['distributor_id'] ?? '');
+    if (empty($distId)) {
+        json_response(['status' => 'error', 'message' => 'Missing distributor id'], 400);
+    }
+    $pdo->prepare("DELETE FROM distributors WHERE id = ?")->execute([$distId]);
+    $pdo->prepare("UPDATE users SET distributor_id = NULL WHERE distributor_id = ?")->execute([$distId]);
+    Auth::logAudit($admin['id'], 'ADMIN_DISTRIBUTOR_DELETED', 'DISTRIBUTOR', $distId);
+    json_response(['status' => 'success', 'message' => 'Distributor deleted.']);
+}
+
+// --- 4. RECORD LABEL MANAGEMENT (CREATE, UPDATE, DELETE) ---
+if ($method === 'POST' && ($action === 'save_label' || $action === 'update_label')) {
+    $labelId = trim($input['id'] ?? $input['label_id'] ?? '');
+    $name = trim($input['name'] ?? '');
+    $contactEmail = strtolower(trim($input['contact_email'] ?? ''));
+    $websiteUrl = trim($input['website_url'] ?? '');
+    $country = strtoupper(substr(trim($input['country'] ?? 'US'), 0, 2)) ?: 'US';
+    $distributorId = !empty($input['distributor_id']) ? trim($input['distributor_id']) : null;
+    $description = trim($input['description'] ?? '');
+    $logoUrl = trim($input['logo_url'] ?? '');
+    $status = in_array($input['status'] ?? '', ['active', 'pending', 'suspended'], true) ? $input['status'] : 'active';
+
+    if (empty($labelId) && empty($name)) {
+        json_response(['status' => 'error', 'message' => 'Record label name is required.'], 400);
+    }
+
+    if (empty($labelId)) {
+        $labelId = 'lbl_' . bin2hex(random_bytes(5));
+        $pdo->prepare("
+            INSERT INTO labels (id, name, contact_email, website_url, logo_url, description, country, status, distributor_id, created_by_user_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ")->execute([$labelId, $name, $contactEmail, $websiteUrl, $logoUrl, $description, $country, $status, $distributorId, $admin['id']]);
+        Auth::logAudit($admin['id'], 'ADMIN_LABEL_CREATED', 'LABEL', $labelId, ['name' => $name]);
+        $msg = "Created record label '{$name}'.";
+    } else {
+        $pdo->prepare("
+            UPDATE labels
+            SET name = COALESCE(NULLIF(?, ''), name),
+                contact_email = COALESCE(NULLIF(?, ''), contact_email),
+                website_url = COALESCE(NULLIF(?, ''), website_url),
+                logo_url = COALESCE(NULLIF(?, ''), logo_url),
+                description = COALESCE(NULLIF(?, ''), description),
+                country = COALESCE(NULLIF(?, ''), country),
+                status = ?,
+                distributor_id = COALESCE(?, distributor_id)
+            WHERE id = ?
+        ")->execute([$name, $contactEmail, $websiteUrl, $logoUrl, $description, $country, $status, $distributorId, $labelId]);
+        Auth::logAudit($admin['id'], 'ADMIN_LABEL_UPDATED', 'LABEL', $labelId, ['name' => $name]);
+        $msg = "Updated record label.";
+    }
+
+    // Optionally create or link a label user account if password is provided
+    if (!empty($contactEmail) && !empty($input['account_password']) && strlen($input['account_password']) >= 8) {
+        $chk = $pdo->prepare("SELECT id FROM users WHERE email = ? LIMIT 1");
+        $chk->execute([$contactEmail]);
+        $existingUser = $chk->fetch();
+        $hash = password_hash($input['account_password'], PASSWORD_BCRYPT);
+        if ($existingUser) {
+            $pdo->prepare("UPDATE users SET role = 'label', label_id = ?, distributor_id = COALESCE(?, distributor_id), password_hash = ?, display_name = COALESCE(NULLIF(?, ''), display_name) WHERE id = ?")
+                ->execute([$labelId, $distributorId, $hash, $name, $existingUser['id']]);
+        } else {
+            $uId = 'usr_' . bin2hex(random_bytes(6));
+            $uname = strtolower(preg_replace('/[^a-zA-Z0-9_]/', '', $name ?: explode('@', $contactEmail)[0])) . '_' . rand(100, 999);
+            $pdo->prepare("
+                INSERT INTO users (id, username, email, password_hash, role, status, display_name, label_id, distributor_id, country, email_verified)
+                VALUES (?, ?, ?, ?, 'label', 'active', ?, ?, ?, ?, 1)
+            ")->execute([$uId, $uname, $contactEmail, $hash, $name ?: $uname, $labelId, $distributorId, $country]);
+        }
+    }
+
+    json_response(['status' => 'success', 'message' => $msg, 'label_id' => $labelId]);
+}
+
+if ($method === 'POST' && $action === 'delete_label') {
+    $labelId = trim($input['id'] ?? $input['label_id'] ?? '');
+    if (empty($labelId)) {
+        json_response(['status' => 'error', 'message' => 'Missing label id'], 400);
+    }
+    $pdo->prepare("DELETE FROM labels WHERE id = ?")->execute([$labelId]);
+    $pdo->prepare("UPDATE users SET label_id = NULL WHERE label_id = ?")->execute([$labelId]);
+    $pdo->prepare("UPDATE artists SET label_id = NULL WHERE label_id = ?")->execute([$labelId]);
+    Auth::logAudit($admin['id'], 'ADMIN_LABEL_DELETED', 'LABEL', $labelId);
+    json_response(['status' => 'success', 'message' => 'Record label deleted.']);
+}
+
+// --- 5. ARTIST MANAGEMENT (CREATE, UPDATE, DELETE) ---
+if ($method === 'POST' && ($action === 'save_artist' || $action === 'update_artist')) {
+    $artistId = trim($input['id'] ?? $input['artist_id'] ?? '');
+    $name = trim($input['name'] ?? '');
+    $bio = isset($input['bio']) ? trim($input['bio']) : null;
+    $avatarUrl = trim($input['avatar_url'] ?? '');
+    $headerUrl = trim($input['header_url'] ?? $avatarUrl);
+    $country = !empty($input['country']) ? strtoupper(substr(trim($input['country']), 0, 2)) : null;
+    $verified = isset($input['verified']) ? (!empty($input['verified']) ? 1 : 0) : null;
+    $isFeatured = isset($input['is_featured']) ? (!empty($input['is_featured']) ? 1 : 0) : null;
+    $status = in_array($input['status'] ?? '', ['published', 'draft', 'hidden'], true) ? $input['status'] : null;
+    $claimedStatus = in_array($input['claimed_status'] ?? '', ['unclaimed', 'pending', 'claimed', 'disputed'], true) ? $input['claimed_status'] : null;
+    $distributorId = !empty($input['distributor_id']) ? trim($input['distributor_id']) : null;
+    $labelId = !empty($input['label_id']) ? trim($input['label_id']) : null;
+    $labelName = trim($input['label_name'] ?? '');
+    $genres = isset($input['genres']) && is_array($input['genres']) ? $input['genres'] : (!empty($input['genre']) ? [trim($input['genre'])] : null);
+    $socialLinks = isset($input['social_links']) && is_array($input['social_links']) ? $input['social_links'] : null;
+
+    if (empty($artistId) && empty($name)) {
+        json_response(['status' => 'error', 'message' => 'Artist name is required.'], 400);
+    }
+
+    if (!empty($labelId) && empty($labelName)) {
+        $lStmt = $pdo->prepare("SELECT name FROM labels WHERE id = ? LIMIT 1");
+        $lStmt->execute([$labelId]);
+        $labelName = (string)($lStmt->fetchColumn() ?: '');
+    }
+
+    $distName = '';
+    if (!empty($distributorId)) {
+        $dStmt = $pdo->prepare("SELECT name FROM distributors WHERE id = ? LIMIT 1");
+        $dStmt->execute([$distributorId]);
+        $distName = (string)($dStmt->fetchColumn() ?: '');
+    }
+
+    if (empty($artistId)) {
+        $artistId = 'art_' . bin2hex(random_bytes(6));
+        $slug = strtolower(preg_replace('/[^a-zA-Z0-9]+/', '-', $name)) . '-' . rand(100, 999);
+        $pdo->prepare("
+            INSERT INTO artists (id, name, stage_name, slug, avatar_url, header_url, bio, country, verified, is_featured, status, genres_json, social_links_json, distributor_id, distributor_name, created_by_distributor, label_id, label_name, created_by_user_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ")->execute([
+            $artistId, $name, $name, $slug, $avatarUrl, $headerUrl, $bio ?? '', $country ?: 'US', $verified ?? 1, $isFeatured ?? 0, $status ?: 'published',
+            json_encode($genres ?? []), json_encode($socialLinks ?? []), $distributorId, $distName ?: null, $distName ?: null, $labelId, $labelName ?: null, $admin['id']
+        ]);
+        Auth::logAudit($admin['id'], 'ADMIN_ARTIST_CREATED', 'ARTIST', $artistId, ['name' => $name]);
+        json_response(['status' => 'success', 'message' => "Created artist profile '{$name}'.", 'artist_id' => $artistId]);
+    } else {
+        $pdo->prepare("
+            UPDATE artists
+            SET name = COALESCE(NULLIF(?, ''), name),
+                stage_name = COALESCE(NULLIF(?, ''), stage_name),
+                bio = COALESCE(?, bio),
+                avatar_url = COALESCE(NULLIF(?, ''), avatar_url),
+                header_url = COALESCE(NULLIF(?, ''), header_url),
+                country = COALESCE(NULLIF(?, ''), country),
+                verified = COALESCE(?, verified),
+                is_featured = COALESCE(?, is_featured),
+                status = COALESCE(?, status),
+                claimed_status = COALESCE(?, claimed_status),
+                genres_json = COALESCE(?, genres_json),
+                social_links_json = COALESCE(?, social_links_json),
+                distributor_id = COALESCE(?, distributor_id),
+                distributor_name = COALESCE(NULLIF(?, ''), distributor_name),
+                label_id = COALESCE(?, label_id),
+                label_name = COALESCE(NULLIF(?, ''), label_name)
+            WHERE id = ?
+        ")->execute([
+            $name, $name, $bio, $avatarUrl, $headerUrl, $country, $verified, $isFeatured, $status, $claimedStatus,
+            $genres !== null ? json_encode($genres) : null,
+            $socialLinks !== null ? json_encode($socialLinks) : null,
+            $distributorId, $distName, $labelId, $labelName, $artistId
+        ]);
+        if (!empty($name)) {
+            $pdo->prepare("UPDATE tracks SET artist_name = ? WHERE artist_id = ?")->execute([$name, $artistId]);
+            $pdo->prepare("UPDATE albums SET artist_name = ? WHERE artist_id = ?")->execute([$name, $artistId]);
+        }
+
+        Auth::logAudit($admin['id'], 'ADMIN_ARTIST_UPDATED', 'ARTIST', $artistId, ['name' => $name]);
+        json_response(['status' => 'success', 'message' => "Updated artist profile.", 'artist_id' => $artistId]);
+    }
+}
+
+if ($method === 'POST' && $action === 'delete_artist') {
+    $artistId = trim($input['artist_id'] ?? $input['id'] ?? '');
+    if (empty($artistId)) {
+        json_response(['status' => 'error', 'message' => 'Missing artist_id'], 400);
+    }
+    $pdo->prepare("DELETE FROM artists WHERE id = ?")->execute([$artistId]);
+    Auth::logAudit($admin['id'], 'ADMIN_ARTIST_DELETED', 'ARTIST', $artistId);
+    json_response(['status' => 'success', 'message' => 'Artist profile deleted.']);
+}
+
+// --- 6. ALBUMS, EPs & SINGLES MANAGEMENT (CREATE, UPDATE, DELETE) ---
+if ($method === 'POST' && ($action === 'save_album' || $action === 'update_album')) {
+    $albumId = trim($input['id'] ?? $input['album_id'] ?? '');
+    if (!empty($input['delete']) && !empty($albumId)) {
+        $pdo->prepare("DELETE FROM albums WHERE id = ?")->execute([$albumId]);
+        Auth::logAudit($admin['id'], 'ADMIN_ALBUM_DELETED', 'ALBUM', $albumId);
+        json_response(['status' => 'success', 'message' => 'Album/release deleted.']);
+    }
+
+    $title = trim($input['title'] ?? '');
+    $artistId = trim($input['artist_id'] ?? '');
+    $artistName = trim($input['artist_name'] ?? '');
+    $coverUrl = trim($input['cover_art_url'] ?? '');
+    $releaseDate = !empty($input['release_date']) ? trim($input['release_date']) : null;
+    $releaseType = in_array($input['release_type'] ?? '', ['album', 'ep', 'single'], true) ? $input['release_type'] : null;
+    $genre = !empty($input['genre']) ? trim($input['genre']) : null;
+    $status = in_array($input['status'] ?? '', ['published', 'draft', 'scheduled', 'archived'], true) ? $input['status'] : null;
+    $isFeatured = isset($input['is_featured']) ? (!empty($input['is_featured']) ? 1 : 0) : null;
+    $upc = isset($input['upc']) ? trim($input['upc']) : null;
+    $distributorId = !empty($input['distributor_id']) ? trim($input['distributor_id']) : null;
+    $labelId = !empty($input['label_id']) ? trim($input['label_id']) : null;
+
+    if (!empty($artistId) && empty($artistName)) {
+        $aStmt = $pdo->prepare("SELECT name FROM artists WHERE id = ? LIMIT 1");
+        $aStmt->execute([$artistId]);
+        $artistName = (string)($aStmt->fetchColumn() ?: '');
+    }
+
+    if (empty($albumId)) {
+        if (empty($title) || empty($artistName)) {
+            json_response(['status' => 'error', 'message' => 'Release title and artist are required.'], 400);
+        }
+        if (empty($artistId)) {
+            $artistId = 'art_' . substr(md5(strtolower($artistName)), 0, 12);
+        }
+        $albumId = 'alb_' . bin2hex(random_bytes(6));
+        $pdo->prepare("
+            INSERT INTO albums (id, title, artist_id, artist_name, cover_art_url, release_date, release_type, genre, status, is_featured, upc, distributor_id, label_id, created_by_user_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ")->execute([
+            $albumId, $title, $artistId, $artistName, $coverUrl, $releaseDate ?: date('Y-m-d'), $releaseType ?: 'album', $genre ?: 'Afrobeats',
+            $status ?: 'published', $isFeatured ?? 0, $upc ?: null, $distributorId, $labelId, $admin['id']
+        ]);
+        Auth::logAudit($admin['id'], 'ADMIN_ALBUM_CREATED', 'ALBUM', $albumId, ['title' => $title, 'type' => $releaseType ?: 'album']);
+        json_response(['status' => 'success', 'message' => "Created release '{$title}'.", 'album_id' => $albumId]);
+    } else {
+        $pdo->prepare("
+            UPDATE albums
+            SET title = COALESCE(NULLIF(?, ''), title),
+                artist_id = COALESCE(NULLIF(?, ''), artist_id),
+                artist_name = COALESCE(NULLIF(?, ''), artist_name),
+                cover_art_url = COALESCE(NULLIF(?, ''), cover_art_url),
+                release_date = COALESCE(NULLIF(?, ''), release_date),
+                release_type = COALESCE(?, release_type),
+                genre = COALESCE(NULLIF(?, ''), genre),
+                status = COALESCE(?, status),
+                is_featured = COALESCE(?, is_featured),
+                upc = COALESCE(?, upc),
+                distributor_id = COALESCE(?, distributor_id),
+                label_id = COALESCE(?, label_id)
+            WHERE id = ?
+        ")->execute([
+            $title, $artistId, $artistName, $coverUrl, $releaseDate, $releaseType, $genre,
+            $status, $isFeatured, $upc, $distributorId, $labelId, $albumId
+        ]);
+        if (!empty($title)) {
+            $pdo->prepare("UPDATE tracks SET album_name = ? WHERE album_id = ?")->execute([$title, $albumId]);
+        }
+        Auth::logAudit($admin['id'], 'ADMIN_ALBUM_UPDATED', 'ALBUM', $albumId, ['title' => $title]);
+        json_response(['status' => 'success', 'message' => "Updated release.", 'album_id' => $albumId]);
+    }
+}
+
+if ($method === 'POST' && $action === 'delete_album') {
+    $albumId = trim($input['album_id'] ?? $input['id'] ?? '');
+    if (empty($albumId)) {
+        json_response(['status' => 'error', 'message' => 'Missing album_id'], 400);
+    }
+    $pdo->prepare("DELETE FROM albums WHERE id = ?")->execute([$albumId]);
+    Auth::logAudit($admin['id'], 'ADMIN_ALBUM_DELETED', 'ALBUM', $albumId);
+    json_response(['status' => 'success', 'message' => 'Album/release deleted.']);
+}
+
+// --- 7. TRACKS & SONGS MANAGEMENT (CREATE, UPDATE, DELETE, BULK) ---
+if ($method === 'POST' && ($action === 'save_track' || $action === 'update_track')) {
+    $trackId = trim($input['track_id'] ?? $input['id'] ?? '');
+
+    if (!empty($input['delete_permanently']) && !empty($trackId)) {
+        $pdo->prepare("UPDATE tracks SET is_deleted = 1, status = 'removed' WHERE id = ?")->execute([$trackId]);
+        Auth::logAudit($admin['id'], 'ADMIN_TRACK_DELETED', 'TRACK', $trackId);
+        json_response(['status' => 'success', 'message' => 'Track removed from catalog.']);
+    }
+    if (!empty($input['restore']) && !empty($trackId)) {
+        $pdo->prepare("UPDATE tracks SET is_deleted = 0, status = 'published' WHERE id = ?")->execute([$trackId]);
+        Auth::logAudit($admin['id'], 'ADMIN_TRACK_RESTORED', 'TRACK', $trackId);
+        json_response(['status' => 'success', 'message' => 'Track restored to catalog.']);
+    }
+
+    $title = trim($input['title'] ?? '');
+    $artistId = trim($input['artist_id'] ?? '');
+    $artistName = trim($input['artist_name'] ?? '');
+    $albumId = !empty($input['album_id']) ? trim($input['album_id']) : null;
+    $albumName = trim($input['album_name'] ?? '');
+    $genre = trim($input['genre'] ?? '');
+    $country = !empty($input['country']) ? strtoupper(substr(trim($input['country']), 0, 2)) : null;
+    $releaseDate = !empty($input['release_date']) ? trim($input['release_date']) : null;
+    $releaseYear = !empty($input['release_year']) ? (int)$input['release_year'] : ($releaseDate ? (int)substr($releaseDate, 0, 4) : null);
+    $duration = !empty($input['duration']) ? (int)$input['duration'] : null;
+    $explicit = isset($input['explicit']) ? (!empty($input['explicit']) ? 1 : 0) : null;
+    $rawStatus = $input['status'] ?? null;
+    if ($rawStatus === 'active') $rawStatus = 'published';
+    $status = in_array($rawStatus, ['published', 'draft', 'hidden', 'removed'], true) ? $rawStatus : null;
+    $featuredOnHome = isset($input['featured_on_home']) ? (!empty($input['featured_on_home']) ? 1 : 0) : null;
+    $editorialBoost = isset($input['editorial_boost']) ? (int)$input['editorial_boost'] : null;
+    $licenseStatus = isset($input['license_status']) ? trim($input['license_status']) : null;
+    $licenseNotes = isset($input['license_notes']) ? trim($input['license_notes']) : null;
+    $lyrics = isset($input['lyrics']) ? trim($input['lyrics']) : null;
+    $coverUrl = trim($input['cover_art_url'] ?? '');
+    $audioUrl = trim($input['audio_url'] ?? '');
+    $videoUrl = trim($input['video_url'] ?? '');
+    $videoId = !empty($input['video_id']) ? trim($input['video_id']) : null;
+    $isrc = trim($input['isrc'] ?? '');
+    $distributorId = !empty($input['distributor_id']) ? trim($input['distributor_id']) : null;
+    $labelId = !empty($input['label_id']) ? trim($input['label_id']) : null;
+
+    if (!empty($artistId) && empty($artistName)) {
+        $aStmt = $pdo->prepare("SELECT name FROM artists WHERE id = ? LIMIT 1");
+        $aStmt->execute([$artistId]);
+        $artistName = (string)($aStmt->fetchColumn() ?: '');
+    }
+
+    if (empty($trackId)) {
+        if (empty($title) || empty($artistName)) {
+            json_response(['status' => 'error', 'message' => 'Track title and artist name are required.'], 400);
+        }
+        $trackId = 'trk_' . bin2hex(random_bytes(6));
+        if (empty($artistId)) {
+            $artistId = 'art_' . substr(md5(strtolower($artistName)), 0, 12);
+        }
+        if (empty($audioUrl)) {
+            $audioUrl = '/phpbackend/api/stream.php?id=' . urlencode($trackId);
+        }
+        $pdo->prepare("
+            INSERT INTO tracks (
+                id, video_id, title, artist_id, artist_name, album_id, album_name, duration, genre, country,
+                release_year, release_date, cover_art_url, audio_url, video_url, lyrics, isrc, explicit,
+                status, featured_on_home, editorial_boost, license_status, license_notes, distributor_id, label_id, uploaded_by_user_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ")->execute([
+            $trackId, $videoId, $title, $artistId, $artistName, $albumId, $albumName ?: ($title . ' - Single'),
+            $duration ?: 210, $genre ?: 'Afrobeats', $country ?: 'US', $releaseYear ?: (int)date('Y'), $releaseDate ?: date('Y-m-d'),
+            $coverUrl, $audioUrl, $videoUrl ?: null,
+            $lyrics, $isrc ?: null, $explicit ?? 0, $status ?: 'published', $featuredOnHome ?? 0, $editorialBoost ?? 0,
+            $licenseStatus ?: 'verified_licensed', $licenseNotes ?: '',
+            $distributorId, $labelId, $admin['id']
+        ]);
+        Auth::logAudit($admin['id'], 'ADMIN_TRACK_CREATED', 'TRACK', $trackId, ['title' => $title, 'artist' => $artistName]);
+        json_response(['status' => 'success', 'message' => "Created track '{$title}'.", 'track_id' => $trackId]);
+    } else {
+        $pdo->prepare("
+            UPDATE tracks
+            SET title = COALESCE(NULLIF(?, ''), title),
+                artist_id = COALESCE(NULLIF(?, ''), artist_id),
+                artist_name = COALESCE(NULLIF(?, ''), artist_name),
+                album_id = COALESCE(?, album_id),
+                album_name = COALESCE(NULLIF(?, ''), album_name),
+                genre = COALESCE(NULLIF(?, ''), genre),
+                country = COALESCE(NULLIF(?, ''), country),
+                release_year = COALESCE(?, release_year),
+                duration = COALESCE(?, duration),
+                cover_art_url = COALESCE(NULLIF(?, ''), cover_art_url),
+                audio_url = COALESCE(NULLIF(?, ''), audio_url),
+                video_url = COALESCE(NULLIF(?, ''), video_url),
+                video_id = COALESCE(NULLIF(?, ''), video_id),
+                lyrics = COALESCE(?, lyrics),
+                isrc = COALESCE(NULLIF(?, ''), isrc),
+                explicit = COALESCE(?, explicit),
+                status = COALESCE(?, status),
+                featured_on_home = COALESCE(?, featured_on_home),
+                editorial_boost = COALESCE(?, editorial_boost),
+                license_status = COALESCE(?, license_status),
+                license_notes = COALESCE(?, license_notes),
+                distributor_id = COALESCE(?, distributor_id),
+                label_id = COALESCE(?, label_id)
+            WHERE id = ?
+        ")->execute([
+            $title, $artistId, $artistName, $albumId, $albumName, $genre, $country, $releaseYear, $duration,
+            $coverUrl, $audioUrl, $videoUrl, $videoId, $lyrics, $isrc, $explicit, $status, $featuredOnHome,
+            $editorialBoost, $licenseStatus, $licenseNotes, $distributorId, $labelId, $trackId
+        ]);
+        Auth::logAudit($admin['id'], 'ADMIN_TRACK_UPDATED', 'TRACK', $trackId, ['title' => $title, 'status' => $status]);
+        json_response(['status' => 'success', 'message' => "Updated track."]);
+    }
+}
+
+if ($method === 'POST' && $action === 'delete_track') {
+    $trackId = trim($input['track_id'] ?? $input['id'] ?? '');
+    if (empty($trackId)) {
+        json_response(['status' => 'error', 'message' => 'Missing track_id'], 400);
+    }
+    $pdo->prepare("UPDATE tracks SET is_deleted = 1, status = 'removed' WHERE id = ?")->execute([$trackId]);
+    Auth::logAudit($admin['id'], 'ADMIN_TRACK_DELETED', 'TRACK', $trackId);
+    json_response(['status' => 'success', 'message' => 'Track removed from catalog.']);
+}
+
+if ($method === 'POST' && $action === 'bulk_track_action') {
+    $trackIds = is_array($input['track_ids'] ?? null) ? array_filter($input['track_ids']) : [];
+    $bulkAction = trim($input['bulk_action'] ?? '');
+    if (empty($trackIds) || empty($bulkAction)) {
+        json_response(['status' => 'error', 'message' => 'Missing track_ids or bulk_action'], 400);
+    }
+    $in = implode(',', array_fill(0, count($trackIds), '?'));
+    if ($bulkAction === 'publish') {
+        $pdo->prepare("UPDATE tracks SET status = 'published', is_deleted = 0 WHERE id IN ($in)")->execute(array_values($trackIds));
+    } elseif ($bulkAction === 'hide') {
+        $pdo->prepare("UPDATE tracks SET status = 'hidden' WHERE id IN ($in)")->execute(array_values($trackIds));
+    } elseif ($bulkAction === 'feature') {
+        $pdo->prepare("UPDATE tracks SET featured_on_home = 1 WHERE id IN ($in)")->execute(array_values($trackIds));
+    } elseif ($bulkAction === 'unfeature') {
+        $pdo->prepare("UPDATE tracks SET featured_on_home = 0 WHERE id IN ($in)")->execute(array_values($trackIds));
+    } elseif ($bulkAction === 'delete') {
+        $pdo->prepare("UPDATE tracks SET is_deleted = 1, status = 'removed' WHERE id IN ($in)")->execute(array_values($trackIds));
+    }
+    Auth::logAudit($admin['id'], 'ADMIN_BULK_TRACK_' . strtoupper($bulkAction), 'TRACK', 'BULK', ['count' => count($trackIds)]);
+    json_response(['status' => 'success', 'message' => 'Bulk action applied to ' . count($trackIds) . ' tracks.']);
+}
+
+// --- 8. PLAYLIST MANAGEMENT (CREATE, UPDATE, DELETE) ---
+if ($method === 'POST' && ($action === 'save_playlist' || $action === 'update_playlist')) {
+    $playlistId = trim($input['id'] ?? $input['playlist_id'] ?? '');
+    if (!empty($input['delete']) && !empty($playlistId)) {
+        $pdo->prepare("DELETE FROM playlists WHERE id = ?")->execute([$playlistId]);
+        $pdo->prepare("DELETE FROM playlist_tracks WHERE playlist_id = ?")->execute([$playlistId]);
+        Auth::logAudit($admin['id'], 'ADMIN_PLAYLIST_DELETED', 'PLAYLIST', $playlistId);
+        json_response(['status' => 'success', 'message' => 'Playlist deleted.']);
+    }
+
+    $title = trim($input['title'] ?? '');
+    $description = isset($input['description']) ? trim($input['description']) : null;
+    $coverUrl = trim($input['cover_art_url'] ?? '');
+    $genreCategory = !empty($input['genre_category']) ? trim($input['genre_category']) : null;
+    $isPublic = isset($input['is_public']) ? (!empty($input['is_public']) ? 1 : 0) : null;
+    $isFeatured = isset($input['is_featured']) ? (!empty($input['is_featured']) ? 1 : 0) : null;
+    $status = in_array($input['status'] ?? '', ['published', 'draft', 'hidden'], true) ? $input['status'] : null;
+    $trackIds = is_array($input['track_ids'] ?? null) ? array_values(array_unique($input['track_ids'])) : null;
+
+    if (empty($playlistId)) {
+        if (empty($title)) {
+            json_response(['status' => 'error', 'message' => 'Playlist title is required.'], 400);
+        }
+        $playlistId = 'ply_' . bin2hex(random_bytes(6));
+        $pdo->prepare("
+            INSERT INTO playlists (id, user_id, title, description, cover_art_url, genre_category, is_public, is_featured, status, track_ids_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ")->execute([
+            $playlistId, $admin['id'], $title, $description ?? '', $coverUrl, $genreCategory ?: 'all', $isPublic ?? 1, $isFeatured ?? 0, $status ?: 'published',
+            json_encode($trackIds ?? [])
+        ]);
+        Auth::logAudit($admin['id'], 'ADMIN_PLAYLIST_CREATED', 'PLAYLIST', $playlistId, ['title' => $title]);
+        json_response(['status' => 'success', 'message' => "Created playlist '{$title}'.", 'playlist_id' => $playlistId]);
+    } else {
+        $sql = "
+            UPDATE playlists
+            SET title = COALESCE(NULLIF(?, ''), title),
+                description = COALESCE(?, description),
+                cover_art_url = COALESCE(NULLIF(?, ''), cover_art_url),
+                genre_category = COALESCE(NULLIF(?, ''), genre_category),
+                is_public = COALESCE(?, is_public),
+                is_featured = COALESCE(?, is_featured),
+                status = COALESCE(?, status)
+        ";
+        $params = [$title, $description, $coverUrl, $genreCategory, $isPublic, $isFeatured, $status];
+        if ($trackIds !== null) {
+            $sql .= ", track_ids_json = ?";
+            $params[] = json_encode($trackIds);
+        }
+        $sql .= " WHERE id = ?";
+        $params[] = $playlistId;
+        $pdo->prepare($sql)->execute($params);
+
+        Auth::logAudit($admin['id'], 'ADMIN_PLAYLIST_UPDATED', 'PLAYLIST', $playlistId, ['title' => $title]);
+        json_response(['status' => 'success', 'message' => "Updated playlist.", 'playlist_id' => $playlistId]);
+    }
+}
+
+if ($method === 'POST' && $action === 'delete_playlist') {
+    $playlistId = trim($input['playlist_id'] ?? $input['id'] ?? '');
+    if (empty($playlistId)) {
+        json_response(['status' => 'error', 'message' => 'Missing playlist_id'], 400);
+    }
+    $pdo->prepare("DELETE FROM playlists WHERE id = ?")->execute([$playlistId]);
+    $pdo->prepare("DELETE FROM playlist_tracks WHERE playlist_id = ?")->execute([$playlistId]);
+    Auth::logAudit($admin['id'], 'ADMIN_PLAYLIST_DELETED', 'PLAYLIST', $playlistId);
+    json_response(['status' => 'success', 'message' => 'Playlist deleted.']);
+}
+
+// --- 9. GENRE MANAGEMENT (CREATE, UPDATE, DELETE) ---
+if ($method === 'POST' && $action === 'save_genre') {
+    if (!empty($input['delete']) && !empty($input['id'])) {
+        $pdo->prepare("DELETE FROM genres WHERE id = ?")->execute([trim($input['id'])]);
+        json_response(['status' => 'success', 'message' => 'Genre deleted.']);
+    }
+
+    $genreId = trim($input['id'] ?? '');
+    $name = trim($input['name'] ?? '');
+    $color = trim($input['color'] ?? '#e11d48');
+    $sortOrder = (int)($input['sort_order'] ?? $input['display_order'] ?? 10);
+    $isActive = isset($input['is_active']) ? (!empty($input['is_active']) ? 1 : 0) : 1;
+
+    if (empty($name)) {
+        json_response(['status' => 'error', 'message' => 'Genre name is required.'], 400);
+    }
+
+    $slug = strtolower(preg_replace('/[^a-zA-Z0-9]+/', '-', $name));
+    if (empty($genreId)) {
+        $genreId = 'gen_' . $slug;
+    }
+
+    $pdo->prepare("
+        INSERT INTO genres (id, name, slug, color, sort_order, is_active)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+            name = VALUES(name),
+            slug = VALUES(slug),
+            color = VALUES(color),
+            sort_order = VALUES(sort_order),
+            is_active = VALUES(is_active)
+    ")->execute([$genreId, $name, $slug, $color, $sortOrder, $isActive]);
+
+    Auth::logAudit($admin['id'], 'ADMIN_GENRE_SAVED', 'GENRE', $genreId, ['name' => $name]);
+    json_response(['status' => 'success', 'message' => "Saved genre '{$name}'.", 'genre_id' => $genreId]);
+}
+
+if ($method === 'POST' && $action === 'delete_genre') {
+    $genreId = trim($input['id'] ?? $input['genre_id'] ?? '');
+    if (empty($genreId)) {
+        json_response(['status' => 'error', 'message' => 'Missing genre id'], 400);
+    }
+    $pdo->prepare("DELETE FROM genres WHERE id = ?")->execute([$genreId]);
+    Auth::logAudit($admin['id'], 'ADMIN_GENRE_DELETED', 'GENRE', $genreId);
+    json_response(['status' => 'success', 'message' => 'Genre deleted.']);
+}
+
+// --- 10. ARTIST CLAIMS & MODERATION ---
 if ($method === 'POST' && $action === 'review_claim') {
     $claimId = trim($input['claim_id'] ?? '');
     $decision = trim($input['decision'] ?? ''); // approved, rejected, escalated, disputed
@@ -347,399 +1053,62 @@ if ($method === 'POST' && $action === 'review_claim') {
     $stmt->execute([$claimId]);
     $claim = $stmt->fetch();
     if (!$claim) {
-        json_response(['status' => 'error', 'message' => 'Claim not found.'], 404);
+        json_response(['status' => 'error', 'message' => 'Claim not found'], 404);
     }
 
     $pdo->prepare("UPDATE artist_claims SET status = ?, review_notes = ?, reviewed_by = ? WHERE id = ?")
-        ->execute([$decision, $notes, $user['id'], $claimId]);
+        ->execute([$decision === 'disputed' ? 'escalated' : $decision, $notes, $admin['id'], $claimId]);
 
     if ($decision === 'approved') {
-        $pdo->prepare("UPDATE artists SET claimed_status = 'claimed', verified = 1, claimed_user_id = ? WHERE id = ?")
+        $pdo->prepare("UPDATE artists SET claimed_status = 'claimed', claimed_user_id = ?, verified = 1 WHERE id = ?")
             ->execute([$claim['user_id'], $claim['artist_id']]);
-        $pdo->prepare("UPDATE users SET role = 'artist' WHERE id = ? AND role = 'listener'")
-            ->execute([$claim['user_id']]);
+        $pdo->prepare("UPDATE users SET role = CASE WHEN role = 'listener' THEN 'artist' ELSE role END, artist_id = ? WHERE id = ?")
+            ->execute([$claim['artist_id'], $claim['user_id']]);
     } elseif ($decision === 'rejected') {
-        $pdo->prepare("UPDATE artists SET claimed_status = 'unclaimed' WHERE id = ?")
-            ->execute([$claim['artist_id']]);
-    } elseif ($decision === 'disputed') {
-        $pdo->prepare("UPDATE artists SET claimed_status = 'disputed' WHERE id = ?")
-            ->execute([$claim['artist_id']]);
+        $pdo->prepare("UPDATE artists SET claimed_status = 'unclaimed' WHERE id = ?")->execute([$claim['artist_id']]);
     }
 
-    Auth::logAudit($user['id'], 'ADMIN_CLAIM_' . strtoupper($decision), 'CLAIM', $claimId, [
-        'artist_id' => $claim['artist_id'],
-        'decision' => $decision,
-        'notes' => $notes
-    ]);
-
-    json_response(['status' => 'success', 'message' => "Artist claim {$claimId} marked as {$decision}."]);
+    Auth::logAudit($admin['id'], 'ADMIN_CLAIM_' . strtoupper($decision), 'CLAIM', $claimId, ['notes' => $notes]);
+    json_response(['status' => 'success', 'message' => "Claim marked as {$decision}."]);
 }
 
-if ($method === 'POST' && $action === 'update_artist') {
-    $artistId = trim($input['artist_id'] ?? '');
-    if (empty($artistId)) {
-        json_response(['status' => 'error', 'message' => 'Missing artist_id'], 400);
-    }
-
-    $stmt = $pdo->prepare("SELECT * FROM artists WHERE id = ? LIMIT 1");
-    $stmt->execute([$artistId]);
-    $art = $stmt->fetch();
-    if (!$art) {
-        json_response(['status' => 'error', 'message' => 'Artist not found'], 404);
-    }
-
-    $name = trim($input['name'] ?? $art['name']);
-    $verified = isset($input['verified']) ? (int)((bool)$input['verified']) : (int)$art['verified'];
-    $claimedStatus = in_array($input['claimed_status'] ?? '', ['unclaimed', 'pending', 'claimed', 'disputed'], true) ? $input['claimed_status'] : $art['claimed_status'];
-    $labelName = trim($input['label_name'] ?? $art['label_name'] ?? '');
-    $bio = trim($input['bio'] ?? $art['bio'] ?? '');
-
-    $pdo->prepare("UPDATE artists SET name = ?, verified = ?, claimed_status = ?, label_name = ?, bio = ? WHERE id = ?")
-        ->execute([$name, $verified, $claimedStatus, $labelName, $bio, $artistId]);
-
-    Auth::logAudit($user['id'], 'ADMIN_ARTIST_UPDATED', 'ARTIST', $artistId, [
-        'name' => $name,
-        'verified' => $verified,
-        'claimed_status' => $claimedStatus
-    ]);
-
-    json_response(['status' => 'success', 'message' => "Artist profile {$name} updated."]);
-}
-
-// --- 4. MUSIC CATALOG GOVERNANCE (TRACKS & ALBUMS) ---
-if ($method === 'POST' && $action === 'update_track') {
-    $trackId = trim($input['track_id'] ?? '');
-    if (empty($trackId)) {
-        json_response(['status' => 'error', 'message' => 'Missing track_id'], 400);
-    }
-
-    $stmt = $pdo->prepare("SELECT * FROM tracks WHERE id = ? LIMIT 1");
-    $stmt->execute([$trackId]);
-    $trk = $stmt->fetch();
-    if (!$trk) {
-        json_response(['status' => 'error', 'message' => 'Track not found'], 404);
-    }
-
-    if (!empty($input['delete_permanently']) || ($input['status'] ?? '') === 'removed') {
-        $pdo->prepare("UPDATE tracks SET is_deleted = 1, status = 'unpublished' WHERE id = ?")->execute([$trackId]);
-        Auth::logAudit($user['id'], 'ADMIN_TRACK_REMOVED', 'TRACK', $trackId, ['title' => $trk['title']]);
-        json_response(['status' => 'success', 'message' => "Track '{$trk['title']}' removed from catalog."]);
-    }
-
-    $title = trim($input['title'] ?? $trk['title']);
-    $artistName = trim($input['artist_name'] ?? $trk['artist_name']);
-    $albumName = trim($input['album_name'] ?? $trk['album_name'] ?? '');
-    $genre = trim($input['genre'] ?? $trk['genre']);
-    $country = strtoupper(substr(trim($input['country'] ?? $trk['country'] ?? 'US'), 0, 2));
-    $releaseYear = (int)($input['release_year'] ?? $trk['release_year'] ?? date('Y'));
-    $coverUrl = trim($input['cover_art_url'] ?? $trk['cover_art_url'] ?? '');
-    $rawStatus = $input['status'] ?? ($trk['status'] ?? 'published');
-    if ($rawStatus === 'active') $rawStatus = 'published';
-    $status = in_array($rawStatus, ['published', 'review', 'flagged', 'unpublished', 'rejected'], true) ? $rawStatus : 'published';
-    $licenseStatus = in_array($input['license_status'] ?? '', ['verified_licensed', 'pending_verification', 'direct_upload', 'cc_by', 'disputed'], true)
-        ? $input['license_status']
-        : ($trk['license_status'] ?? 'verified_licensed');
-    $licenseNotes = trim($input['license_notes'] ?? $trk['license_notes'] ?? '');
-    $featured = isset($input['featured_on_home']) ? (int)((bool)$input['featured_on_home']) : (int)($trk['featured_on_home'] ?? 1);
-
-    $pdo->prepare("
-        UPDATE tracks 
-        SET title = ?, artist_name = ?, album_name = ?, genre = ?, country = ?, release_year = ?, cover_art_url = ?, status = ?, license_status = ?, license_notes = ?, featured_on_home = ?
-        WHERE id = ?
-    ")->execute([$title, $artistName, $albumName, $genre, $country, $releaseYear, $coverUrl, $status, $licenseStatus, $licenseNotes, $featured, $trackId]);
-
-    Auth::logAudit($user['id'], 'ADMIN_TRACK_UPDATED', 'TRACK', $trackId, [
-        'title' => $title,
-        'status' => $status,
-        'license_status' => $licenseStatus,
-        'featured_on_home' => $featured
-    ]);
-
-    json_response(['status' => 'success', 'message' => "Track '{$title}' updated in MySQL."]);
-}
-
-if ($method === 'POST' && $action === 'bulk_update_tracks') {
-    $trackIds = $input['track_ids'] ?? [];
-    $bulkAction = trim($input['bulk_action'] ?? ''); // publish, unpublish, verify_license, resync_audio, delete
-    if (!is_array($trackIds) || empty($trackIds) || empty($bulkAction)) {
-        json_response(['status' => 'error', 'message' => 'track_ids array and bulk_action are required.'], 400);
-    }
-
-    $affected = 0;
-    foreach ($trackIds as $tid) {
-        $tid = trim((string)$tid);
-        if (empty($tid)) continue;
-
-        if ($bulkAction === 'publish') {
-            $pdo->prepare("UPDATE tracks SET status = 'published' WHERE id = ?")->execute([$tid]);
-            $affected++;
-        } elseif ($bulkAction === 'unpublish') {
-            $pdo->prepare("UPDATE tracks SET status = 'unpublished' WHERE id = ?")->execute([$tid]);
-            $affected++;
-        } elseif ($bulkAction === 'verify_license') {
-            $pdo->prepare("UPDATE tracks SET license_status = 'verified_licensed', license_notes = 'Bulk verified by Administrator' WHERE id = ?")->execute([$tid]);
-            $affected++;
-        } elseif ($bulkAction === 'delete') {
-            $pdo->prepare("UPDATE tracks SET is_deleted = 1, status = 'unpublished' WHERE id = ?")->execute([$tid]);
-            $affected++;
-        } elseif ($bulkAction === 'resync_audio') {
-            $stmtT = $pdo->prepare("SELECT id, video_id, title, artist_name, genre, country, cover_art_url FROM tracks WHERE id = ? LIMIT 1");
-            $stmtT->execute([$tid]);
-            $tRow = $stmtT->fetch();
-            if ($tRow) {
-                $aRes = MediaEngine::acquireAndStoreAudio($tRow['id'], $tRow['video_id'], $tRow['title'], $tRow['artist_name'], $tRow['genre'] ?: 'Pop', $tRow['country'] ?: 'US');
-                $streamUrl = "/phpbackend/api/stream.php?id=" . urlencode($tRow['id']);
-                $pdo->prepare("UPDATE tracks SET local_audio_path = ?, audio_file_size = ?, audio_format = ?, audio_url = ?, import_status = 'synced', last_synced_at = NOW() WHERE id = ?")
-                    ->execute([$aRes['relative_path'], $aRes['file_size'], $aRes['format'], $streamUrl, $tRow['id']]);
-                $affected++;
-            }
-        }
-    }
-
-    Auth::logAudit($user['id'], 'ADMIN_BULK_CATALOG_ACTION', 'TRACK', implode(',', array_slice($trackIds, 0, 5)), [
-        'bulk_action' => $bulkAction,
-        'affected_count' => $affected
-    ]);
-
-    json_response([
-        'status' => 'success',
-        'affected_count' => $affected,
-        'message' => "Executed bulk '{$bulkAction}' on {$affected} catalog track(s)."
-    ]);
-}
-
-if ($method === 'POST' && $action === 'update_album') {
-    $albumId = trim($input['album_id'] ?? '');
-    if (empty($albumId)) {
-        json_response(['status' => 'error', 'message' => 'Missing album_id'], 400);
-    }
-
-    if (!empty($input['delete'])) {
-        $pdo->prepare("DELETE FROM albums WHERE id = ?")->execute([$albumId]);
-        Auth::logAudit($user['id'], 'ADMIN_ALBUM_DELETED', 'ALBUM', $albumId, []);
-        json_response(['status' => 'success', 'message' => 'Album deleted.']);
-    }
-
-    $status = in_array($input['status'] ?? '', ['draft', 'review', 'published', 'rejected', 'unpublished'], true) ? $input['status'] : 'published';
-    $title = trim($input['title'] ?? '');
-    if ($title !== '') {
-        $pdo->prepare("UPDATE albums SET title = ?, status = ? WHERE id = ?")->execute([$title, $status, $albumId]);
-    } else {
-        $pdo->prepare("UPDATE albums SET status = ? WHERE id = ?")->execute([$status, $albumId]);
-    }
-
-    Auth::logAudit($user['id'], 'ADMIN_ALBUM_UPDATED', 'ALBUM', $albumId, ['status' => $status]);
-    json_response(['status' => 'success', 'message' => "Album {$albumId} status updated to {$status}."]);
-}
-
-// --- 5. DISTRIBUTORS, LABELS & ROLE PERMISSIONS ---
-if ($method === 'POST' && $action === 'update_distributor') {
-    $distId = trim($input['id'] ?? '');
-    $name = trim($input['name'] ?? '');
-    $email = trim($input['contact_email'] ?? '');
-    $status = in_array($input['status'] ?? '', ['active', 'suspended', 'pending'], true) ? $input['status'] : 'active';
-    $quota = trim($input['quota_type'] ?? 'Unlimited DDEX');
-    $canUpload = isset($input['can_direct_upload']) ? (int)((bool)$input['can_direct_upload']) : 1;
-    $canEdit = isset($input['can_edit_metadata']) ? (int)((bool)$input['can_edit_metadata']) : 1;
-
-    if (empty($distId)) {
-        $distId = 'dist_' . bin2hex(random_bytes(4));
-        $slug = strtolower(preg_replace('/[^a-zA-Z0-9]+/', '-', $name ?: $distId));
-        $pdo->prepare("
-            INSERT INTO distributors (id, name, slug, contact_email, status, quota_type, can_direct_upload, can_edit_metadata)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ")->execute([$distId, $name, $slug, $email, $status, $quota, $canUpload, $canEdit]);
-        Auth::logAudit($user['id'], 'ADMIN_DISTRIBUTOR_CREATED', 'DISTRIBUTOR', $distId, ['name' => $name]);
-        json_response(['status' => 'success', 'message' => "Distributor '{$name}' created."]);
-    } else {
-        $pdo->prepare("
-            UPDATE distributors 
-            SET name = COALESCE(NULLIF(?, ''), name), contact_email = COALESCE(NULLIF(?, ''), contact_email), status = ?, quota_type = ?, can_direct_upload = ?, can_edit_metadata = ?
-            WHERE id = ?
-        ")->execute([$name, $email, $status, $quota, $canUpload, $canEdit, $distId]);
-        Auth::logAudit($user['id'], 'ADMIN_DISTRIBUTOR_UPDATED', 'DISTRIBUTOR', $distId, ['status' => $status, 'can_direct_upload' => $canUpload]);
-        json_response(['status' => 'success', 'message' => "Distributor updated."]);
-    }
-}
-
-if ($method === 'POST' && $action === 'update_label') {
-    $labelId = trim($input['id'] ?? '');
-    $name = trim($input['name'] ?? '');
-    $email = trim($input['contact_email'] ?? '');
-    $country = strtoupper(substr(trim($input['country'] ?? 'US'), 0, 2));
-    $status = in_array($input['status'] ?? '', ['active', 'suspended', 'pending'], true) ? $input['status'] : 'active';
-    $canRoster = isset($input['can_manage_roster']) ? (int)((bool)$input['can_manage_roster']) : 1;
-
-    if (empty($labelId)) {
-        $labelId = 'lbl_' . bin2hex(random_bytes(4));
-        $slug = strtolower(preg_replace('/[^a-zA-Z0-9]+/', '-', $name ?: $labelId));
-        $pdo->prepare("
-            INSERT INTO labels (id, name, slug, contact_email, country, status, can_manage_roster)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ")->execute([$labelId, $name, $slug, $email, $country, $status, $canRoster]);
-        Auth::logAudit($user['id'], 'ADMIN_LABEL_CREATED', 'LABEL', $labelId, ['name' => $name]);
-        json_response(['status' => 'success', 'message' => "Label '{$name}' created."]);
-    } else {
-        $pdo->prepare("
-            UPDATE labels 
-            SET name = COALESCE(NULLIF(?, ''), name), contact_email = COALESCE(NULLIF(?, ''), contact_email), country = ?, status = ?, can_manage_roster = ?
-            WHERE id = ?
-        ")->execute([$name, $email, $country, $status, $canRoster, $labelId]);
-        Auth::logAudit($user['id'], 'ADMIN_LABEL_UPDATED', 'LABEL', $labelId, ['status' => $status, 'can_manage_roster' => $canRoster]);
-        json_response(['status' => 'success', 'message' => "Label updated."]);
-    }
-}
-
-if ($method === 'POST' && $action === 'update_role_permission') {
-    $role = trim($input['role'] ?? '');
-    if (empty($role)) {
-        json_response(['status' => 'error', 'message' => 'Missing role'], 400);
-    }
-
-    $canUpload = !empty($input['canDirectUpload']) || !empty($input['can_direct_upload']) ? 1 : 0;
-    $canEdit = !empty($input['canEditLiveMetadata']) || !empty($input['can_edit_live_metadata']) ? 1 : 0;
-    $canRoster = !empty($input['canManageRoster']) || !empty($input['can_manage_roster']) ? 1 : 0;
-    $canFeature = !empty($input['canFeatureOnHome']) || !empty($input['can_feature_on_home']) ? 1 : 0;
-    $maxUpload = (int)($input['maxUploadPerMonth'] ?? $input['max_upload_per_month'] ?? 0);
-
-    $pdo->prepare("
-        UPDATE role_permissions 
-        SET can_direct_upload = ?, can_edit_live_metadata = ?, can_manage_roster = ?, can_feature_on_home = ?, max_upload_per_month = ?
-        WHERE role = ?
-    ")->execute([$canUpload, $canEdit, $canRoster, $canFeature, $maxUpload, $role]);
-
-    Auth::logAudit($user['id'], 'ADMIN_ROLE_POLICY_UPDATED', 'ROLE_PERMISSION', $role, [
-        'can_direct_upload' => $canUpload,
-        'can_edit_live_metadata' => $canEdit,
-        'max_upload_per_month' => $maxUpload
-    ]);
-
-    json_response(['status' => 'success', 'message' => "Role permissions for '{$role}' saved to MySQL."]);
-}
-
-// --- 6. MODERATION & COPYRIGHT REPORTS ---
-if ($method === 'POST' && $action === 'resolve_report') {
-    $reportId = trim($input['report_id'] ?? '');
-    $status = in_array($input['status'] ?? '', ['open', 'investigating', 'resolved', 'dismissed', 'appealed'], true) ? $input['status'] : 'resolved';
-    $notes = trim($input['resolution_notes'] ?? '');
-    $enforceAction = trim($input['enforce_action'] ?? ''); // e.g., 'unpublish_track', 'suspend_user', 'none'
-
-    if (empty($reportId)) {
-        json_response(['status' => 'error', 'message' => 'Missing report_id'], 400);
-    }
-
-    $stmt = $pdo->prepare("SELECT * FROM moderation_reports WHERE id = ? LIMIT 1");
-    $stmt->execute([$reportId]);
-    $rep = $stmt->fetch();
-    if (!$rep) {
-        json_response(['status' => 'error', 'message' => 'Report not found'], 404);
-    }
-
-    $pdo->prepare("UPDATE moderation_reports SET status = ?, resolution_notes = ?, resolved_by = ? WHERE id = ?")
-        ->execute([$status, $notes, $user['id'], $reportId]);
-
-    if ($enforceAction === 'unpublish_track' && $rep['target_type'] === 'track') {
-        $pdo->prepare("UPDATE tracks SET status = 'flagged', featured_on_home = 0 WHERE id = ?")->execute([$rep['target_id']]);
-    } elseif ($enforceAction === 'suspend_user' && $rep['target_type'] === 'user') {
-        $pdo->prepare("UPDATE users SET status = 'suspended' WHERE id = ? AND role != 'admin'")->execute([$rep['target_id']]);
-    }
-
-    Auth::logAudit($user['id'], 'ADMIN_MODERATION_UPDATED', 'REPORT', $reportId, [
-        'status' => $status,
-        'enforce_action' => $enforceAction,
-        'notes' => $notes
-    ]);
-
-    json_response(['status' => 'success', 'message' => "Moderation report {$reportId} marked as {$status}."]);
-}
-
-if ($method === 'POST' && $action === 'create_report') {
-    $reportId = 'rep_' . bin2hex(random_bytes(5));
-    $targetType = in_array($input['target_type'] ?? '', ['track', 'album', 'artist', 'playlist', 'user'], true) ? $input['target_type'] : 'track';
-    $targetId = trim($input['target_id'] ?? 'trk_general');
-    $targetName = trim($input['target_name'] ?? 'Reported Content');
-    $category = in_array($input['category'] ?? '', ['copyright', 'impersonation', 'inappropriate', 'spam', 'dispute', 'appeal'], true) ? $input['category'] : 'copyright';
+if ($method === 'POST' && ($action === 'create_flag' || $action === 'create_report')) {
+    $targetType = trim($input['target_type'] ?? 'track');
+    $targetId = trim($input['target_id'] ?? '');
     $reason = trim($input['reason'] ?? '');
-    $reporterEmail = trim($input['reporter_email'] ?? $user['email']);
-
     if (empty($reason)) {
-        json_response(['status' => 'error', 'message' => 'Reason is required.'], 400);
+        json_response(['status' => 'error', 'message' => 'Report reason is required.'], 400);
     }
-
+    $flagId = 'flg_' . bin2hex(random_bytes(5));
     $pdo->prepare("
-        INSERT INTO moderation_reports (id, reporter_user_id, reporter_email, target_type, target_id, target_name, category, reason, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open')
-    ")->execute([$reportId, $user['id'], $reporterEmail, $targetType, $targetId, $targetName, $category, $reason]);
-
-    Auth::logAudit($user['id'], 'MODERATION_REPORT_LOGGED', 'REPORT', $reportId, ['category' => $category, 'target' => $targetName]);
-    json_response(['status' => 'success', 'message' => 'Moderation case logged.']);
+        INSERT INTO content_flags (id, reporter_user_id, target_type, target_id, reason, details, status)
+        VALUES (?, ?, ?, ?, ?, ?, 'open')
+    ")->execute([$flagId, $admin['id'], $targetType, $targetId ?: 'unspecified', $reason, trim($input['target_name'] ?? '')]);
+    Auth::logAudit($admin['id'], 'ADMIN_FLAG_CREATED', 'CONTENT_FLAG', $flagId, ['target_id' => $targetId]);
+    json_response(['status' => 'success', 'message' => 'Moderation case logged.', 'flag_id' => $flagId]);
 }
 
-// --- 8. PLAYLISTS & GENRES ---
-if ($method === 'POST' && $action === 'update_playlist') {
-    $playlistId = trim($input['playlist_id'] ?? '');
-    if (empty($playlistId)) {
-        json_response(['status' => 'error', 'message' => 'Missing playlist_id'], 400);
-    }
+if ($method === 'POST' && ($action === 'resolve_flag' || $action === 'resolve_report')) {
+    $flagId = trim($input['flag_id'] ?? $input['report_id'] ?? '');
+    $status = in_array($input['status'] ?? '', ['resolved', 'dismissed'], true) ? $input['status'] : 'resolved';
+    $notes = trim($input['notes'] ?? $input['resolution_notes'] ?? '');
 
-    if (!empty($input['delete'])) {
-        $pdo->prepare("DELETE FROM playlists WHERE id = ?")->execute([$playlistId]);
-        Auth::logAudit($user['id'], 'ADMIN_PLAYLIST_DELETED', 'PLAYLIST', $playlistId, []);
-        json_response(['status' => 'success', 'message' => 'Playlist deleted.']);
-    }
+    $pdo->prepare("UPDATE content_flags SET status = ?, resolution_notes = ?, resolved_by = ? WHERE id = ?")
+        ->execute([$status, $notes, $admin['id'], $flagId]);
 
-    $stmt = $pdo->prepare("SELECT * FROM playlists WHERE id = ? LIMIT 1");
-    $stmt->execute([$playlistId]);
-    $pl = $stmt->fetch();
-    if (!$pl) {
-        json_response(['status' => 'error', 'message' => 'Playlist not found'], 404);
-    }
-
-    $title = trim($input['title'] ?? $pl['title']);
-    $desc = trim($input['description'] ?? $pl['description'] ?? '');
-    $category = trim($input['genre_category'] ?? $pl['genre_category'] ?? 'all');
-    $isFeatured = isset($input['is_featured']) ? (int)((bool)$input['is_featured']) : (int)($pl['is_featured'] ?? 1);
-    $status = in_array($input['status'] ?? '', ['active', 'unpublished', 'flagged'], true) ? $input['status'] : ($pl['status'] ?? 'active');
-
-    $pdo->prepare("
-        UPDATE playlists 
-        SET title = ?, description = ?, genre_category = ?, is_featured = ?, status = ?
-        WHERE id = ?
-    ")->execute([$title, $desc, $category, $isFeatured, $status, $playlistId]);
-
-    Auth::logAudit($user['id'], 'ADMIN_PLAYLIST_UPDATED', 'PLAYLIST', $playlistId, ['title' => $title, 'is_featured' => $isFeatured, 'status' => $status]);
-    json_response(['status' => 'success', 'message' => "Playlist '{$title}' updated."]);
+    Auth::logAudit($admin['id'], 'ADMIN_FLAG_' . strtoupper($status), 'CONTENT_FLAG', $flagId, ['notes' => $notes]);
+    json_response(['status' => 'success', 'message' => "Content report marked as {$status}."]);
 }
 
-if ($method === 'POST' && $action === 'save_genre') {
-    $genreId = trim($input['id'] ?? '');
-    $name = trim($input['name'] ?? '');
-    $desc = trim($input['description'] ?? '');
-    $isFeatured = isset($input['is_featured']) ? (int)((bool)$input['is_featured']) : 1;
-    $order = (int)($input['display_order'] ?? 1);
-
-    if (empty($name)) {
-        json_response(['status' => 'error', 'message' => 'Genre name is required.'], 400);
-    }
-
-    $slug = strtolower(preg_replace('/[^a-zA-Z0-9]+/', '-', $name));
-    if (empty($genreId)) {
-        $genreId = 'gen_' . $slug;
-    }
-
-    $pdo->prepare("
-        INSERT INTO platform_genres (id, name, slug, description, color_theme, is_featured, display_order)
-        VALUES (?, ?, ?, ?, 'from-red-600/30 to-amber-600/20', ?, ?)
-        ON DUPLICATE KEY UPDATE name = VALUES(name), description = VALUES(description), is_featured = VALUES(is_featured), display_order = VALUES(display_order)
-    ")->execute([$genreId, $name, $slug, $desc, $isFeatured, $order]);
-
-    Auth::logAudit($user['id'], 'ADMIN_GENRE_SAVED', 'GENRE', $genreId, ['name' => $name, 'is_featured' => $isFeatured]);
-    json_response(['status' => 'success', 'message' => "Genre '{$name}' saved."]);
+if ($method === 'POST' && $action === 'clear_security_events') {
+    $pdo->exec("DELETE FROM security_events");
+    Auth::logAudit($admin['id'], 'ADMIN_SECURITY_EVENTS_CLEARED', 'SECURITY', 'ALL');
+    json_response(['status' => 'success', 'message' => 'Security events log cleared.']);
 }
 
-// --- 9. SYSTEM SETTINGS ---
-if ($method === 'POST' && $action === 'update_settings') {
-    $settings = $input['settings'] ?? [];
+// --- 11. SYSTEM SETTINGS ---
+if ($method === 'POST' && ($action === 'save_settings' || $action === 'update_settings')) {
+    $settings = $input['settings'] ?? $input;
     if (!is_array($settings)) {
         json_response(['status' => 'error', 'message' => 'Invalid settings payload'], 400);
     }
@@ -747,56 +1116,21 @@ if ($method === 'POST' && $action === 'update_settings') {
     $stmt = $pdo->prepare("
         INSERT INTO system_settings (setting_key, setting_value, updated_by)
         VALUES (?, ?, ?)
-        ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), updated_by = VALUES(updated_by)
+        ON DUPLICATE KEY UPDATE
+            setting_value = VALUES(setting_value),
+            updated_by = VALUES(updated_by)
     ");
 
     foreach ($settings as $k => $v) {
-        $valStr = is_bool($v) ? ($v ? 'true' : 'false') : (string)$v;
-        $stmt->execute([(string)$k, $valStr, $user['id']]);
+        if ($k === 'csrf_token') continue;
+        $cleanKey = preg_replace('/[^a-zA-Z0-9_]/', '', (string)$k);
+        if (!empty($cleanKey) && (is_scalar($v) || $v === null)) {
+            $stmt->execute([$cleanKey, (string)$v, $admin['id']]);
+        }
     }
 
-    Auth::logAudit($user['id'], 'ADMIN_SETTINGS_UPDATED', 'SYSTEM', 'SETTINGS', $settings);
-    json_response(['status' => 'success', 'message' => 'System configuration saved to MySQL.']);
+    Auth::logAudit($admin['id'], 'ADMIN_SETTINGS_UPDATED', 'SYSTEM', 'SETTINGS', array_keys($settings));
+    json_response(['status' => 'success', 'message' => 'Platform settings saved to database.']);
 }
 
-// --- 10. AUDIT LOGS ---
-if ($method === 'GET' && $action === 'audit_logs') {
-    $stmt = $pdo->query("
-        SELECT l.*, u.email AS user_email, u.display_name AS user_name
-        FROM audit_logs l
-        LEFT JOIN users u ON l.user_id = u.id
-        ORDER BY l.created_at DESC
-        LIMIT 100
-    ");
-    json_response(['status' => 'success', 'audit_logs' => $stmt->fetchAll()]);
-}
-
-// --- 11. SECURITY & SESSIONS ---
-if ($method === 'POST' && $action === 'revoke_session') {
-    $sessionId = trim($input['session_id'] ?? '');
-    $targetUserId = trim($input['user_id'] ?? '');
-
-    if (!empty($sessionId)) {
-        $pdo->prepare("UPDATE user_sessions SET is_revoked = 1 WHERE id = ?")->execute([$sessionId]);
-        Auth::logAudit($user['id'], 'ADMIN_SESSION_REVOKED', 'SESSION', $sessionId, []);
-        json_response(['status' => 'success', 'message' => "Session {$sessionId} revoked."]);
-    } elseif (!empty($targetUserId)) {
-        $pdo->prepare("UPDATE user_sessions SET is_revoked = 1 WHERE user_id = ?")->execute([$targetUserId]);
-        Auth::logAudit($user['id'], 'ADMIN_USER_SESSIONS_REVOKED', 'USER', $targetUserId, []);
-        json_response(['status' => 'success', 'message' => "All sessions for user {$targetUserId} revoked."]);
-    }
-    json_response(['status' => 'error', 'message' => 'Provide session_id or user_id'], 400);
-}
-
-if ($method === 'POST' && $action === 'unlock_user') {
-    $targetUserId = trim($input['user_id'] ?? '');
-    if (empty($targetUserId)) {
-        json_response(['status' => 'error', 'message' => 'Missing user_id'], 400);
-    }
-    $pdo->prepare("UPDATE users SET failed_login_attempts = 0, locked_until = NULL, status = 'active' WHERE id = ?")
-        ->execute([$targetUserId]);
-    Auth::logAudit($user['id'], 'ADMIN_USER_UNLOCKED', 'USER', $targetUserId, []);
-    json_response(['status' => 'success', 'message' => 'User account unlocked and restored.']);
-}
-
-json_response(['status' => 'error', 'message' => 'Invalid admin action'], 400);
+json_response(['status' => 'error', 'message' => 'Invalid admin action or HTTP method'], 400);
