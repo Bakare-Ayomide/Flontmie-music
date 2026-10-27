@@ -65,6 +65,7 @@ jobs:
               cp -f "$png" "android/$rel"
             done
           fi
+          sed -i '/usesCleartextTraffic/d' android/app/src/main/AndroidManifest.xml || true
           npx cap sync android
           chmod +x android/gradlew
           echo "sdk.dir=${ANDROID_HOME:-/usr/local/lib/android/sdk}" > android/local.properties
