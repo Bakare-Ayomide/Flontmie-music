@@ -27,7 +27,7 @@ export const QueueDrawer: React.FC<QueueDrawerProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-y-0 right-0 w-full sm:w-96 md:w-[420px] bg-[#0c0c0e]/95 backdrop-blur-xl border-l border-white/10 z-50 flex flex-col shadow-2xl animate-in slide-in-from-right duration-200">
+    <div className="fixed inset-y-0 right-0 w-full sm:w-96 md:w-[420px] bg-[#0c0c0e]/95 backdrop-blur-xl border-l border-white/10 z-[90] flex flex-col shadow-2xl animate-in slide-in-from-right duration-200">
       {/* Header */}
       <div className="p-4 border-b border-white/10 flex items-center justify-between">
         <div className="flex items-center gap-2">

@@ -1634,6 +1634,7 @@ export default function App() {
         onToggleFollowArtist={handleToggleFollowArtist}
         onToggleQueue={() => setIsQueueOpen(!isQueueOpen)}
         onOpenShare={() => setIsShareModalOpen(true)}
+        onOpenAddToPlaylist={() => setIsAddToPlaylistOpen(true)}
         onPlayTrack={handlePlayTrack}
         onSelectArtist={(artistId) => {
           setIsFullPlayerOpen(false);

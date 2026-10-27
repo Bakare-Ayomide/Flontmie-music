@@ -23,8 +23,8 @@ export const MobileDock: React.FC<MobileDockProps> = ({
   onSelectPersona,
 }) => {
   return (
-    <div className="md:hidden fixed bottom-[68px] inset-x-3 z-30 pointer-events-none select-none">
-      <nav className="pointer-events-auto mx-auto max-w-md bg-[#121215]/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl p-1.5 flex items-center justify-around gap-1">
+    <div className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-[#050505]/95 backdrop-blur-xl border-t border-white/10 select-none">
+      <nav className="mx-auto max-w-md h-16 px-2 flex items-center justify-around gap-1">
         {/* Home */}
         <button
           onClick={() => {

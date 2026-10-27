@@ -13,9 +13,6 @@ import {
   ListMusic,
   Share2,
   Maximize2,
-  Headphones,
-  Video,
-  FileText,
   Download,
   CheckCircle2,
   Loader2,
@@ -65,9 +62,7 @@ export const BottomPlayer: React.FC<BottomPlayerProps> = ({
   repeatMode,
   isLiked,
   isDisliked = false,
-  activeTab,
   isQueueOpen,
-  onSelectTab,
   onPlayPause,
   onNext,
   onPrev,
@@ -121,19 +116,13 @@ export const BottomPlayer: React.FC<BottomPlayerProps> = ({
   const effectiveDuration = duration > 0 ? duration : currentTrack.duration || 180;
   const progressPercent = effectiveDuration > 0 ? Math.min(100, (currentTime / effectiveDuration) * 100) : 0;
 
-  const tabItems: Array<{ id: PlayerTabMode; label: string; icon: React.ReactNode }> = [
-    { id: 'audio', label: 'Audio', icon: <Headphones className="w-4 h-4" /> },
-    { id: 'video', label: 'Video', icon: <Video className="w-4 h-4" /> },
-    { id: 'lyrics', label: 'Lyrics', icon: <FileText className="w-4 h-4" /> },
-  ];
-
   return (
-    <div className="fixed bottom-16 lg:bottom-0 left-0 right-0 h-20 lg:h-24 bg-zinc-950/95 backdrop-blur-2xl border-t border-white/10 z-50 px-3 sm:px-4 lg:px-8 flex items-center justify-between select-none shadow-2xl">
+    <div className="fixed bottom-16 md:bottom-0 left-0 right-0 h-20 lg:h-24 bg-black/95 backdrop-blur-2xl border-t border-white/10 z-50 px-3 sm:px-4 lg:px-8 flex items-center justify-between select-none shadow-2xl">
       {/* Mobile Interactive Progress Bar along top edge */}
       <div className="lg:hidden absolute -top-1 left-0 right-0 h-2 flex items-center group">
-        <div className="w-full h-1 bg-zinc-800 relative overflow-hidden">
+        <div className="w-full h-[3px] bg-white/25 relative overflow-hidden">
           <div
-            className="h-full bg-gradient-to-r from-emerald-500 to-cyan-400"
+            className="h-full bg-white"
             style={{ width: `${progressPercent}%` }}
           />
         </div>
@@ -150,7 +139,7 @@ export const BottomPlayer: React.FC<BottomPlayerProps> = ({
       </div>
 
       {/* Left: Track Info */}
-      <div className="flex items-center gap-2.5 sm:gap-3.5 min-w-0 flex-1 lg:w-[30%] lg:flex-none">
+      <div className="flex items-center gap-2.5 sm:gap-3.5 min-w-0 flex-1 lg:w-[32%] lg:flex-none">
         <div
           onClick={() => onOpenFullPlayer && onOpenFullPlayer()}
           className="relative group shrink-0 cursor-pointer"
@@ -160,37 +149,33 @@ export const BottomPlayer: React.FC<BottomPlayerProps> = ({
             src={resolveArtworkUrl(currentTrack.coverUrl, 'track', currentTrack.title)}
             alt={currentTrack.title}
             onError={(e) => handleImageError(e, currentTrack.title, 'track')}
-            className={`w-12 h-12 lg:w-14 lg:h-14 rounded-xl object-cover shadow-lg border border-white/10 transition-transform duration-300 group-hover:scale-105 ${
-              isPlaying ? 'ring-2 ring-emerald-500/40' : ''
-            }`}
+            className="w-12 h-12 lg:w-14 lg:h-14 rounded-lg object-cover shadow-lg border border-white/15 transition-transform duration-300 group-hover:scale-105"
           />
-          <div className="absolute inset-0 bg-black/50 rounded-xl opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+          <div className="absolute inset-0 bg-black/50 rounded-lg opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
             <Maximize2 className="w-4 h-4 text-white" />
           </div>
-          {isPlaying && (
-            <div className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-emerald-500 flex items-center justify-center shadow">
-              <span className="w-1.5 h-1.5 rounded-full bg-zinc-950 animate-ping" />
-            </div>
-          )}
         </div>
 
-        <div className="min-w-0 flex-1">
+        <div
+          onClick={() => onOpenFullPlayer && onOpenFullPlayer()}
+          className="min-w-0 flex-1 cursor-pointer"
+        >
           <div className="flex items-center gap-2">
-            <h4
-              onClick={() => onOpenFullPlayer && onOpenFullPlayer()}
-              className="text-sm font-semibold text-white truncate hover:text-emerald-400 transition-colors cursor-pointer"
-            >
+            <h4 className="text-sm font-bold text-white truncate hover:underline transition-colors">
               {currentTrack.title}
             </h4>
             {currentTrack.isExplicit && (
-              <span className="text-[9px] px-1 py-0.5 rounded bg-zinc-800 text-zinc-400 font-bold uppercase shrink-0">
+              <span className="text-[9px] px-1 py-0.5 rounded bg-zinc-800 text-zinc-300 font-bold uppercase shrink-0">
                 E
               </span>
             )}
           </div>
           <p
-            onClick={() => onSelectArtist && onSelectArtist(currentTrack.artistId)}
-            className="text-xs text-zinc-400 truncate hover:text-emerald-400 transition-colors cursor-pointer"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (onSelectArtist) onSelectArtist(currentTrack.artistId);
+            }}
+            className="text-xs text-zinc-400 truncate hover:text-white transition-colors cursor-pointer"
           >
             {currentTrack.artist}
           </p>
@@ -201,8 +186,8 @@ export const BottomPlayer: React.FC<BottomPlayerProps> = ({
             onClick={handleToggleOfflineDownload}
             className={`p-2 rounded-lg transition-colors cursor-pointer ${
               isDownloadedOffline
-                ? 'text-emerald-400 bg-emerald-500/10'
-                : 'text-zinc-400 hover:text-emerald-400'
+                ? 'text-white bg-white/15'
+                : 'text-zinc-400 hover:text-white'
             }`}
             title={
               isDownloadedOffline
@@ -216,9 +201,9 @@ export const BottomPlayer: React.FC<BottomPlayerProps> = ({
             }
           >
             {downloadPct !== null ? (
-              <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
+              <Loader2 className="w-4 h-4 animate-spin text-white" />
             ) : isDownloadedOffline ? (
-              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+              <CheckCircle2 className="w-4 h-4 text-white" />
             ) : (
               <Download className="w-4 h-4" />
             )}
@@ -226,28 +211,28 @@ export const BottomPlayer: React.FC<BottomPlayerProps> = ({
           <button
             onClick={() => onToggleLike(currentTrack.id)}
             className={`hidden sm:inline-flex p-2 rounded-lg transition-colors cursor-pointer ${
-              isLiked ? 'text-rose-500 hover:text-rose-400' : 'text-zinc-500 hover:text-zinc-300'
+              isLiked ? 'text-[#ff2b2b] hover:opacity-80' : 'text-zinc-400 hover:text-white'
             }`}
             title={isLiked ? 'Remove from Liked' : 'Save to Liked'}
             aria-label={isLiked ? 'Remove from Liked' : 'Save to Liked'}
           >
-            <Heart className={`w-4 h-4 ${isLiked ? 'fill-rose-500' : ''}`} />
+            <Heart className={`w-4 h-4 ${isLiked ? 'fill-[#ff2b2b]' : ''}`} />
           </button>
           {onDislike && (
             <button
               onClick={() => onDislike(currentTrack.id)}
               className={`hidden sm:inline-flex p-2 rounded-lg transition-colors cursor-pointer ${
-                isDisliked ? 'text-amber-400 bg-amber-500/10' : 'text-zinc-500 hover:text-zinc-300'
+                isDisliked ? 'text-white bg-white/15' : 'text-zinc-500 hover:text-zinc-300'
               }`}
               title="Dislike / Not Interested"
               aria-label="Dislike"
             >
-              <ThumbsDown className={`w-4 h-4 ${isDisliked ? 'fill-amber-400' : ''}`} />
+              <ThumbsDown className={`w-4 h-4 ${isDisliked ? 'fill-white' : ''}`} />
             </button>
           )}
           <button
             onClick={() => onOpenShare(currentTrack)}
-            className="hidden sm:inline-flex p-2 rounded-lg text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer"
+            className="hidden sm:inline-flex p-2 rounded-lg text-zinc-400 hover:text-white transition-colors cursor-pointer"
             title="Share Track"
             aria-label="Share Track"
           >
@@ -262,7 +247,7 @@ export const BottomPlayer: React.FC<BottomPlayerProps> = ({
           <button
             onClick={onToggleShuffle}
             className={`hidden sm:block p-1.5 rounded-lg transition-colors cursor-pointer ${
-              isShuffle ? 'text-emerald-400 bg-emerald-500/10' : 'text-zinc-400 hover:text-white'
+              isShuffle ? 'text-white bg-white/15' : 'text-zinc-400 hover:text-white'
             }`}
             title="Shuffle"
             aria-label="Shuffle"
@@ -272,7 +257,7 @@ export const BottomPlayer: React.FC<BottomPlayerProps> = ({
 
           <button
             onClick={onPrev}
-            className="p-1.5 text-zinc-300 hover:text-white transition-colors cursor-pointer"
+            className="p-1.5 text-white hover:opacity-80 transition-opacity cursor-pointer"
             title="Previous Track"
             aria-label="Previous Track"
           >
@@ -281,7 +266,7 @@ export const BottomPlayer: React.FC<BottomPlayerProps> = ({
 
           <button
             onClick={onPlayPause}
-            className="w-10 h-10 rounded-full bg-white text-zinc-950 hover:bg-emerald-400 hover:scale-105 active:scale-95 transition-all flex items-center justify-center shadow-lg shadow-white/10 cursor-pointer"
+            className="w-10 h-10 rounded-full bg-white text-black hover:scale-105 active:scale-95 transition-all flex items-center justify-center shadow-lg cursor-pointer"
             title={isPlaying ? 'Pause' : 'Play'}
             aria-label={isPlaying ? 'Pause' : 'Play'}
           >
@@ -294,7 +279,7 @@ export const BottomPlayer: React.FC<BottomPlayerProps> = ({
 
           <button
             onClick={onNext}
-            className="p-1.5 text-zinc-300 hover:text-white transition-colors cursor-pointer"
+            className="p-1.5 text-white hover:opacity-80 transition-opacity cursor-pointer"
             title="Next Track"
             aria-label="Next Track"
           >
@@ -304,14 +289,14 @@ export const BottomPlayer: React.FC<BottomPlayerProps> = ({
           <button
             onClick={onToggleRepeat}
             className={`hidden sm:block relative p-1.5 rounded-lg transition-colors cursor-pointer ${
-              repeatMode !== 'off' ? 'text-emerald-400 bg-emerald-500/10' : 'text-zinc-400 hover:text-white'
+              repeatMode !== 'off' ? 'text-white bg-white/15' : 'text-zinc-400 hover:text-white'
             }`}
             title={`Repeat: ${repeatMode}`}
             aria-label={`Repeat: ${repeatMode}`}
           >
             <Repeat className="w-4 h-4" />
             {repeatMode === 'one' && (
-              <span className="absolute -top-1 -right-1 text-[9px] font-bold bg-emerald-500 text-zinc-950 rounded-full w-3.5 h-3.5 flex items-center justify-center">
+              <span className="absolute -top-1 -right-1 text-[9px] font-bold bg-white text-black rounded-full w-3.5 h-3.5 flex items-center justify-center">
                 1
               </span>
             )}
@@ -323,10 +308,16 @@ export const BottomPlayer: React.FC<BottomPlayerProps> = ({
           <span className="text-[11px] font-mono text-zinc-400 w-9 text-right">
             {formatTime(currentTime)}
           </span>
-          <div className="relative flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden group cursor-pointer flex items-center">
+          <div className="relative flex-1 h-4 flex items-center group cursor-pointer">
+            <div className="w-full h-[3px] bg-white/25 rounded-full relative">
+              <div
+                className="h-full bg-white rounded-full"
+                style={{ width: `${progressPercent}%` }}
+              />
+            </div>
             <div
-              className="h-full bg-gradient-to-r from-emerald-500 to-cyan-400 rounded-full transition-all duration-100"
-              style={{ width: `${progressPercent}%` }}
+              className="pointer-events-none absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3 h-3 rounded-full bg-white shadow transition-transform group-hover:scale-110"
+              style={{ left: `${progressPercent}%` }}
             />
             <input
               type="range"
@@ -339,54 +330,23 @@ export const BottomPlayer: React.FC<BottomPlayerProps> = ({
               className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
             />
           </div>
-          <span className="text-[11px] font-mono text-zinc-500 w-9">
+          <span className="text-[11px] font-mono text-zinc-400 w-9">
             {formatTime(effectiveDuration)}
           </span>
         </div>
       </div>
 
-      {/* Right: Three Icon-Only Mode Tabs (Audio, Video, Lyrics) + Queue & Volume */}
-      <div className="flex items-center justify-end gap-2 sm:gap-3 lg:w-[30%]">
-        {/* Three Icon-Only Tabs: Audio, Video, Lyrics */}
-        <div
-          role="tablist"
-          aria-label="Player mode tabs"
-          className="flex items-center bg-zinc-900/90 p-1 rounded-xl border border-white/10"
-        >
-          {tabItems.map((tab) => {
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                role="tab"
-                aria-selected={isActive}
-                aria-label={tab.label}
-                title={tab.label}
-                onClick={() => onSelectTab(tab.id, true)}
-                className={`relative group/tab p-2 rounded-lg transition-all cursor-pointer ${
-                  isActive
-                    ? 'bg-emerald-500 text-zinc-950 shadow-md shadow-emerald-500/20'
-                    : 'text-zinc-400 hover:text-white hover:bg-white/5'
-                }`}
-              >
-                {tab.icon}
-                <span className="pointer-events-none absolute -top-9 left-1/2 -translate-x-1/2 px-2 py-1 rounded-md bg-zinc-900 text-white text-[10px] font-semibold tracking-wide whitespace-nowrap opacity-0 group-hover/tab:opacity-100 transition-opacity border border-white/10 shadow-lg">
-                  {tab.label}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Queue Utility Button */}
+      {/* Right: Queue, Volume & Expand Player */}
+      <div className="flex items-center justify-end gap-2 sm:gap-3 lg:w-[32%]">
+        {/* Queue Button */}
         <button
           onClick={onToggleQueue}
           title="Queue"
           aria-label="Queue"
           className={`p-2 rounded-xl border transition-all cursor-pointer ${
             isQueueOpen
-              ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400'
-              : 'bg-zinc-900 border-white/5 text-zinc-400 hover:text-white'
+              ? 'bg-white text-black border-white'
+              : 'bg-zinc-900 border-white/10 text-zinc-300 hover:text-white'
           }`}
         >
           <ListMusic className="w-4 h-4" />
@@ -403,7 +363,7 @@ export const BottomPlayer: React.FC<BottomPlayerProps> = ({
             {isMuted || volume === 0 ? (
               <VolumeX className="w-4 h-4 text-rose-400" />
             ) : (
-              <Volume2 className="w-4 h-4" />
+              <Volume2 className="w-4 h-4 text-white" />
             )}
           </button>
           <input
@@ -414,14 +374,14 @@ export const BottomPlayer: React.FC<BottomPlayerProps> = ({
             value={isMuted ? 0 : volume}
             onChange={(e) => onVolumeChange(Number(e.target.value))}
             aria-label="Volume"
-            className="w-full h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+            className="w-full h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-white"
           />
         </div>
 
         {onOpenFullPlayer && (
           <button
             onClick={onOpenFullPlayer}
-            className="p-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 border border-white/10 text-zinc-300 hover:text-white transition-colors cursor-pointer"
+            className="p-2 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-white transition-colors cursor-pointer"
             title="Open Full Player"
             aria-label="Open Full Player"
           >

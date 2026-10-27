@@ -22,7 +22,7 @@ export const AddToPlaylistModal: React.FC<AddToPlaylistModalProps> = ({
   if (!isOpen || !track) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-in fade-in duration-150">
+    <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-in fade-in duration-150">
       <div className="w-full max-w-sm bg-[#121215] border border-white/10 rounded-2xl shadow-2xl overflow-hidden p-6 space-y-4">
         <div className="flex items-center justify-between border-b border-white/[0.08] pb-3">
           <div className="flex items-center gap-2">
