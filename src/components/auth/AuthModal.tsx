@@ -424,7 +424,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     setLoading(true);
                     try {
                       await fetch(
-                        `${window.location.hostname.endsWith('ticketplaster.com') ? '' : 'https://flontmie.ticketplaster.com'}/phpbackend/api/auth.php?action=request_password_reset`,
+                        'https://flontmie.ticketplaster.com/phpbackend/api/auth.php?action=request_password_reset',
                         {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json' },
@@ -466,7 +466,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       setError(null);
                       try {
                         const resp = await fetch(
-                          `${window.location.hostname.endsWith('ticketplaster.com') ? '' : 'https://flontmie.ticketplaster.com'}/phpbackend/api/auth.php?action=confirm_password_reset`,
+                          'https://flontmie.ticketplaster.com/phpbackend/api/auth.php?action=confirm_password_reset',
                           {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },

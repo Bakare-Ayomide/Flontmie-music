@@ -8,17 +8,20 @@ import { Track, Playlist, ArtistProfile, ArtistDiscographyItem, RelatedArtistIte
 import { resolveArtworkUrl } from '../utils/artwork';
 import { nativePlatform } from './nativePlatform';
 
-const getApiBaseUrl = (): string => {
-  if (typeof window !== 'undefined' && !nativePlatform.isNative()) {
-    const host = window.location.hostname;
-    if (host === 'flontmie.ticketplaster.com' || host.endsWith('ticketplaster.com')) {
-      return '/phpbackend/api';
-    }
-  }
-  return 'https://flontmie.ticketplaster.com/phpbackend/api';
-};
+export const PRODUCTION_ORIGIN = 'https://flontmie.ticketplaster.com';
+export const API_BASE = `${PRODUCTION_ORIGIN}/phpbackend/api`;
 
-const API_BASE = getApiBaseUrl();
+export const resolveServerMediaUrl = (rawUrl?: string | null): string => {
+  const trimmed = String(rawUrl || '').trim();
+  if (!trimmed) return '';
+  if (trimmed.startsWith('/phpbackend/')) {
+    return `${PRODUCTION_ORIGIN}${trimmed}`;
+  }
+  if (trimmed.startsWith('phpbackend/')) {
+    return `${PRODUCTION_ORIGIN}/${trimmed}`;
+  }
+  return trimmed;
+};
 
 class FlontmieApiService {
   private token: string | null = null;
@@ -82,7 +85,13 @@ class FlontmieApiService {
       headers['X-CSRF-Token'] = this.csrfToken;
     }
 
-    const response = await fetch(`${API_BASE}/${endpoint}`, {
+    let finalEndpoint = endpoint;
+    if (this.token && !finalEndpoint.includes('token=')) {
+      const sep = finalEndpoint.includes('?') ? '&' : '?';
+      finalEndpoint = `${finalEndpoint}${sep}token=${encodeURIComponent(this.token)}`;
+    }
+
+    const response = await fetch(`${API_BASE}/${finalEndpoint}`, {
       ...options,
       headers,
     });
@@ -197,33 +206,13 @@ class FlontmieApiService {
       ? dbTrack.mood_tags
       : ['all'];
 
-    let resolvedAudioUrl = dbTrack.audio_url || '';
-    if (
-      resolvedAudioUrl.startsWith('/phpbackend/') &&
-      typeof window !== 'undefined' &&
-      !window.location.hostname.endsWith('ticketplaster.com')
-    ) {
-      resolvedAudioUrl = `https://flontmie.ticketplaster.com${resolvedAudioUrl}`;
-    }
-
-    let resolvedVideoUrl = dbTrack.video_url || '';
-    if (
-      resolvedVideoUrl.startsWith('/phpbackend/') &&
-      typeof window !== 'undefined' &&
-      !window.location.hostname.endsWith('ticketplaster.com')
-    ) {
-      resolvedVideoUrl = `https://flontmie.ticketplaster.com${resolvedVideoUrl}`;
-    }
+    const resolvedAudioUrl = resolveServerMediaUrl(dbTrack.audio_url);
+    const resolvedVideoUrl = resolveServerMediaUrl(dbTrack.video_url);
 
     const rawCover = dbTrack.cover_art_url || dbTrack.cover_url || '';
-    let resolvedCoverUrl = resolveArtworkUrl(rawCover, 'track', dbTrack.title || 'Track');
-    if (
-      resolvedCoverUrl.startsWith('/phpbackend/') &&
-      typeof window !== 'undefined' &&
-      !window.location.hostname.endsWith('ticketplaster.com')
-    ) {
-      resolvedCoverUrl = `https://flontmie.ticketplaster.com${resolvedCoverUrl}`;
-    }
+    const resolvedCoverUrl = resolveServerMediaUrl(
+      resolveArtworkUrl(rawCover, 'track', dbTrack.title || 'Track')
+    );
 
     const rawId = String(dbTrack.id || '');
     const explicitVid = dbTrack.video_id || dbTrack.videoId || undefined;

@@ -81,11 +81,11 @@ export default function App() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
   const [isOnline, setIsOnline] = useState<boolean>(nativePlatform.isOnline());
 
-  // Music Catalog & Hub State - Loaded from Flontmie PHP/MySQL Backend
-  const [tracks, setTracks] = useState<Track[]>(INITIAL_TRACKS);
+  // Music Catalog & Hub State - Loaded strictly from Flontmie PHP/MySQL Backend
+  const [tracks, setTracks] = useState<Track[]>([]);
   const [albums, setAlbums] = useState<any[]>([]);
-  const [playlists, setPlaylists] = useState<Playlist[]>(INITIAL_PLAYLISTS);
-  const [artistProfiles, setArtistProfiles] = useState<Record<string, ArtistProfile>>(ARTIST_PROFILES);
+  const [playlists, setPlaylists] = useState<Playlist[]>([]);
+  const [artistProfiles, setArtistProfiles] = useState<Record<string, ArtistProfile>>({});
   const [likedTrackIds, setLikedTrackIds] = useState<string[]>([]);
   const [dislikedTrackIds, setDislikedTrackIds] = useState<string[]>([]);
   const [followedArtistIds, setFollowedArtistIds] = useState<string[]>([]);
@@ -97,16 +97,16 @@ export default function App() {
   const [adminPermissions, setAdminPermissions] = useState<AdminRolePermission[]>(ADMIN_ROLE_PERMISSIONS);
 
   // Playback State
-  const [currentTrack, setCurrentTrack] = useState<Track | null>(INITIAL_TRACKS[0] || null);
+  const [currentTrack, setCurrentTrack] = useState<Track | null>(null);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [currentTime, setCurrentTime] = useState<number>(0);
-  const [duration, setDuration] = useState<number>(INITIAL_TRACKS[0]?.duration || 153);
+  const [duration, setDuration] = useState<number>(180);
   const [volume, setVolume] = useState<number>(0.85);
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [isShuffle, setIsShuffle] = useState<boolean>(false);
   const [repeatMode, setRepeatMode] = useState<'off' | 'all' | 'one'>('off');
   const [playerTabMode, setPlayerTabMode] = useState<PlayerTabMode>('audio');
-  const [queue, setQueue] = useState<Track[]>(INITIAL_TRACKS.slice(1));
+  const [queue, setQueue] = useState<Track[]>([]);
   const [isFullPlayerOpen, setIsFullPlayerOpen] = useState<boolean>(false);
 
   // Drawer & Modal States
@@ -320,41 +320,56 @@ export default function App() {
           backendArtists.forEach((a: ArtistProfile) => {
             artistMap[a.id] = a;
           });
-          setArtistProfiles((prev) => ({ ...prev, ...artistMap }));
+          setArtistProfiles(artistMap);
         } else if (typeof backendArtists === 'object') {
-          setArtistProfiles((prev) => ({ ...prev, ...backendArtists }));
+          setArtistProfiles(backendArtists);
         }
       }
     }).catch(() => {});
 
     api.getPlaylists().then((backendPlaylists) => {
-      if (backendPlaylists && backendPlaylists.length > 0) {
+      if (Array.isArray(backendPlaylists)) {
         setPlaylists(backendPlaylists);
       }
     }).catch(() => {});
   }, []);
 
-  // Load Live Catalog from MySQL Backend
+  // Load Live Catalog & Hydrate User Session from MySQL Backend
   useEffect(() => {
     refreshCatalogFromDatabase();
 
-    // Hydrate current user session if token exists
-    api.getCurrentUser()
-      .then((res) => {
-        if (res && res.user) {
+    let isMounted = true;
+    (async () => {
+      try {
+        await api.hydrateSavedTokens();
+        if (!api.getToken()) {
+          if (isMounted) setIsAuthChecking(false);
+          return;
+        }
+        const res = await api.getCurrentUser();
+        if (isMounted && res && res.user) {
           setCurrentUser(res.user);
+          if (Array.isArray(res.user.liked_track_ids)) {
+            setLikedTrackIds(res.user.liked_track_ids);
+          }
+          if (Array.isArray(res.user.followed_artist_ids)) {
+            setFollowedArtistIds(res.user.followed_artist_ids);
+          }
           if (res.user.role !== 'admin') {
             setCurrentPersona(res.user.role);
           }
         }
-      })
-      .catch(() => {
+      } catch {
         api.setToken(null, null);
-        setCurrentUser(null);
-      })
-      .finally(() => {
-        setIsAuthChecking(false);
-      });
+        if (isMounted) setCurrentUser(null);
+      } finally {
+        if (isMounted) setIsAuthChecking(false);
+      }
+    })();
+
+    return () => {
+      isMounted = false;
+    };
   }, [refreshCatalogFromDatabase]);
 
   // Initialize Capacitor Native Platform, Network Listeners & Saved Tokens
@@ -580,25 +595,51 @@ export default function App() {
     const targetId = trackId || currentTrack?.id;
     if (!targetId) return;
 
-    api.toggleLike(targetId).catch(() => {});
-
     setLikedTrackIds((prev) =>
       prev.includes(targetId) ? prev.filter((id) => id !== targetId) : [...prev, targetId]
     );
+
+    api.toggleLike(targetId).then((res) => {
+      if (res && typeof res.likes_count === 'number') {
+        setTracks((prev) =>
+          prev.map((t) => (t.id === targetId ? { ...t, likes: res.likes_count! } : t))
+        );
+      }
+    }).catch(() => {});
   };
 
   const handleDislikeTrack = (trackId: string) => {
-    api.dislikeTrack(trackId).catch(() => {});
     setDislikedTrackIds((prev) =>
       prev.includes(trackId) ? prev.filter((id) => id !== trackId) : [...prev, trackId]
     );
+    api.dislikeTrack(trackId).then((res) => {
+      if (res && typeof res.dislikes_count === 'number') {
+        setTracks((prev) =>
+          prev.map((t) => (t.id === trackId ? { ...t, dislikes: res.dislikes_count } : t))
+        );
+      }
+    }).catch(() => {});
   };
 
   const handleToggleFollowArtist = (artistId: string) => {
-    api.toggleFollowArtist(artistId).catch(() => {});
     setFollowedArtistIds((prev) =>
       prev.includes(artistId) ? prev.filter((id) => id !== artistId) : [...prev, artistId]
     );
+    api.toggleFollowArtist(artistId).then((res) => {
+      if (res && typeof res.followers_count === 'number') {
+        setArtistProfiles((prev) => {
+          if (!prev[artistId]) return prev;
+          return {
+            ...prev,
+            [artistId]: {
+              ...prev[artistId],
+              followers: res.followers_count,
+              flontmieFollowers: res.followers_count,
+            },
+          };
+        });
+      }
+    }).catch(() => {});
   };
 
   const handlePlayAll = (trackList: Track[]) => {
@@ -642,32 +683,49 @@ export default function App() {
     );
   };
 
-  // Playlist management
+  // Playlist management (Persisted to MySQL Database)
   const handleCreatePlaylist = (newPlaylist: Partial<Playlist>) => {
+    const playlistId = `pl_${Date.now()}`;
+    const defaultTrackIds =
+      newPlaylist.trackIds && newPlaylist.trackIds.length > 0
+        ? newPlaylist.trackIds
+        : tracks.slice(0, 2).map((t) => t.id);
+
     const created: Playlist = {
-      id: `playlist-${Date.now()}`,
+      id: playlistId,
       title: newPlaylist.title || 'New Playlist',
       description: newPlaylist.description || '',
       coverUrl: newPlaylist.coverUrl || IMAGES.synthwave,
-      curator: newPlaylist.curator || 'You',
+      curator: currentUser?.display_name || newPlaylist.curator || 'You',
       isPublic: true,
       isCollaborative: Boolean(newPlaylist.isCollaborative),
       collaborators: newPlaylist.collaborators,
-      trackIds: newPlaylist.trackIds || ['track-afro-1', 'track-pop-1'],
+      trackIds: defaultTrackIds,
       followers: 1,
       category: newPlaylist.category || 'energize',
       createdAt: new Date().toISOString().split('T')[0],
     };
 
-    setPlaylists([created, ...playlists]);
+    setPlaylists((prev) => [created, ...prev]);
     setSelectedPlaylistId(created.id);
+
+    api.createPlaylist({
+      id: created.id,
+      title: created.title,
+      description: created.description,
+      cover_art_url: created.coverUrl,
+      genre_category: String(created.category || 'all'),
+      is_public: true,
+      track_ids: created.trackIds,
+    }).catch(() => {});
   };
 
   const handleDeletePlaylist = (id: string) => {
-    setPlaylists(playlists.filter((p) => p.id !== id));
+    setPlaylists((prev) => prev.filter((p) => p.id !== id));
     if (selectedPlaylistId === id) {
       setSelectedPlaylistId(null);
     }
+    api.deletePlaylist(id).catch(() => {});
   };
 
   const handleToggleTrackInPlaylist = (playlistId: string, trackId: string) => {
@@ -675,11 +733,13 @@ export default function App() {
       prev.map((pl) => {
         if (pl.id !== playlistId) return pl;
         const exists = pl.trackIds.includes(trackId);
+        const nextIds = exists
+          ? pl.trackIds.filter((id) => id !== trackId)
+          : [...pl.trackIds, trackId];
+        api.updatePlaylistTracks(playlistId, nextIds, pl.title).catch(() => {});
         return {
           ...pl,
-          trackIds: exists
-            ? pl.trackIds.filter((id) => id !== trackId)
-            : [...pl.trackIds, trackId],
+          trackIds: nextIds,
         };
       })
     );
@@ -687,11 +747,12 @@ export default function App() {
 
   const handleRemoveTrackFromPlaylist = (playlistId: string, trackId: string) => {
     setPlaylists((prev) =>
-      prev.map((pl) =>
-        pl.id === playlistId
-          ? { ...pl, trackIds: pl.trackIds.filter((id) => id !== trackId) }
-          : pl
-      )
+      prev.map((pl) => {
+        if (pl.id !== playlistId) return pl;
+        const nextIds = pl.trackIds.filter((id) => id !== trackId);
+        api.updatePlaylistTracks(playlistId, nextIds, pl.title).catch(() => {});
+        return { ...pl, trackIds: nextIds };
+      })
     );
   };
 
@@ -1645,6 +1706,13 @@ export default function App() {
         initialMode={authInitialMode}
         onAuthenticated={(user) => {
           setCurrentUser(user);
+          if (Array.isArray((user as any).liked_track_ids)) {
+            setLikedTrackIds((user as any).liked_track_ids);
+          }
+          if (Array.isArray((user as any).followed_artist_ids)) {
+            setFollowedArtistIds((user as any).followed_artist_ids);
+          }
+          refreshCatalogFromDatabase();
           if (user.role === 'admin') {
             setCurrentPersona('listener');
             navigateTab('admin');

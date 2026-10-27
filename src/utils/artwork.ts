@@ -91,6 +91,13 @@ export function resolveArtworkUrl(
     return createSvgCoverDataUri(titleOrName || 'Music', fallbackType);
   }
 
+  if (trimmed.startsWith('/phpbackend/')) {
+    return `https://flontmie.ticketplaster.com${trimmed}`;
+  }
+  if (trimmed.startsWith('phpbackend/')) {
+    return `https://flontmie.ticketplaster.com/${trimmed}`;
+  }
+
   // Check if URL contains any mapped videoId
   for (const [vid, replacement] of Object.entries(VERIFIED_ARTWORK_MAP)) {
     if (trimmed.includes(vid)) {

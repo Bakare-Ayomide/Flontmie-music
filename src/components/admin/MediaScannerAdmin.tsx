@@ -172,10 +172,7 @@ export const MediaScannerAdmin: React.FC = () => {
     }
 
     const token = api.getToken();
-    const base = typeof window !== 'undefined' && window.location.hostname !== 'flontmie.ticketplaster.com'
-      ? 'https://flontmie.ticketplaster.com'
-      : '';
-    const audioUrl = `${base}/phpbackend/api/stream.php?scan_file_id=${encodeURIComponent(file.id)}${token ? `&token=${encodeURIComponent(token)}` : ''}`;
+    const audioUrl = `https://flontmie.ticketplaster.com/phpbackend/api/stream.php?scan_file_id=${encodeURIComponent(file.id)}${token ? `&token=${encodeURIComponent(token)}` : ''}`;
 
     const newAudio = new Audio(audioUrl);
     newAudio.crossOrigin = 'anonymous';

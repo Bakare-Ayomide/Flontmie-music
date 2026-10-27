@@ -6,11 +6,8 @@ const config: CapacitorConfig = {
   webDir: 'dist',
   server: {
     androidScheme: 'https',
-    hostname: 'flontmie.ticketplaster.com',
-    allowNavigation: [
-      'flontmie.ticketplaster.com',
-      '*.ticketplaster.com',
-    ],
+    hostname: 'localhost',
+    cleartext: true,
   },
   plugins: {
     SplashScreen: {
