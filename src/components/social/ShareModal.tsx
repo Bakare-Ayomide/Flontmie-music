@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { X, Copy, Check, Share2, Code, QrCode, ExternalLink } from 'lucide-react';
+import { X, Copy, Check, Share2, Code, ExternalLink, Smartphone } from 'lucide-react';
 import { Track, Playlist } from '../../types/music';
+import { nativePlatform } from '../../services/nativePlatform';
 
 interface ShareModalProps {
   isOpen: boolean;
@@ -21,11 +22,12 @@ export const ShareModal: React.FC<ShareModalProps> = ({
 
   if (!isOpen) return null;
 
-  const title = track ? track.title : playlist ? playlist.title : 'Music Stream';
+  const title = track ? track.title : playlist ? playlist.title : 'Flontmie Music';
   const subtitle = track ? `by ${track.artist}` : playlist ? `Curated by ${playlist.curator}` : 'High-fidelity music streaming';
-  const shareUrl = typeof window !== 'undefined'
-    ? `${window.location.origin}${track ? `?track=${track.id}` : playlist ? `/playlist/${playlist.id}` : ''}`
-    : 'https://soundpulse.app';
+  const origin = typeof window !== 'undefined' && window.location.origin.startsWith('http')
+    ? window.location.origin
+    : 'https://flontmie.ticketplaster.com';
+  const shareUrl = `${origin}${track ? `?track=${track.id}` : playlist ? `/playlist/${playlist.id}` : ''}`;
 
   const embedSnippet = `<iframe src="${shareUrl}?embed=true" width="100%" height="152" frameborder="0" allow="autoplay; clipboard-write; encrypted-media"></iframe>`;
 
@@ -41,14 +43,35 @@ export const ShareModal: React.FC<ShareModalProps> = ({
     setTimeout(() => setCopiedEmbed(false), 2000);
   };
 
+  const handleNativeShare = async () => {
+    const shared = await nativePlatform.shareContent({
+      title: `Flontmie — ${title}`,
+      text: `Listen to "${title}" (${subtitle}) on Flontmie`,
+      url: shareUrl,
+    });
+    if (!shared) {
+      handleCopyLink();
+    }
+  };
+
   const handleShareTwitter = () => {
-    const text = `Listening to "${title}"! 🎧 Check it out:`;
-    window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(shareUrl)}`, '_blank');
+    const text = `Listening to "${title}" on Flontmie! Check it out:`;
+    const url = `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(shareUrl)}`;
+    const a = document.createElement('a');
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.click();
   };
 
   const handleShareWhatsApp = () => {
-    const text = `Check out "${title}": ${shareUrl}`;
-    window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`, '_blank');
+    const text = `Check out "${title}" on Flontmie: ${shareUrl}`;
+    const url = `https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`;
+    const a = document.createElement('a');
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.click();
   };
 
   return (
@@ -85,6 +108,15 @@ export const ShareModal: React.FC<ShareModalProps> = ({
             <p className="text-xs text-neutral-400 truncate">{subtitle}</p>
           </div>
         </div>
+
+        {/* Native Device Share Sheet Button */}
+        <button
+          onClick={handleNativeShare}
+          className="w-full py-2.5 px-4 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-red-600/20 transition-all cursor-pointer"
+        >
+          <Smartphone className="w-4 h-4" />
+          <span>Share via Device / Apps</span>
+        </button>
 
         {/* Share Link Copy Field */}
         <div className="space-y-2">

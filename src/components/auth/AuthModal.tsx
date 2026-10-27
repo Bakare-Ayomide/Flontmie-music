@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   X, 
   Mail, 
@@ -12,10 +12,12 @@ import {
   CheckCircle2,
   Eye,
   EyeOff,
-  Headphones
+  Headphones,
+  Fingerprint
 } from 'lucide-react';
 import { Persona } from '../../types/music';
 import { api } from '../../services/api';
+import { nativePlatform } from '../../services/nativePlatform';
 
 export interface AuthUser {
   id: string;
@@ -71,7 +73,55 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
+  // Native Biometric / Fingerprint State
+  const [biometricAvailable, setBiometricAvailable] = useState(false);
+  const [biometricEnrolled, setBiometricEnrolled] = useState(false);
+  const [enableBiometricOnLogin, setEnableBiometricOnLogin] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let mounted = true;
+    (async () => {
+      const avail = await nativePlatform.isBiometricAvailable();
+      const enrolled = await nativePlatform.isBiometricEnrolled();
+      if (mounted) {
+        setBiometricAvailable(avail);
+        setBiometricEnrolled(enrolled);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [isOpen]);
+
   if (!isOpen) return null;
+
+  const handleBiometricLogin = async () => {
+    setError(null);
+    setSuccessMsg(null);
+    setLoading(true);
+    try {
+      const bio = await nativePlatform.authenticateWithBiometrics();
+      if (!bio.verified) {
+        setError(bio.error || 'Biometric verification cancelled.');
+        setLoading(false);
+        return;
+      }
+      await api.hydrateSavedTokens();
+      const res = await api.getCurrentUser();
+      if (res && res.user) {
+        onAuthenticated?.(res.user);
+        onAuthSuccess?.(res.user);
+        onClose();
+      } else {
+        setError('Saved session expired. Please sign in with your password once to re-link fingerprint.');
+      }
+    } catch (err: any) {
+      setError(err?.message || 'Biometric sign-in failed.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -83,13 +133,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       if (mode === 'login') {
         const res = await api.login(email.trim(), password);
         if (res && res.user) {
+          if (enableBiometricOnLogin && biometricAvailable) {
+            await nativePlatform.enrollBiometricSession(res.user.email, res.user.display_name || res.user.username);
+            setBiometricEnrolled(true);
+          }
           onAuthenticated?.(res.user);
           onAuthSuccess?.(res.user);
           onClose();
         }
       } else if (mode === 'register') {
-        // Every new account registers strictly as a Listener by default.
-        // Role selection is removed from registration.
         const cleanUsername =
           username.trim() ||
           email
@@ -301,6 +353,19 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 </div>
               </div>
 
+              {mode === 'login' && biometricAvailable && (
+                <label className="flex items-center gap-2.5 p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.07] text-xs text-neutral-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={enableBiometricOnLogin}
+                    onChange={(e) => setEnableBiometricOnLogin(e.target.checked)}
+                    className="accent-red-500 w-3.5 h-3.5"
+                  />
+                  <Fingerprint className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>Enable Fingerprint / Biometric unlock on this device</span>
+                </label>
+              )}
+
               <button
                 type="submit"
                 disabled={loading}
@@ -320,6 +385,18 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   </>
                 )}
               </button>
+
+              {mode === 'login' && biometricAvailable && biometricEnrolled && (
+                <button
+                  type="button"
+                  onClick={handleBiometricLogin}
+                  disabled={loading}
+                  className="w-full py-2.5 px-4 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-200 font-bold text-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Fingerprint className="w-4 h-4 text-emerald-400" />
+                  <span>Sign In with Fingerprint / Biometrics</span>
+                </button>
+              )}
             </form>
           ) : (
             <div className="space-y-4">

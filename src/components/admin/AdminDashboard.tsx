@@ -151,48 +151,30 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [newLabelEmail, setNewLabelEmail] = useState('');
   const [newLabelCountry, setNewLabelCountry] = useState('US');
 
-  // YouTube Music Admin Discovery & Import Pipeline State
-  const [ytQuery, setYtQuery] = useState('');
-  const [ytFilterType, setYtFilterType] = useState<'songs' | 'albums' | 'artists' | 'playlists' | 'all'>('all');
-  const [ytGenreFilter, setYtGenreFilter] = useState('All');
-  const [ytCountryFilter, setYtCountryFilter] = useState('US');
-  const [ytYearFilter, setYtYearFilter] = useState('All');
-  const [ytLicenseDefault, setYtLicenseDefault] = useState('verified_licensed');
-  const [ytAutoPublish, setYtAutoPublish] = useState(true);
-  const [isSearchingYt, setIsSearchingYt] = useState(false);
-  const [ytResults, setYtResults] = useState<any[]>([]);
-  const [ytAlbumResults, setYtAlbumResults] = useState<any[]>([]);
-  const [ytArtistResults, setYtArtistResults] = useState<any[]>([]);
-  const [ytPlaylistResults, setYtPlaylistResults] = useState<any[]>([]);
-  const [ytCharts, setYtCharts] = useState<any[]>([]);
-  const [selectedYtMap, setSelectedYtMap] = useState<Record<string, any>>({});
-  const [importingId, setImportingId] = useState<string | null>(null);
-  const [isBulkImporting, setIsBulkImporting] = useState(false);
+  // Server Storage & Bulk Catalog State
   const [importProgressMsg, setImportProgressMsg] = useState<string | null>(null);
-  const [collectionPreview, setCollectionPreview] = useState<any | null>(null);
-  const [isLoadingCollection, setIsLoadingCollection] = useState(false);
-
-  // Import History, Schedules, Storage & Bulk Catalog State
   const [dbImportJobs, setDbImportJobs] = useState<any[]>([]);
   const [dbImportSchedules, setDbImportSchedules] = useState<any[]>([]);
   const [dbStorage, setDbStorage] = useState<any>(null);
   const [selectedCatalogTrackIds, setSelectedCatalogTrackIds] = useState<string[]>([]);
   const [isSyncingStorage, setIsSyncingStorage] = useState(false);
 
-  // Automated Import Schedule Form State
-  const [schName, setSchName] = useState('');
-  const [schQuery, setSchQuery] = useState('');
-  const [schGenre, setSchGenre] = useState('Afrobeats');
-  const [schCountry, setSchCountry] = useState('NG');
-  const [schYear, setSchYear] = useState('2025');
-  const [schMaxItems, setSchMaxItems] = useState(8);
-  const [schFrequency, setSchFrequency] = useState('daily');
-  const [runningScheduleId, setRunningScheduleId] = useState<string | null>(null);
-
   // Authorized Audio / Artwork Upload State
   const [uploadTargetTrackId, setUploadTargetTrackId] = useState('');
   const [uploadMediaType, setUploadMediaType] = useState<'audio' | 'artwork'>('audio');
   const [isUploadingFile, setIsUploadingFile] = useState(false);
+
+  // Admin Direct Track Release Creation Form
+  const [newTrackTitle, setNewTrackTitle] = useState('');
+  const [newTrackArtist, setNewTrackArtist] = useState('');
+  const [newTrackAlbum, setNewTrackAlbum] = useState('Single');
+  const [newTrackGenre, setNewTrackGenre] = useState('Afrobeats');
+  const [newTrackLyrics, setNewTrackLyrics] = useState('');
+  const [newTrackAudioFile, setNewTrackAudioFile] = useState<File | null>(null);
+  const [newTrackVideoFile, setNewTrackVideoFile] = useState<File | null>(null);
+  const [newTrackLyricsFile, setNewTrackLyricsFile] = useState<File | null>(null);
+  const [newTrackArtworkFile, setNewTrackArtworkFile] = useState<File | null>(null);
+  const [isCreatingDirectTrack, setIsCreatingDirectTrack] = useState(false);
 
   const showNotice = (msg: string) => {
     setNotice(msg);
@@ -446,231 +428,48 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
   };
 
-  const handleSearchYouTube = async (overrideQuery?: string) => {
-    const q = (overrideQuery ?? ytQuery).trim();
-    if (!q) return;
-    setIsSearchingYt(true);
+  const handleCreateDirectAdminRelease = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newTrackTitle.trim() || !newTrackArtist.trim()) {
+      setError('Song title and artist name are required.');
+      return;
+    }
+    if (!newTrackAudioFile && !newTrackVideoFile) {
+      setError('Please select at least an audio master file or a music video file to upload.');
+      return;
+    }
+    setIsCreatingDirectTrack(true);
+    setImportProgressMsg(`Uploading master release "${newTrackTitle}" (${newTrackArtist}) into Flontmie storage...`);
     setError(null);
     try {
-      const res = await api.searchYouTubeMusic(q, ytFilterType, {
-        country: ytCountryFilter,
-        year: ytYearFilter,
-        genre: ytGenreFilter,
-      });
-      setYtResults(res?.results?.songs || []);
-      setYtAlbumResults(res?.results?.albums || []);
-      setYtArtistResults(res?.results?.artists || []);
-      setYtPlaylistResults(res?.results?.playlists || []);
-    } catch (err: any) {
-      setError(err?.message || 'YouTube Music search failed.');
-    } finally {
-      setIsSearchingYt(false);
-    }
-  };
-
-  const handleLoadYtCharts = async () => {
-    setIsSearchingYt(true);
-    try {
-      const res = await api.getYouTubeMusicCharts();
-      const chartList = res?.charts || [];
-      setYtCharts(chartList);
-      if (ytResults.length === 0) {
-        setYtResults(chartList);
-      }
-    } catch (err: any) {
-      setError(err?.message || 'Failed to load YT Music charts.');
-    } finally {
-      setIsSearchingYt(false);
-    }
-  };
-
-  const handleImportYouTubeSong = async (song: any, forceResync: boolean = false) => {
-    const vid = song.videoId || String(song.id || '').replace(/^(trk_)?yt_/, '');
-    setImportingId(vid || song.title);
-    setImportProgressMsg(`Acquiring audio & artwork for "${song.title}" (${song.artist})...`);
-    try {
-      const res = await api.importYouTubeMusicTrack({
-        title: song.title,
-        artist: song.artist,
-        album: song.album || 'Single',
-        genre: ytGenreFilter !== 'All' ? ytGenreFilter : (song.genre || 'Pop'),
-        country: ytCountryFilter || 'US',
-        release_year: ytYearFilter !== 'All' && /^\d{4}$/.test(ytYearFilter) ? Number(ytYearFilter) : Number(song.year || new Date().getFullYear()),
-        duration: song.duration || 185,
-        cover_url: song.cover_url,
-        videoId: vid,
-        license_status: ytLicenseDefault,
-        auto_publish: ytAutoPublish,
-        force_resync: forceResync,
+      const res = await api.uploadTrack({
+        title: newTrackTitle.trim(),
+        artist: newTrackArtist.trim(),
+        album: newTrackAlbum.trim() || 'Single',
+        genre: newTrackGenre || 'Afrobeats',
+        lyrics: newTrackLyrics.trim() || undefined,
+        audioFile: newTrackAudioFile,
+        videoFile: newTrackVideoFile,
+        lyricsFile: newTrackLyricsFile,
+        artworkFile: newTrackArtworkFile,
       });
       if (res && res.track && onTrackImported) {
         onTrackImported(res.track);
       }
-      showNotice(res.message || `Imported "${song.title}" to server storage.`);
+      showNotice(res.message || `Uploaded "${newTrackTitle}" directly to server catalog.`);
+      setNewTrackTitle('');
+      setNewTrackArtist('');
+      setNewTrackAlbum('Single');
+      setNewTrackLyrics('');
+      setNewTrackAudioFile(null);
+      setNewTrackVideoFile(null);
+      setNewTrackLyricsFile(null);
+      setNewTrackArtworkFile(null);
       fetchAdminData();
     } catch (err: any) {
-      setError(err?.message || 'Import failed.');
+      setError(err?.message || 'Direct track upload failed.');
     } finally {
-      setImportingId(null);
-      setImportProgressMsg(null);
-    }
-  };
-
-  const handleToggleSelectYtSong = (song: any) => {
-    const key = song.videoId || song.id || `${song.title}-${song.artist}`;
-    setSelectedYtMap((prev) => {
-      const next = { ...prev };
-      if (next[key]) {
-        delete next[key];
-      } else {
-        next[key] = song;
-      }
-      return next;
-    });
-  };
-
-  const handleBulkImportSelectedYt = async () => {
-    const items = Object.values(selectedYtMap);
-    if (items.length === 0) return;
-    setIsBulkImporting(true);
-    setImportProgressMsg(`Running bulk import pipeline for ${items.length} selected songs (acquiring audio & artwork)...`);
-    try {
-      const res = await api.bulkImportYouTubeMusicTracks({
-        items,
-        genre: ytGenreFilter !== 'All' ? ytGenreFilter : 'Pop',
-        country: ytCountryFilter || 'US',
-        license_status: ytLicenseDefault,
-        auto_publish: ytAutoPublish,
-      });
-      showNotice(res.message || `Bulk import finished (${res.imported_count} imported).`);
-      setSelectedYtMap({});
-      fetchAdminData();
-    } catch (err: any) {
-      setError(err?.message || 'Bulk import failed.');
-    } finally {
-      setIsBulkImporting(false);
-      setImportProgressMsg(null);
-    }
-  };
-
-  const handleInspectYtCollection = async (type: 'album' | 'artist' | 'playlist', item: any) => {
-    setIsLoadingCollection(true);
-    setCollectionPreview({
-      type,
-      title: item.title || item.name,
-      artist: item.artist || item.curator || item.name || 'Artist',
-      cover_url: item.cover_url || item.avatar_url,
-      tracks: [],
-    });
-    try {
-      const browseId = item.browseId || item.id;
-      if (type === 'album') {
-        const res = await api.getYouTubeMusicAlbum(browseId);
-        if (res?.album) {
-          setCollectionPreview({
-            type: 'album',
-            title: res.album.title || item.title,
-            artist: res.album.artist || item.artist,
-            cover_url: res.album.cover_url || item.cover_url,
-            year: res.album.year,
-            tracks: res.album.tracks || [],
-          });
-        }
-      } else if (type === 'artist') {
-        const res = await api.getYouTubeMusicArtist(browseId, item.name);
-        if (res) {
-          setCollectionPreview({
-            type: 'artist',
-            title: res.artist?.name || item.name,
-            artist: res.artist?.name || item.name,
-            cover_url: res.artist?.avatar_url || item.avatar_url,
-            description: res.artist?.description,
-            tracks: res.top_songs || [],
-          });
-        }
-      } else if (type === 'playlist') {
-        const res = await api.getYouTubeMusicPlaylist(browseId);
-        if (res?.playlist) {
-          setCollectionPreview({
-            type: 'playlist',
-            title: res.playlist.title || item.title,
-            artist: res.playlist.curator || 'Flontmie Editorial',
-            cover_url: res.playlist.cover_url || item.cover_url,
-            description: res.playlist.description,
-            tracks: res.playlist.tracks || [],
-          });
-        }
-      }
-    } catch (err: any) {
-      setError(err?.message || 'Failed to inspect collection.');
-    } finally {
-      setIsLoadingCollection(false);
-    }
-  };
-
-  const handleImportEntireCollection = async () => {
-    if (!collectionPreview || !Array.isArray(collectionPreview.tracks) || collectionPreview.tracks.length === 0) return;
-    setIsBulkImporting(true);
-    setImportProgressMsg(`Importing ${collectionPreview.type} "${collectionPreview.title}" (${collectionPreview.tracks.length} tracks)...`);
-    try {
-      const res = await api.importYouTubeMusicCollection({
-        collection_type: collectionPreview.type,
-        title: collectionPreview.title,
-        artist: collectionPreview.artist,
-        cover_url: collectionPreview.cover_url,
-        description: collectionPreview.description,
-        genre: ytGenreFilter !== 'All' ? ytGenreFilter : 'Pop',
-        country: ytCountryFilter || 'US',
-        license_status: ytLicenseDefault,
-        tracks: collectionPreview.tracks,
-      });
-      showNotice(res.message || 'Collection imported to local storage.');
-      setCollectionPreview(null);
-      fetchAdminData();
-    } catch (err: any) {
-      setError(err?.message || 'Collection import failed.');
-    } finally {
-      setIsBulkImporting(false);
-      setImportProgressMsg(null);
-    }
-  };
-
-  const handleCreateSchedule = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!schName.trim() || !schQuery.trim()) return;
-    try {
-      const res = await api.createImportSchedule({
-        name: schName.trim(),
-        search_query: schQuery.trim(),
-        filter_type: 'songs',
-        genre: schGenre,
-        country: schCountry,
-        release_year: schYear,
-        max_items: schMaxItems,
-        auto_publish: ytAutoPublish,
-        license_status: ytLicenseDefault,
-        frequency: schFrequency,
-      });
-      showNotice(res.message || 'Automated import schedule created.');
-      setSchName('');
-      setSchQuery('');
-      fetchAdminData();
-    } catch (err: any) {
-      setError(err?.message || 'Failed to create schedule.');
-    }
-  };
-
-  const handleRunScheduleNow = async (scheduleId: string) => {
-    setRunningScheduleId(scheduleId);
-    setImportProgressMsg('Executing automated search & synchronization rule...');
-    try {
-      const res = await api.runImportSchedule(scheduleId);
-      showNotice(res.message || 'Schedule executed.');
-      fetchAdminData();
-    } catch (err: any) {
-      setError(err?.message || 'Failed to execute schedule.');
-    } finally {
-      setRunningScheduleId(null);
+      setIsCreatingDirectTrack(false);
       setImportProgressMsg(null);
     }
   };
@@ -732,7 +531,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const navItems: { id: AdminSection; label: string; icon: React.ReactNode; badge?: number }[] = [
     { id: 'overview', label: 'Overview', icon: <Activity className="w-4 h-4" /> },
     { id: 'media_scanner', label: 'Media Matching', icon: <FolderSearch className="w-4 h-4 text-indigo-400" />, badge: stats?.media_counts?.ambiguous || undefined },
-    { id: 'ytmusic_import', label: 'Ingestion & Discovery', icon: <Download className="w-4 h-4" />, badge: dbImportJobs.length },
+    { id: 'ytmusic_import', label: 'Direct Upload & Storage', icon: <Upload className="w-4 h-4" />, badge: dbStorage?.audio_files_count ?? dbTracks.length },
     { id: 'catalog', label: 'Music Releases', icon: <Music className="w-4 h-4" />, badge: stats?.total_tracks ?? dbTracks.length },
     { id: 'users', label: 'Users', icon: <Users className="w-4 h-4" />, badge: stats?.total_users },
     { id: 'artists_claims', label: 'Artists & Claims', icon: <CheckCircle2 className="w-4 h-4" />, badge: stats?.pending_claims },
@@ -1618,533 +1417,135 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
           </div>
 
-          {/* 1. Admin-Only Search, Metadata Filters & Bulk Import Controls */}
-          <div className="p-5 rounded-2xl bg-neutral-900/40 border border-white/[0.08] space-y-4">
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-              <div>
-                <div className="flex items-center gap-2">
-                  <Flame className="w-5 h-5 text-red-500" />
-                  <h3 className="text-base font-extrabold text-white">
-                    Music Discovery & Media Ingestion Engine
-                  </h3>
-                  <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold">
-                    Admin Protected
-                  </span>
-                </div>
-                <p className="text-xs text-neutral-400 mt-0.5">
-                  Search songs, albums, artists, and playlists with metadata filters. Audio streams & artwork are ingested into server storage and linked in the system.
-                </p>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  onClick={handleLoadYtCharts}
-                  disabled={isSearchingYt}
-                  className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
-                >
-                  <TrendingUp className="w-3.5 h-3.5 text-red-400" />
-                  <span>Load Global Charts</span>
-                </button>
-
-                {Object.keys(selectedYtMap).length > 0 && (
-                  <button
-                    onClick={handleBulkImportSelectedYt}
-                    disabled={isBulkImporting}
-                    className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs flex items-center gap-1.5 shadow-lg shadow-amber-500/20 cursor-pointer"
-                  >
-                    {isBulkImporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-                    <span>Bulk Import Selected ({Object.keys(selectedYtMap).length})</span>
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Search Input & Metadata Filter Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-6 gap-2.5 text-xs">
-              <div className="md:col-span-2 relative">
-                <Search className="w-4 h-4 text-neutral-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  value={ytQuery}
-                  onChange={(e) => setYtQuery(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSearchYouTube()}
-                  placeholder="Search songs, albums, artists, playlists, ISRC..."
-                  className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-white"
-                />
-              </div>
-
-              <select
-                value={ytFilterType}
-                onChange={(e) => setYtFilterType(e.target.value as any)}
-                className="px-3 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-white"
-              >
-                <option value="all">All Types (Songs, Albums, Artists, Playlists)</option>
-                <option value="songs">Songs Only</option>
-                <option value="albums">Albums Only</option>
-                <option value="artists">Artists Only</option>
-                <option value="playlists">Playlists Only</option>
-              </select>
-
-              <select
-                value={ytGenreFilter}
-                onChange={(e) => setYtGenreFilter(e.target.value)}
-                className="px-3 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-white"
-              >
-                {['All', 'Afrobeats', 'Pop', 'Hip-Hop', 'R&B', 'Amapiano', 'Electronic', 'Lo-Fi', 'Gospel', 'Reggae', 'Latin'].map((g) => (
-                  <option key={g} value={g}>
-                    Genre: {g}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                value={ytCountryFilter}
-                onChange={(e) => setYtCountryFilter(e.target.value)}
-                className="px-3 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-white"
-              >
-                {[
-                  { code: 'US', name: 'United States (US)' },
-                  { code: 'NG', name: 'Nigeria (NG)' },
-                  { code: 'GB', name: 'United Kingdom (GB)' },
-                  { code: 'ZA', name: 'South Africa (ZA)' },
-                  { code: 'GH', name: 'Ghana (GH)' },
-                  { code: 'KE', name: 'Kenya (KE)' },
-                  { code: 'CA', name: 'Canada (CA)' },
-                  { code: 'FR', name: 'France (FR)' },
-                  { code: 'BR', name: 'Brazil (BR)' },
-                ].map((c) => (
-                  <option key={c.code} value={c.code}>
-                    Market: {c.name}
-                  </option>
-                ))}
-              </select>
-
-              <div className="flex gap-2">
-                <select
-                  value={ytYearFilter}
-                  onChange={(e) => setYtYearFilter(e.target.value)}
-                  className="flex-1 px-2.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-white"
-                >
-                  {['All', '2026', '2025', '2024', '2023', '2022', '2021', '2020', '2019'].map((yr) => (
-                    <option key={yr} value={yr}>
-                      Year: {yr}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  onClick={() => handleSearchYouTube()}
-                  disabled={isSearchingYt}
-                  className="px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold flex items-center gap-1.5 shrink-0 cursor-pointer"
-                >
-                  {isSearchingYt ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
-                  <span>Search</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Import Licensing & Publishing Defaults Bar */}
-            <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-white/[0.06] text-xs">
-              <div className="flex flex-wrap items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <span className="text-neutral-400">Default License Status:</span>
-                  <select
-                    value={ytLicenseDefault}
-                    onChange={(e) => setYtLicenseDefault(e.target.value)}
-                    className="px-2.5 py-1 rounded-lg bg-neutral-950 border border-white/10 text-white"
-                  >
-                    <option value="verified_licensed">Verified Licensed</option>
-                    <option value="direct_partner">Direct Partner License</option>
-                    <option value="royalty_free">Royalty Free / Authorized</option>
-                    <option value="pending_verification">Pending Verification</option>
-                  </select>
-                </div>
-
-                <label className="flex items-center gap-2 cursor-pointer text-neutral-300">
-                  <input
-                    type="checkbox"
-                    checked={ytAutoPublish}
-                    onChange={(e) => setYtAutoPublish(e.target.checked)}
-                    className="accent-amber-500"
-                  />
-                  <span>Auto-Publish to Listener Frontend upon Sync</span>
-                </label>
-              </div>
-
-              {ytResults.length > 0 && (
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => {
-                      const next: Record<string, any> = {};
-                      ytResults.forEach((s) => {
-                        const k = s.videoId || s.id || `${s.title}-${s.artist}`;
-                        next[k] = s;
-                      });
-                      setSelectedYtMap(next);
-                    }}
-                    className="text-amber-400 hover:underline font-semibold cursor-pointer"
-                  >
-                    Select All Songs ({ytResults.length})
-                  </button>
-                  {Object.keys(selectedYtMap).length > 0 && (
-                    <button
-                      onClick={() => setSelectedYtMap({})}
-                      className="text-neutral-400 hover:text-white cursor-pointer"
-                    >
-                      Clear Selection
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Search Results: Songs */}
-            {ytResults.length > 0 && (
-              <div className="space-y-2 pt-2">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-400">
-                  Discovered Songs ({ytResults.length})
-                </h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
-                  {ytResults.map((item) => {
-                    const vid = item.videoId || item.id;
-                    const key = vid || `${item.title}-${item.artist}`;
-                    const isSelected = Boolean(selectedYtMap[key]);
-                    const alreadyInCatalog = dbTracks.some(
-                      (t) =>
-                        (vid && t.video_id === vid) ||
-                        (t.title?.toLowerCase() === item.title?.toLowerCase() &&
-                          t.artist_name?.toLowerCase() === item.artist?.toLowerCase())
-                    );
-
-                    return (
-                      <div
-                        key={key}
-                        className={`p-3 rounded-xl border flex items-center justify-between gap-2.5 text-xs transition-all ${
-                          isSelected
-                            ? 'bg-amber-500/10 border-amber-500/40'
-                            : 'bg-white/[0.02] border-white/[0.06] hover:border-white/15'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={() => handleToggleSelectYtSong(item)}
-                            className="accent-amber-500 shrink-0"
-                          />
-                          <img
-                            src={item.cover_url}
-                            alt={item.title}
-                            referrerPolicy="no-referrer"
-                            className="w-11 h-11 rounded-lg object-cover shrink-0 bg-neutral-800"
-                          />
-                          <div className="min-w-0">
-                            <p className="font-semibold text-white truncate">{item.title}</p>
-                            <p className="text-neutral-400 truncate text-[11px]">{item.artist}</p>
-                            <div className="flex items-center gap-1.5 mt-0.5">
-                              {alreadyInCatalog ? (
-                                <span className="text-[10px] font-mono text-emerald-400">✓ In System</span>
-                              ) : (
-                                <span className="text-[10px] font-mono text-neutral-500">
-                                  {item.album || 'Single'}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-1 shrink-0">
-                          <button
-                            onClick={() => handleImportYouTubeSong(item, alreadyInCatalog)}
-                            disabled={importingId === vid}
-                            className={`px-2.5 py-1.5 rounded-lg font-bold flex items-center gap-1 cursor-pointer ${
-                              alreadyInCatalog
-                                ? 'bg-white/10 hover:bg-white/20 text-neutral-200'
-                                : 'bg-white hover:bg-neutral-200 text-black'
-                            }`}
-                            title={alreadyInCatalog ? 'Force Re-Sync Audio & Metadata' : 'Download Audio & Ingest'}
-                          >
-                            {importingId === vid ? (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                              <Download className="w-3.5 h-3.5" />
-                            )}
-                            <span>{alreadyInCatalog ? 'Re-Sync' : 'Import'}</span>
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* Search Results: Albums, Artists & Playlists */}
-            {(ytAlbumResults.length > 0 || ytArtistResults.length > 0 || ytPlaylistResults.length > 0) && (
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 pt-3 border-t border-white/[0.06]">
-                {/* Albums */}
-                {ytAlbumResults.length > 0 && (
-                  <div className="space-y-2">
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-400">
-                      Albums ({ytAlbumResults.length})
-                    </h4>
-                    <div className="space-y-2">
-                      {ytAlbumResults.slice(0, 6).map((alb) => (
-                        <div key={alb.id || alb.browseId} className="p-2.5 rounded-xl bg-white/[0.02] border border-white/[0.06] flex items-center justify-between gap-2 text-xs">
-                          <div className="flex items-center gap-2.5 min-w-0">
-                            <img src={alb.cover_url} alt={alb.title} referrerPolicy="no-referrer" className="w-10 h-10 rounded-lg object-cover shrink-0" />
-                            <div className="min-w-0">
-                              <p className="font-semibold text-white truncate">{alb.title}</p>
-                              <p className="text-[11px] text-neutral-400 truncate">{alb.artist} · {alb.year}</p>
-                            </div>
-                          </div>
-                          <button
-                            onClick={() => handleInspectYtCollection('album', alb)}
-                            className="px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold shrink-0 cursor-pointer"
-                          >
-                            Inspect & Import
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Artists */}
-                {ytArtistResults.length > 0 && (
-                  <div className="space-y-2">
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-400">
-                      Artists ({ytArtistResults.length})
-                    </h4>
-                    <div className="space-y-2">
-                      {ytArtistResults.slice(0, 6).map((art) => (
-                        <div key={art.id || art.name} className="p-2.5 rounded-xl bg-white/[0.02] border border-white/[0.06] flex items-center justify-between gap-2 text-xs">
-                          <div className="flex items-center gap-2.5 min-w-0">
-                            <img src={art.avatar_url} alt={art.name} referrerPolicy="no-referrer" className="w-10 h-10 rounded-full object-cover shrink-0" />
-                            <div className="min-w-0">
-                              <p className="font-semibold text-white truncate">{art.name}</p>
-                              <p className="text-[11px] text-neutral-400 truncate">{art.subscribers}</p>
-                            </div>
-                          </div>
-                          <button
-                            onClick={() => handleInspectYtCollection('artist', art)}
-                            className="px-2.5 py-1 rounded-lg bg-blue-500/20 text-blue-300 border border-blue-500/30 font-semibold shrink-0 cursor-pointer"
-                          >
-                            Discography
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Playlists */}
-                {ytPlaylistResults.length > 0 && (
-                  <div className="space-y-2">
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-400">
-                      Playlists ({ytPlaylistResults.length})
-                    </h4>
-                    <div className="space-y-2">
-                      {ytPlaylistResults.slice(0, 6).map((pl) => (
-                        <div key={pl.id || pl.browseId} className="p-2.5 rounded-xl bg-white/[0.02] border border-white/[0.06] flex items-center justify-between gap-2 text-xs">
-                          <div className="flex items-center gap-2.5 min-w-0">
-                            <img src={pl.cover_url} alt={pl.title} referrerPolicy="no-referrer" className="w-10 h-10 rounded-lg object-cover shrink-0" />
-                            <div className="min-w-0">
-                              <p className="font-semibold text-white truncate">{pl.title}</p>
-                              <p className="text-[11px] text-neutral-400 truncate">{pl.curator}</p>
-                            </div>
-                          </div>
-                          <button
-                            onClick={() => handleInspectYtCollection('playlist', pl)}
-                            className="px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-semibold shrink-0 cursor-pointer"
-                          >
-                            Inspect & Sync
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Collection Inspector & Full Collection Importer Modal */}
-          {collectionPreview && (
-            <div className="p-5 rounded-2xl bg-neutral-900 border border-amber-500/40 space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <img
-                    src={collectionPreview.cover_url}
-                    alt={collectionPreview.title}
-                    referrerPolicy="no-referrer"
-                    className="w-14 h-14 rounded-xl object-cover bg-neutral-800"
-                  />
-                  <div>
-                    <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-amber-500/20 text-amber-300">
-                      {collectionPreview.type} Collection Inspector
-                    </span>
-                    <h4 className="text-base font-extrabold text-white mt-0.5">{collectionPreview.title}</h4>
-                    <p className="text-xs text-neutral-400">
-                      {collectionPreview.artist} · {(collectionPreview.tracks || []).length} tracks found
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={handleImportEntireCollection}
-                    disabled={isBulkImporting || isLoadingCollection || (collectionPreview.tracks || []).length === 0}
-                    className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                  >
-                    {isBulkImporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-                    <span>Import Entire {collectionPreview.type} ({(collectionPreview.tracks || []).length} Songs)</span>
-                  </button>
-                  <button
-                    onClick={() => setCollectionPreview(null)}
-                    className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-neutral-400 hover:text-white"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-
-              {isLoadingCollection ? (
-                <div className="py-8 text-center text-xs text-neutral-400 flex items-center justify-center gap-2">
-                  <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
-                  <span>Fetching collection tracklist...</span>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-64 overflow-y-auto pr-1">
-                  {(collectionPreview.tracks || []).map((trk: any, i: number) => (
-                    <div key={trk.videoId || trk.id || i} className="p-2 rounded-lg bg-white/[0.03] border border-white/[0.05] flex items-center justify-between gap-2 text-xs">
-                      <div className="truncate">
-                        <span className="font-mono text-neutral-500 mr-2">{i + 1}.</span>
-                        <span className="font-semibold text-white">{trk.title}</span>
-                      </div>
-                      <button
-                        onClick={() => handleImportYouTubeSong({ ...trk, album: collectionPreview.title, artist: trk.artist || collectionPreview.artist, cover_url: trk.cover_url || collectionPreview.cover_url })}
-                        className="px-2 py-1 rounded bg-white/10 hover:bg-white/20 text-white text-[10px] shrink-0"
-                      >
-                        Import
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* 2. Automated Criteria Import & Scheduled Metadata Synchronization + Authorized Upload */}
+          {/* Direct Admin & Distributor Master Release Upload Form */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Automated Search Criteria & Scheduled Sync */}
-            <div className="p-5 rounded-2xl bg-neutral-900/40 border border-white/[0.08] space-y-4">
+            <form
+              onSubmit={handleCreateDirectAdminRelease}
+              className="p-5 rounded-2xl bg-neutral-900/40 border border-white/[0.08] space-y-4"
+            >
               <div>
                 <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-amber-400" />
-                  <span>Automated Import & Scheduled Metadata Sync ({dbImportSchedules.length})</span>
+                  <Music className="w-4 h-4 text-amber-400" />
+                  <span>Direct Master Release Upload (Admin & Distributor Only)</span>
                 </h3>
                 <p className="text-xs text-neutral-400 mt-0.5">
-                  Configure automated search rules by genre, country, and release year to ingest and sync tracks automatically.
+                  Publish a new track with real audio, music video, synchronized LRC lyrics, and cover artwork directly to Flontmie server storage.
                 </p>
               </div>
 
-              <form onSubmit={handleCreateSchedule} className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
-                <input
-                  type="text"
-                  required
-                  value={schName}
-                  onChange={(e) => setSchName(e.target.value)}
-                  placeholder="Rule Name (e.g. Top Afrobeats 2025)"
-                  className="px-3 py-2 rounded-xl bg-neutral-950 border border-white/10 text-white"
-                />
-                <input
-                  type="text"
-                  required
-                  value={schQuery}
-                  onChange={(e) => setSchQuery(e.target.value)}
-                  placeholder="Search Criteria (e.g. Afrobeats hits)"
-                  className="px-3 py-2 rounded-xl bg-neutral-950 border border-white/10 text-white"
-                />
-                <select
-                  value={schGenre}
-                  onChange={(e) => setSchGenre(e.target.value)}
-                  className="px-3 py-2 rounded-xl bg-neutral-950 border border-white/10 text-white"
-                >
-                  {['Afrobeats', 'Pop', 'Hip-Hop', 'R&B', 'Amapiano', 'Electronic', 'Lo-Fi'].map((g) => (
-                    <option key={g} value={g}>{g}</option>
-                  ))}
-                </select>
-                <select
-                  value={schCountry}
-                  onChange={(e) => setSchCountry(e.target.value)}
-                  className="px-3 py-2 rounded-xl bg-neutral-950 border border-white/10 text-white"
-                >
-                  {['NG', 'US', 'GB', 'ZA', 'GH', 'KE', 'CA'].map((c) => (
-                    <option key={c} value={c}>Country: {c}</option>
-                  ))}
-                </select>
-                <select
-                  value={schFrequency}
-                  onChange={(e) => setSchFrequency(e.target.value)}
-                  className="px-3 py-2 rounded-xl bg-neutral-950 border border-white/10 text-white"
-                >
-                  <option value="hourly">Run Hourly</option>
-                  <option value="daily">Run Daily</option>
-                  <option value="weekly">Run Weekly</option>
-                </select>
-                <button
-                  type="submit"
-                  className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold cursor-pointer"
-                >
-                  + Save Auto-Sync Rule
-                </button>
-              </form>
-
-              <div className="space-y-2 max-h-60 overflow-y-auto">
-                {dbImportSchedules.map((sch) => (
-                  <div key={sch.id} className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.06] flex items-center justify-between gap-3 text-xs">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-white">{sch.name}</span>
-                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${Number(sch.is_active) ? 'bg-emerald-500/20 text-emerald-300' : 'bg-white/10 text-neutral-400'}`}>
-                          {Number(sch.is_active) ? sch.frequency : 'Paused'}
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-neutral-400 truncate">
-                        Query: "{sch.search_query}" · {sch.genre} · {sch.country} · Total synced: {sch.total_imported || 0}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <button
-                        onClick={() => handleRunScheduleNow(sch.id)}
-                        disabled={runningScheduleId === sch.id}
-                        className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold flex items-center gap-1 cursor-pointer"
-                      >
-                        {runningScheduleId === sch.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
-                        <span>Run Now</span>
-                      </button>
-                      <button
-                        onClick={async () => {
-                          await api.toggleImportSchedule(sch.id);
-                          fetchAdminData();
-                        }}
-                        className="px-2 py-1 rounded-lg bg-white/10 text-neutral-300"
-                      >
-                        {Number(sch.is_active) ? 'Pause' : 'Resume'}
-                      </button>
-                      <button
-                        onClick={async () => {
-                          await api.deleteImportSchedule(sch.id);
-                          fetchAdminData();
-                        }}
-                        className="text-red-400 hover:underline px-1.5"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </div>
-                ))}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div>
+                  <label className="block text-neutral-400 mb-1">Track Title *</label>
+                  <input
+                    type="text"
+                    required
+                    value={newTrackTitle}
+                    onChange={(e) => setNewTrackTitle(e.target.value)}
+                    placeholder="e.g. Midnight Horizon"
+                    className="w-full px-3 py-2 rounded-xl bg-neutral-950 border border-white/10 text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-neutral-400 mb-1">Artist Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={newTrackArtist}
+                    onChange={(e) => setNewTrackArtist(e.target.value)}
+                    placeholder="e.g. Burna Boy"
+                    className="w-full px-3 py-2 rounded-xl bg-neutral-950 border border-white/10 text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-neutral-400 mb-1">Album / Release Title</label>
+                  <input
+                    type="text"
+                    value={newTrackAlbum}
+                    onChange={(e) => setNewTrackAlbum(e.target.value)}
+                    placeholder="Single or Album Name"
+                    className="w-full px-3 py-2 rounded-xl bg-neutral-950 border border-white/10 text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-neutral-400 mb-1">Genre</label>
+                  <input
+                    type="text"
+                    value={newTrackGenre}
+                    onChange={(e) => setNewTrackGenre(e.target.value)}
+                    placeholder="Afrobeats, Pop, Hip-Hop..."
+                    className="w-full px-3 py-2 rounded-xl bg-neutral-950 border border-white/10 text-white"
+                  />
+                </div>
               </div>
-            </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div>
+                  <label className="block text-neutral-400 mb-1">Master Audio File (.mp3, .m4a, .wav, .flac)</label>
+                  <input
+                    type="file"
+                    accept=".mp3,.m4a,.wav,.flac,.ogg,audio/*"
+                    onChange={(e) => setNewTrackAudioFile(e.target.files?.[0] || null)}
+                    className="w-full text-[11px] text-neutral-300 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-amber-500/20 file:text-amber-300 file:font-semibold"
+                  />
+                </div>
+                <div>
+                  <label className="block text-neutral-400 mb-1">Music Video File (.mp4, .webm) [Optional]</label>
+                  <input
+                    type="file"
+                    accept=".mp4,.webm,.mov,video/*"
+                    onChange={(e) => setNewTrackVideoFile(e.target.files?.[0] || null)}
+                    className="w-full text-[11px] text-neutral-300 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-blue-500/20 file:text-blue-300 file:font-semibold"
+                  />
+                </div>
+                <div>
+                  <label className="block text-neutral-400 mb-1">Cover Artwork (.jpg, .png, .webp) [Optional]</label>
+                  <input
+                    type="file"
+                    accept=".jpg,.jpeg,.png,.webp,image/*"
+                    onChange={(e) => setNewTrackArtworkFile(e.target.files?.[0] || null)}
+                    className="w-full text-[11px] text-neutral-300 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-emerald-500/20 file:text-emerald-300 file:font-semibold"
+                  />
+                </div>
+                <div>
+                  <label className="block text-neutral-400 mb-1">Timestamped Lyrics File (.lrc, .srt, .txt) [Optional]</label>
+                  <input
+                    type="file"
+                    accept=".lrc,.srt,.vtt,.txt"
+                    onChange={(e) => setNewTrackLyricsFile(e.target.files?.[0] || null)}
+                    className="w-full text-[11px] text-neutral-300 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-purple-500/20 file:text-purple-300 file:font-semibold"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs text-neutral-400 mb-1">Or Paste LRC / Plain Lyrics Directly (Optional)</label>
+                <textarea
+                  rows={3}
+                  value={newTrackLyrics}
+                  onChange={(e) => setNewTrackLyrics(e.target.value)}
+                  placeholder="[00:12.50] First line of synchronized lyrics..."
+                  className="w-full px-3 py-2 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white font-mono"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={isCreatingDirectTrack}
+                className="w-full py-2.5 px-4 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50"
+              >
+                {isCreatingDirectTrack ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Uploading Release to Server...</span>
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-4 h-4" />
+                    <span>Upload & Publish Direct Release</span>
+                  </>
+                )}
+              </button>
+            </form>
 
             {/* Authorized Audio & Artwork File Upload Sync */}
             <div className="p-5 rounded-2xl bg-neutral-900/40 border border-white/[0.08] space-y-4">
@@ -2765,7 +2166,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               { key: 'allow_public_registration', label: 'Allow Public Account Registration' },
               { key: 'require_email_verification', label: 'Require Email Verification for New Accounts' },
               { key: 'allow_artist_claims', label: 'Allow Artist Profile Verification Claims' },
-              { key: 'youtube_music_discovery_enabled', label: 'Enable Real-Time Music Discovery & Playback' },
+              { key: 'offline_downloads_enabled', label: 'Enable Native & Offline Track Downloads for Permitted Releases' },
               { key: 'social_jam_sessions_enabled', label: 'Enable Live Social Jam Listening Rooms' },
               { key: 'direct_distributor_ingestion', label: 'Allow Partner Distributor Direct Ingestion' },
             ].map((toggle) => (

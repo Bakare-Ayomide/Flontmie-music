@@ -175,36 +175,66 @@ if ($type === 'artwork') {
 
 // --- 2. SERVE VIDEO STREAM ---
 if ($type === 'video') {
-    $stmt = $pdo->prepare("SELECT id, local_video_path, local_audio_path FROM tracks WHERE (id = ? OR video_id = ?) AND is_deleted = 0 LIMIT 1");
-    $stmt->execute([$trackId, $trackId]);
+    $cleanVid = preg_replace('/^(trk_yt_|yt_)/', '', $trackId);
+    $stmt = $pdo->prepare("SELECT id, local_video_path, local_audio_path FROM tracks WHERE (id = ? OR video_id = ? OR video_id = ?) AND is_deleted = 0 LIMIT 1");
+    $stmt->execute([$trackId, $trackId, $cleanVid]);
     $track = $stmt->fetch();
 
     if ($track) {
-        $vidPath = $track['local_video_path'] ?: $track['local_audio_path'];
+        $videoExts = ['mp4', 'webm', 'm4v', 'mov', 'mkv'];
+        $vidPath = null;
+        if (!empty($track['local_video_path'])) {
+            $vidPath = $track['local_video_path'];
+        } elseif (!empty($track['local_audio_path'])) {
+            $aExt = strtolower(pathinfo($track['local_audio_path'], PATHINFO_EXTENSION));
+            if (in_array($aExt, $videoExts, true)) {
+                $vidPath = $track['local_audio_path'];
+            }
+        }
+
+        // Also check media_scan_files for a matched video file
+        if (empty($vidPath)) {
+            try {
+                $scanVidStmt = $pdo->prepare("SELECT file_path FROM media_scan_files WHERE matched_track_id = ? AND is_video = 1 AND match_status = 'matched' LIMIT 1");
+                $scanVidStmt->execute([$track['id']]);
+                $scanVidRow = $scanVidStmt->fetch();
+                if ($scanVidRow && !empty($scanVidRow['file_path'])) {
+                    $vidPath = $scanVidRow['file_path'];
+                    $pdo->prepare("UPDATE tracks SET local_video_path = ? WHERE id = ?")->execute([$vidPath, $track['id']]);
+                }
+            } catch (Exception $e) {}
+        }
+
         if (!empty($vidPath)) {
             $projectRoot = realpath(__DIR__ . '/../..') ?: dirname(__DIR__, 2);
             $rel = ltrim($vidPath, '/');
+            $relStripped = preg_replace('#^phpbackend/storage/#', '', $rel);
             $candidates = [
                 STORAGE_ROOT . '/' . $rel,
+                STORAGE_ROOT . '/' . $relStripped,
                 $projectRoot . '/' . $rel,
                 dirname(__DIR__) . '/' . $rel
             ];
             foreach ($candidates as $cand) {
-                if (is_file($cand) && is_readable($cand)) {
+                if (is_file($cand) && is_readable($cand) && filesize($cand) > 4096) {
                     $ext = strtolower(pathinfo($cand, PATHINFO_EXTENSION));
-                    serveBinaryWithRange($cand, resolveMimeType($ext), basename($cand));
+                    if (in_array($ext, $videoExts, true)) {
+                        serveBinaryWithRange($cand, resolveMimeType($ext), basename($cand));
+                    }
                 }
             }
         }
     }
     http_response_code(404);
+    header('Content-Type: application/json');
+    echo json_encode(['status' => 'error', 'message' => 'No video file available for this track']);
     exit;
 }
 
 // --- 3. SERVE AUDIO STREAM ---
 $cleanVid = preg_replace('/^(trk_yt_|yt_)/', '', $trackId);
 $stmt = $pdo->prepare("
-    SELECT id, video_id, title, artist_name, genre, country, cover_art_url, local_audio_path, audio_format, status 
+    SELECT id, video_id, title, artist_name, genre, country, cover_art_url, local_audio_path, local_video_path, audio_format, status 
     FROM tracks 
     WHERE (id = ? OR video_id = ? OR video_id = ?) AND is_deleted = 0 
     LIMIT 1
@@ -225,34 +255,53 @@ if (!isset($_SERVER['HTTP_RANGE']) || strpos($_SERVER['HTTP_RANGE'], 'bytes=0-')
     } catch (Exception $e) {}
 }
 
-if (!empty($track['local_audio_path'])) {
+$audioPathsToTry = array_filter([
+    $track['local_audio_path'] ?? null,
+    $track['local_video_path'] ?? null
+]);
+
+foreach ($audioPathsToTry as $rawRelPath) {
     $projectRoot = realpath(__DIR__ . '/../..') ?: dirname(__DIR__, 2);
-    $rel = ltrim($track['local_audio_path'], '/');
+    $rel = ltrim($rawRelPath, '/');
+    $relStripped = preg_replace('#^phpbackend/storage/#', '', $rel);
     $candidates = [
         STORAGE_ROOT . '/' . $rel,
+        STORAGE_ROOT . '/' . $relStripped,
         $projectRoot . '/' . $rel,
         dirname(__DIR__) . '/' . $rel
     ];
     foreach ($candidates as $fullAudioPath) {
-        if (is_file($fullAudioPath) && filesize($fullAudioPath) > 1024) {
+        if (is_file($fullAudioPath)) {
+            $fsize = (int)filesize($fullAudioPath);
             $ext = strtolower(pathinfo($fullAudioPath, PATHINFO_EXTENSION));
-            serveBinaryWithRange($fullAudioPath, resolveMimeType($ext), basename($fullAudioPath));
+            // Never serve legacy 705644-byte synthesized harmonic wav
+            if ($ext === 'wav' && $fsize === 705644) {
+                continue;
+            }
+            if ($fsize > 1024) {
+                serveBinaryWithRange($fullAudioPath, resolveMimeType($ext), basename($fullAudioPath));
+            }
         }
     }
 }
 
 try {
-    $scanMatchStmt = $pdo->prepare("SELECT file_path FROM media_scan_files WHERE matched_track_id = ? AND match_status = 'matched' LIMIT 1");
+    $scanMatchStmt = $pdo->prepare("SELECT file_path FROM media_scan_files WHERE matched_track_id = ? AND match_status = 'matched' ORDER BY is_video ASC LIMIT 1");
     $scanMatchStmt->execute([$track['id']]);
     $scanRow = $scanMatchStmt->fetch();
     if ($scanRow && !empty($scanRow['file_path'])) {
         $projectRoot = realpath(__DIR__ . '/../..') ?: dirname(__DIR__, 2);
         $rel = ltrim($scanRow['file_path'], '/');
-        foreach ([$projectRoot . '/' . $rel, STORAGE_ROOT . '/' . $rel, dirname(__DIR__) . '/' . $rel] as $candPath) {
-            if (is_file($candPath) && filesize($candPath) > 1024) {
+        $relStripped = preg_replace('#^phpbackend/storage/#', '', $rel);
+        foreach ([STORAGE_ROOT . '/' . $rel, STORAGE_ROOT . '/' . $relStripped, $projectRoot . '/' . $rel, dirname(__DIR__) . '/' . $rel] as $candPath) {
+            if (is_file($candPath)) {
+                $fsize = (int)filesize($candPath);
                 $ext = strtolower(pathinfo($candPath, PATHINFO_EXTENSION));
-                $pdo->prepare("UPDATE tracks SET local_audio_path = ?, audio_format = ? WHERE id = ?")->execute([$rel, $ext, $track['id']]);
-                serveBinaryWithRange($candPath, resolveMimeType($ext), basename($candPath));
+                if ($ext === 'wav' && $fsize === 705644) continue;
+                if ($fsize > 1024) {
+                    $pdo->prepare("UPDATE tracks SET local_audio_path = ?, audio_format = ? WHERE id = ?")->execute([$rel, $ext, $track['id']]);
+                    serveBinaryWithRange($candPath, resolveMimeType($ext), basename($candPath));
+                }
             }
         }
     }

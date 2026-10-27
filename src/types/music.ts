@@ -6,8 +6,11 @@ export type MusicGenre = 'afrobeat' | 'afrobeats' | 'pop' | 'rap' | 'hip-hop' | 
 
 export type TimeOfDay = 'dawn' | 'morning' | 'noon' | 'afternoon' | 'dusk' | 'evening' | 'night' | 'midnight';
 
+export type PlayerTabMode = 'audio' | 'video' | 'lyrics';
+
 export interface LyricLine {
-  time: number; // in seconds
+  time: number | null; // in seconds (null for untimed lyrics)
+  endTime?: number;
   text: string;
 }
 
@@ -22,6 +25,9 @@ export interface Track {
   videoId?: string;
   audioKey?: string;
   audioUrl?: string;
+  videoUrl?: string;
+  hasLocalAudio?: boolean;
+  hasLocalVideo?: boolean;
   genre: MusicGenre;
   bpm: number;
   moods: MoodCategory[];
@@ -30,8 +36,11 @@ export interface Track {
   ytPlays?: string | number | null;
   flontmiePlays?: number;
   likes: number;
+  dislikes?: number;
   isExplicit?: boolean;
   lyrics?: LyricLine[];
+  rawLyrics?: string;
+  lyricsSynced?: boolean;
   releaseDate: string;
   isrc: string;
   upc: string;
@@ -53,6 +62,7 @@ export interface Track {
   algorithmReason?: string;
   status?: 'active' | 'review' | 'flagged';
   featuredOnHome?: boolean;
+  source?: string;
 }
 
 export interface Playlist {

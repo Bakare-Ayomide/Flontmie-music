@@ -11,7 +11,8 @@ import {
   DistributorAccessGrant,
   AdminRolePermission,
   FeaturedAccount,
-  JamParticipant 
+  JamParticipant,
+  PlayerTabMode
 } from './types/music';
 import { 
   INITIAL_TRACKS,
@@ -31,11 +32,9 @@ import { resolveArtworkUrl, handleImageError } from './utils/artwork';
 import { formatCompactNumber } from './utils/formatters';
 import { Navbar } from './components/layout/Navbar';
 import { Sidebar } from './components/layout/Sidebar';
-import { YouTubePlayerEmbed } from './components/player/YouTubePlayerEmbed';
 import { MobileDock } from './components/layout/MobileDock';
 import { BottomPlayer } from './components/player/BottomPlayer';
 import { QueueDrawer } from './components/player/QueueDrawer';
-import { LyricsDrawer } from './components/player/LyricsDrawer';
 import { HomeFeed } from './components/listener/HomeFeed';
 import { PlaylistView } from './components/listener/PlaylistView';
 import { ShareModal } from './components/social/ShareModal';
@@ -52,7 +51,8 @@ import { PublicArtistPage } from './components/artist/PublicArtistPage';
 import { AuthModal, AuthUser } from './components/auth/AuthModal';
 import { ProfilePage } from './components/profile/ProfilePage';
 import { YouTubeMusicDiscovery } from './components/discovery/YouTubeMusicDiscovery';
-import { Heart, Compass, Sparkles, Flame, Disc3, ArrowLeft, Music, Layers, Play, Check } from 'lucide-react';
+import { nativePlatform } from './services/nativePlatform';
+import { Heart, Compass, Sparkles, Flame, Disc3, ArrowLeft, Music, Layers, Play, Check, WifiOff, Download } from 'lucide-react';
 import { ErrorBoundary } from './components/common/ErrorBoundary';
 
 export default function App() {
@@ -79,6 +79,7 @@ export default function App() {
 
   // Desktop sidebar collapse state
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
+  const [isOnline, setIsOnline] = useState<boolean>(nativePlatform.isOnline());
 
   // Music Catalog & Hub State - Loaded from Flontmie PHP/MySQL Backend
   const [tracks, setTracks] = useState<Track[]>(INITIAL_TRACKS);
@@ -86,6 +87,8 @@ export default function App() {
   const [playlists, setPlaylists] = useState<Playlist[]>(INITIAL_PLAYLISTS);
   const [artistProfiles, setArtistProfiles] = useState<Record<string, ArtistProfile>>(ARTIST_PROFILES);
   const [likedTrackIds, setLikedTrackIds] = useState<string[]>([]);
+  const [dislikedTrackIds, setDislikedTrackIds] = useState<string[]>([]);
+  const [followedArtistIds, setFollowedArtistIds] = useState<string[]>([]);
   const [labelArtists, setLabelArtists] = useState<LabelArtist[]>(LABEL_ARTISTS);
   const [upcomingReleases, setUpcomingReleases] = useState<ReleaseScheduleItem[]>(UPCOMING_RELEASES);
   const [featuredAccounts, setFeaturedAccounts] = useState<FeaturedAccount[]>(FEATURED_ACCOUNTS);
@@ -99,15 +102,15 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [duration, setDuration] = useState<number>(INITIAL_TRACKS[0]?.duration || 153);
   const [volume, setVolume] = useState<number>(0.85);
+  const [isMuted, setIsMuted] = useState<boolean>(false);
   const [isShuffle, setIsShuffle] = useState<boolean>(false);
   const [repeatMode, setRepeatMode] = useState<'off' | 'all' | 'one'>('off');
-  const [isVideoMode, setIsVideoMode] = useState<boolean>(false);
+  const [playerTabMode, setPlayerTabMode] = useState<PlayerTabMode>('audio');
   const [queue, setQueue] = useState<Track[]>(INITIAL_TRACKS.slice(1));
   const [isFullPlayerOpen, setIsFullPlayerOpen] = useState<boolean>(false);
 
   // Drawer & Modal States
   const [isQueueOpen, setIsQueueOpen] = useState<boolean>(false);
-  const [isLyricsOpen, setIsLyricsOpen] = useState<boolean>(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState<boolean>(false);
   const [isJamModalOpen, setIsJamModalOpen] = useState<boolean>(false);
   const [isCreatePlaylistOpen, setIsCreatePlaylistOpen] = useState<boolean>(false);
@@ -273,9 +276,34 @@ export default function App() {
     api.getTracks().then((backendTracks) => {
       if (backendTracks && backendTracks.length > 0) {
         setTracks(backendTracks);
-        setCurrentTrack((curr) => curr || backendTracks[0]);
-        setDuration((dur) => (dur > 0 ? dur : (backendTracks[0]?.duration || 180)));
-        setQueue((q) => (q.length > 0 ? q : backendTracks.slice(1)));
+        const preferred =
+          backendTracks.find((t) => t.hasLocalAudio && t.hasLocalVideo) ||
+          backendTracks.find((t) => t.hasLocalAudio) ||
+          backendTracks[0];
+
+        setCurrentTrack((curr) => {
+          if (curr) {
+            const matched = backendTracks.find(
+              (t) => t.id === curr.id || (curr.videoId && t.videoId === curr.videoId)
+            );
+            if (matched) return matched;
+          }
+          return preferred;
+        });
+        setDuration(preferred?.duration || 180);
+        setQueue(backendTracks.filter((t) => t.id !== preferred?.id));
+
+        // Preload media URLs into unified playback controller without auto-playing
+        if (preferred) {
+          audioEngine.loadTrackMedia({
+            trackId: preferred.id,
+            audioUrl: preferred.audioUrl || null,
+            videoUrl: preferred.videoUrl || null,
+            mode: audioEngine.getMode(),
+            autoPlay: false,
+            startTime: 0,
+          });
+        }
       }
     }).catch(() => {});
 
@@ -286,12 +314,16 @@ export default function App() {
     }).catch(() => {});
 
     api.getArtists().then((backendArtists) => {
-      if (backendArtists && backendArtists.length > 0) {
-        const artistMap: Record<string, ArtistProfile> = {};
-        backendArtists.forEach((a) => {
-          artistMap[a.id] = a;
-        });
-        setArtistProfiles((prev) => ({ ...prev, ...artistMap }));
+      if (backendArtists) {
+        if (Array.isArray(backendArtists)) {
+          const artistMap: Record<string, ArtistProfile> = {};
+          backendArtists.forEach((a: ArtistProfile) => {
+            artistMap[a.id] = a;
+          });
+          setArtistProfiles((prev) => ({ ...prev, ...artistMap }));
+        } else if (typeof backendArtists === 'object') {
+          setArtistProfiles((prev) => ({ ...prev, ...backendArtists }));
+        }
       }
     }).catch(() => {});
 
@@ -325,7 +357,78 @@ export default function App() {
       });
   }, [refreshCatalogFromDatabase]);
 
-  // Configure Audio Engine Listeners
+  // Initialize Capacitor Native Platform, Network Listeners & Saved Tokens
+  useEffect(() => {
+    nativePlatform.initialize().catch(() => {});
+    const unsubNet = nativePlatform.onNetworkChange((connected) => {
+      setIsOnline(connected);
+      if (connected) {
+        refreshCatalogFromDatabase();
+      }
+    });
+    return () => {
+      unsubNet();
+    };
+  }, [refreshCatalogFromDatabase]);
+
+  // Register Android Hardware Back Button Navigation
+  useEffect(() => {
+    const unsubBack = nativePlatform.registerBackButtonHandler(() => {
+      if (isFullPlayerOpen) {
+        setIsFullPlayerOpen(false);
+        return true;
+      }
+      if (isAuthModalOpen) {
+        setIsAuthModalOpen(false);
+        return true;
+      }
+      if (isShareModalOpen) {
+        setIsShareModalOpen(false);
+        return true;
+      }
+      if (isJamModalOpen) {
+        setIsJamModalOpen(false);
+        return true;
+      }
+      if (isQueueOpen) {
+        setIsQueueOpen(false);
+        return true;
+      }
+      if (selectedArtistId) {
+        setSelectedArtistId(null);
+        return true;
+      }
+      if (selectedPlaylistId) {
+        setSelectedPlaylistId(null);
+        return true;
+      }
+      if (isAdminRoute) {
+        setIsAdminRoute(false);
+        setCurrentTab('home');
+        return true;
+      }
+      if (currentTab !== 'home') {
+        setCurrentTab('home');
+        return true;
+      }
+      return false;
+    });
+    return () => {
+      unsubBack();
+    };
+  }, [
+    isFullPlayerOpen,
+    isAuthModalOpen,
+    isShareModalOpen,
+    isJamModalOpen,
+    isQueueOpen,
+    selectedArtistId,
+    selectedPlaylistId,
+    isAdminRoute,
+    currentTab,
+  ]);
+
+  // Configure Audio Engine Listeners & Lock-Screen Transport Controls
   useEffect(() => {
     audioEngine.onTimeUpdate((time, dur) => {
       setCurrentTime(time);
@@ -335,14 +438,34 @@ export default function App() {
     audioEngine.onEnded(() => {
       handleNextTrack();
     });
+
+    audioEngine.setTransportHandlers(
+      () => handlePrevTrack(),
+      () => handleNextTrack()
+    );
   }, [queue, currentTrack, repeatMode]);
+
+  const handleSelectPlayerTab = useCallback((tab: PlayerTabMode, expandPlayer: boolean = false) => {
+    setPlayerTabMode(tab);
+    audioEngine.setMode(tab);
+    if (expandPlayer) {
+      setIsFullPlayerOpen(true);
+    }
+  }, []);
 
   const handlePlayTrack = (track: Track, startAt: number = 0) => {
     setCurrentTrack(track);
     setDuration(track.duration);
     setCurrentTime(startAt);
     setIsPlaying(true);
-    audioEngine.playTrack(track.genre, track.bpm, track.duration, startAt, track.audioUrl, track.id);
+    audioEngine.loadTrackMedia({
+      trackId: track.id,
+      audioUrl: track.audioUrl || null,
+      videoUrl: track.videoUrl || null,
+      mode: playerTabMode,
+      autoPlay: true,
+      startTime: startAt,
+    });
     // Report stream play to backend MySQL
     api.registerStream(track.id);
   };
@@ -357,14 +480,28 @@ export default function App() {
       audioEngine.pause();
       setIsPlaying(false);
     } else {
-      audioEngine.resume();
+      audioEngine.loadTrackMedia({
+        trackId: currentTrack.id,
+        audioUrl: currentTrack.audioUrl || null,
+        videoUrl: currentTrack.videoUrl || null,
+        mode: playerTabMode,
+        autoPlay: true,
+        startTime: currentTime,
+      });
       setIsPlaying(true);
     }
   };
 
   const handleNextTrack = useCallback(() => {
     if (repeatMode === 'one' && currentTrack) {
-      audioEngine.playTrack(currentTrack.genre, currentTrack.bpm, currentTrack.duration, 0, currentTrack.audioUrl, currentTrack.id);
+      audioEngine.loadTrackMedia({
+        trackId: currentTrack.id,
+        audioUrl: currentTrack.audioUrl || null,
+        videoUrl: currentTrack.videoUrl || null,
+        mode: playerTabMode,
+        autoPlay: true,
+        startTime: 0,
+      });
       setCurrentTime(0);
       setIsPlaying(true);
       return;
@@ -385,7 +522,7 @@ export default function App() {
       audioEngine.pause();
       setIsPlaying(false);
     }
-  }, [queue, currentTrack, repeatMode, tracks]);
+  }, [queue, currentTrack, repeatMode, tracks, playerTabMode]);
 
   const handlePrevTrack = () => {
     if (currentTime > 4) {
@@ -412,7 +549,14 @@ export default function App() {
 
   const handleVolumeChange = (vol: number) => {
     setVolume(vol);
+    setIsMuted(vol === 0);
     audioEngine.setVolume(vol);
+  };
+
+  const handleToggleMute = () => {
+    const nextMuted = !isMuted;
+    setIsMuted(nextMuted);
+    audioEngine.setMuted(nextMuted);
   };
 
   const handleToggleShuffle = () => {
@@ -440,6 +584,20 @@ export default function App() {
 
     setLikedTrackIds((prev) =>
       prev.includes(targetId) ? prev.filter((id) => id !== targetId) : [...prev, targetId]
+    );
+  };
+
+  const handleDislikeTrack = (trackId: string) => {
+    api.dislikeTrack(trackId).catch(() => {});
+    setDislikedTrackIds((prev) =>
+      prev.includes(trackId) ? prev.filter((id) => id !== trackId) : [...prev, trackId]
+    );
+  };
+
+  const handleToggleFollowArtist = (artistId: string) => {
+    api.toggleFollowArtist(artistId).catch(() => {});
+    setFollowedArtistIds((prev) =>
+      prev.includes(artistId) ? prev.filter((id) => id !== artistId) : [...prev, artistId]
     );
   };
 
@@ -577,7 +735,7 @@ export default function App() {
       artist: newSong.artist || 'Unknown Artist',
       artistId: newSong.artistId || 'artist-unknown',
       album: newSong.album || 'Single',
-      coverUrl: newSong.coverUrl || IMAGES.partymix,
+      coverUrl: newSong.coverUrl || IMAGES.partyMix,
       duration: newSong.duration || 210,
       genre: (newSong.genre as any) || 'afrobeat',
       bpm: newSong.bpm || 115,
@@ -708,6 +866,25 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#030303] text-white flex flex-col font-sans selection:bg-red-600/30 overflow-x-hidden">
+      {/* Offline Mode Status Banner */}
+      {!isOnline && (
+        <div className="bg-amber-500/20 border-b border-amber-500/40 px-4 py-2 text-xs text-amber-200 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <WifiOff className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+            <span>
+              <strong>Offline Mode Active:</strong> Playing downloaded tracks from device storage.
+            </span>
+          </div>
+          <button
+            onClick={() => navigateTab('explore')}
+            className="px-2.5 py-1 rounded-lg bg-amber-500 text-black font-bold text-[11px] flex items-center gap-1 shrink-0 cursor-pointer"
+          >
+            <Download className="w-3 h-3" />
+            <span>Offline Library</span>
+          </button>
+        </div>
+      )}
+
       {/* Top Bar Navigation */}
       <Navbar
         currentPersona={isAdminRoute ? 'admin' : (currentPersona === 'admin' ? 'listener' : currentPersona)}
@@ -1223,7 +1400,6 @@ export default function App() {
                   playlists={playlists}
                   currentTrack={currentTrack}
                   isPlaying={isPlaying}
-                  isVideoMode={isVideoMode}
                   selectedMood={selectedMood}
                   searchQuery={searchQuery}
                   likedTrackIds={likedTrackIds}
@@ -1246,14 +1422,16 @@ export default function App() {
           {currentPersona === 'artist' && (
             currentUser && (currentUser.role === 'artist' || currentUser.role === 'admin') ? (
               <ArtistDashboard
-                currentUser={currentUser}
-                artistProfile={
+                artist={
                   Object.values(artistProfiles).find(
                     (a) => a.name.toLowerCase() === (currentUser.display_name || '').toLowerCase()
                   ) || Object.values(artistProfiles)[0]
                 }
-                tracks={tracks}
-                onAddNewTrack={handleAddNewArtistTrack}
+                artistTracks={tracks}
+                onUploadTrack={(newTrack) => handleAddNewArtistTrack(newTrack)}
+                onUpdateSplits={() => {}}
+                onViewPublicProfile={() => setCurrentPersona('listener')}
+                onPlayTrack={handlePlayTrack}
               />
             ) : (
               <div className="max-w-md mx-auto my-16 p-8 rounded-3xl bg-neutral-900/70 border border-red-500/30 text-center space-y-4">
@@ -1268,10 +1446,8 @@ export default function App() {
           {currentPersona === 'label' && (
             currentUser && (currentUser.role === 'label' || currentUser.role === 'admin') ? (
               <LabelDashboard
-                currentUser={currentUser}
-                labelArtists={labelArtists}
+                roster={labelArtists}
                 upcomingReleases={upcomingReleases}
-                onRefreshCatalog={refreshCatalogFromDatabase}
               />
             ) : (
               <div className="max-w-md mx-auto my-16 p-8 rounded-3xl bg-neutral-900/70 border border-blue-500/30 text-center space-y-4">
@@ -1286,18 +1462,18 @@ export default function App() {
           {currentPersona === 'distributor' && (
             currentUser && (currentUser.role === 'distributor' || currentUser.role === 'admin') ? (
               <DistributorDashboard
-                currentUser={currentUser}
                 ingestions={distributorIngestions}
                 accessGrants={distributorAccessGrants}
-                onUploadSongToFlontmie={handleUploadSongToFlontmie}
-                onModifySongOnFlontmie={handleModifySongOnFlontmie}
-                onDeleteSongFromFlontmie={handleDeleteSong}
-                tracks={tracks}
-                artistProfiles={artistProfiles}
-                onCreateArtistProfile={handleCreateArtistProfile}
-                onUpdateArtistProfile={handleUpdateArtistProfile}
-                onViewArtistPublicPage={handleViewArtist}
-                onRefreshCatalog={refreshCatalogFromDatabase}
+                onIngestNewTrack={(item, newTrack) => {
+                  setDistributorIngestions((prev) => [item, ...prev]);
+                  if (newTrack) {
+                    handleUploadSongToFlontmie(newTrack);
+                  }
+                  refreshCatalogFromDatabase();
+                }}
+                onToggleGrantAccess={() => {}}
+                onPlayTrack={handlePlayTrack}
+                allTracks={tracks}
               />
             ) : (
               <div className="max-w-md mx-auto my-16 p-8 rounded-3xl bg-neutral-900/70 border border-purple-500/30 text-center space-y-4">
@@ -1339,34 +1515,28 @@ export default function App() {
         currentTime={currentTime}
         duration={duration}
         volume={volume}
+        isMuted={isMuted}
         isShuffle={isShuffle}
         repeatMode={repeatMode}
-        isVideoMode={isVideoMode}
         isLiked={Boolean(currentTrack && likedTrackIds.includes(currentTrack.id))}
+        isDisliked={Boolean(currentTrack && dislikedTrackIds.includes(currentTrack.id))}
+        activeTab={playerTabMode}
         isQueueOpen={isQueueOpen}
-        isLyricsOpen={isLyricsOpen}
-        queueCount={queue.length}
-        onTogglePlay={handleTogglePlay}
+        onSelectTab={handleSelectPlayerTab}
+        onPlayPause={handleTogglePlay}
         onNext={handleNextTrack}
         onPrev={handlePrevTrack}
         onSeek={handleSeek}
         onVolumeChange={handleVolumeChange}
+        onToggleMute={handleToggleMute}
         onToggleShuffle={handleToggleShuffle}
         onToggleRepeat={handleToggleRepeat}
-        onToggleVideoMode={() => setIsVideoMode(!isVideoMode)}
-        onToggleQueue={() => {
-          setIsQueueOpen(!isQueueOpen);
-          setIsLyricsOpen(false);
-        }}
-        onToggleLyrics={() => {
-          setIsLyricsOpen(!isLyricsOpen);
-          setIsQueueOpen(false);
-        }}
-        onToggleLike={() => handleToggleLike()}
-        onOpenAddToPlaylist={() => setIsAddToPlaylistOpen(true)}
-        onShareTrack={() => setIsShareModalOpen(true)}
+        onToggleLike={handleToggleLike}
+        onDislike={handleDislikeTrack}
+        onToggleQueue={() => setIsQueueOpen(!isQueueOpen)}
+        onOpenShare={() => setIsShareModalOpen(true)}
+        onSelectArtist={handleViewArtist}
         onOpenFullPlayer={() => setIsFullPlayerOpen(true)}
-        onNavigateToArtist={handleViewArtist}
       />
 
       {/* DEDICATED FULL PLAYBACK SCREEN */}
@@ -1374,36 +1544,39 @@ export default function App() {
         isOpen={isFullPlayerOpen}
         onClose={() => setIsFullPlayerOpen(false)}
         currentTrack={currentTrack}
+        artistProfile={currentTrack ? artistProfiles[currentTrack.artistId] : undefined}
+        queue={queue}
+        allTracks={tracks}
         isPlaying={isPlaying}
         currentTime={currentTime}
         duration={duration}
         volume={volume}
+        isMuted={isMuted}
         isShuffle={isShuffle}
         repeatMode={repeatMode}
-        isVideoMode={isVideoMode}
         isLiked={Boolean(currentTrack && likedTrackIds.includes(currentTrack.id))}
-        queue={queue}
-        onTogglePlay={handleTogglePlay}
+        isDisliked={Boolean(currentTrack && dislikedTrackIds.includes(currentTrack.id))}
+        isFollowingArtist={Boolean(currentTrack && followedArtistIds.includes(currentTrack.artistId))}
+        activeTab={playerTabMode}
+        onSelectTab={(tab) => handleSelectPlayerTab(tab, false)}
+        isQueueOpen={isQueueOpen}
+        onPlayPause={handleTogglePlay}
         onNext={handleNextTrack}
         onPrev={handlePrevTrack}
         onSeek={handleSeek}
         onVolumeChange={handleVolumeChange}
+        onToggleMute={handleToggleMute}
         onToggleShuffle={handleToggleShuffle}
         onToggleRepeat={handleToggleRepeat}
-        onToggleVideoMode={() => setIsVideoMode(!isVideoMode)}
-        onToggleLike={() => handleToggleLike()}
-        onOpenAddToPlaylist={() => setIsAddToPlaylistOpen(true)}
-        onShareTrack={() => setIsShareModalOpen(true)}
-        onPlayQueueTrack={handlePlayTrack}
-        onRemoveFromQueue={handleRemoveFromQueue}
-        onClearQueue={handleClearQueue}
-        onMoveQueueItem={handleMoveQueueItem}
-        onNavigateToArtist={(artistId) => {
+        onToggleLike={handleToggleLike}
+        onDislike={handleDislikeTrack}
+        onToggleFollowArtist={handleToggleFollowArtist}
+        onToggleQueue={() => setIsQueueOpen(!isQueueOpen)}
+        onOpenShare={() => setIsShareModalOpen(true)}
+        onPlayTrack={handlePlayTrack}
+        onSelectArtist={(artistId) => {
           setIsFullPlayerOpen(false);
           handleViewArtist(artistId);
-        }}
-        onNavigateToAlbum={(_albumTitle) => {
-          setIsFullPlayerOpen(false);
         }}
       />
 
@@ -1417,15 +1590,6 @@ export default function App() {
         onRemoveFromQueue={handleRemoveFromQueue}
         onClearQueue={handleClearQueue}
         onMoveQueueItem={handleMoveQueueItem}
-      />
-
-      {/* Synchronized Live Lyrics Drawer */}
-      <LyricsDrawer
-        isOpen={isLyricsOpen}
-        onClose={() => setIsLyricsOpen(false)}
-        track={currentTrack}
-        currentTime={currentTime}
-        onSeek={handleSeek}
       />
 
       {/* Social Sharing Modal */}
@@ -1489,20 +1653,6 @@ export default function App() {
           }
           setIsAuthModalOpen(false);
         }}
-      />
-
-      {/* Fallback Embed Engine (only active if track has no local audioUrl) */}
-      <YouTubePlayerEmbed
-        currentTrack={currentTrack && !currentTrack.audioUrl ? currentTrack : null}
-        isPlaying={isPlaying}
-        volume={volume}
-        isVideoMode={isVideoMode}
-        onTimeUpdate={(cur, dur) => {
-          setCurrentTime(cur);
-          if (dur > 0) setDuration(dur);
-        }}
-        onEnded={handleNextTrack}
-        onPlayStateChange={(playing) => setIsPlaying(playing)}
       />
     </div>
   );

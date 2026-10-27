@@ -31,7 +31,6 @@ import {
   Music
 } from 'lucide-react';
 import { api } from '../../services/api';
-import { VideoModeCanvas } from '../player/VideoModeCanvas';
 import { CarouselShelf } from '../common/CarouselShelf';
 import { resolveArtworkUrl, handleImageError } from '../../utils/artwork';
 import { formatCompactNumber } from '../../utils/formatters';
@@ -42,7 +41,7 @@ interface HomeFeedProps {
   playlists: Playlist[];
   currentTrack: Track | null;
   isPlaying: boolean;
-  isVideoMode: boolean;
+  isVideoMode?: boolean;
   selectedMood: MoodCategory;
   searchQuery: string;
   likedTrackIds: string[];
@@ -151,64 +150,7 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
 
   const artistList = Object.values(artistProfiles);
 
-  // Live Search Results State (enables public music search directly on Home feed)
-  const [liveSearchResults, setLiveSearchResults] = useState<{
-    songs: any[];
-    artists: any[];
-    albums: any[];
-  }>({ songs: [], artists: [], albums: [] });
-  const [isLiveSearching, setIsLiveSearching] = useState<boolean>(false);
-  const [liveCharts, setLiveCharts] = useState<any[]>([]);
-
-  useEffect(() => {
-    let isMounted = true;
-    api.getYouTubeMusicCharts()
-      .then((res) => {
-        if (isMounted && res && res.charts && res.charts.length > 0) {
-          setLiveCharts(res.charts);
-        }
-      })
-      .catch(() => {});
-
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    const q = searchQuery.trim();
-    if (q.length < 2) {
-      setLiveSearchResults({ songs: [], artists: [], albums: [] });
-      setIsLiveSearching(false);
-      return;
-    }
-
-    let isMounted = true;
-    setIsLiveSearching(true);
-    const timer = setTimeout(() => {
-      api.searchYouTubeMusic(q, 'all')
-        .then((res) => {
-          if (isMounted && res && res.results) {
-            setLiveSearchResults({
-              songs: res.results.songs || [],
-              artists: res.results.artists || [],
-              albums: res.results.albums || [],
-            });
-          }
-        })
-        .catch(() => {})
-        .finally(() => {
-          if (isMounted) setIsLiveSearching(false);
-        });
-    }, 200);
-
-    return () => {
-      isMounted = false;
-      clearTimeout(timer);
-    };
-  }, [searchQuery]);
-
-  // Combine local catalog matches + live search results for unified app-wide search
+  // Catalog Search Results (Strictly Admin, Distributor, Label, and Artist Uploaded Records)
   const qLower = searchQuery.trim().toLowerCase();
   const localMatchingArtists = qLower.length >= 2
     ? artistList.filter((a) => (a.name || '').toLowerCase().includes(qLower) || (a.primaryGenre || '').toLowerCase().includes(qLower))
@@ -220,139 +162,39 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
     ? playlists.filter((pl) => (pl.title || '').toLowerCase().includes(qLower) || (pl.curator || '').toLowerCase().includes(qLower))
     : [];
 
-  const mergedSearchSongs = React.useMemo(() => {
-    if (qLower.length < 2) return [];
-    const seen = new Set<string>();
-    const combined: any[] = [];
-    for (const t of filteredCatalogTracks) {
-      const key = `${(t.title || '').toLowerCase()}__${(t.artist || '').toLowerCase()}`;
-      seen.add(key);
-      combined.push({
-        ...t,
-        cover_url: t.coverUrl,
-        source: 'catalog',
-      });
-    }
-    for (const s of liveSearchResults.songs) {
-      const key = `${(s.title || '').toLowerCase()}__${(s.artist || '').toLowerCase()}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        combined.push(s);
-      }
-    }
-    return combined;
-  }, [qLower, filteredCatalogTracks, liveSearchResults.songs]);
-
-  const mergedSearchArtists = React.useMemo(() => {
-    if (qLower.length < 2) return [];
-    const seen = new Set<string>();
-    const combined: any[] = [];
-    for (const a of localMatchingArtists) {
-      const key = (a.name || '').toLowerCase();
-      seen.add(key);
-      combined.push({
-        id: a.id,
-        browseId: a.id,
-        name: a.name,
-        avatarUrl: a.avatarUrl,
-        source: 'catalog',
-      });
-    }
-    for (const a of liveSearchResults.artists) {
-      const key = (a.name || '').toLowerCase();
-      if (!seen.has(key)) {
-        seen.add(key);
-        combined.push(a);
-      }
-    }
-    return combined;
-  }, [qLower, localMatchingArtists, liveSearchResults.artists]);
-
-  const mergedSearchAlbums = React.useMemo(() => {
-    if (qLower.length < 2) return [];
-    const seen = new Set<string>();
-    const combined: any[] = [];
-    for (const alb of localMatchingAlbums) {
-      const key = `${String(alb.title || '').toLowerCase()}__${String(alb.artist_name || '').toLowerCase()}`;
-      seen.add(key);
-      combined.push({
-        id: alb.id,
-        browseId: alb.id,
-        title: alb.title,
-        artist: alb.artist_name,
-        cover_url: alb.cover_art_url || alb.coverUrl,
-        year: alb.release_date ? String(alb.release_date).slice(0, 4) : '',
-        source: 'catalog',
-      });
-    }
-    for (const alb of liveSearchResults.albums) {
-      const key = `${String(alb.title || '').toLowerCase()}__${String(alb.artist || '').toLowerCase()}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        combined.push(alb);
-      }
-    }
-    return combined;
-  }, [qLower, localMatchingAlbums, liveSearchResults.albums]);
-
   return (
     <div className="space-y-12 pb-32 animate-in fade-in duration-200">
-      {/* Unified App-Wide Search Results (Catalog + Admin + Distributors + YouTube Music) */}
+      {/* Catalog Search Results (Strictly Uploaded Catalog Records) */}
       {searchQuery.trim().length >= 2 && (
         <section className="p-5 sm:p-6 rounded-3xl bg-neutral-900/60 border border-white/10 space-y-4">
           <div className="flex items-center justify-between border-b border-white/[0.08] pb-3">
             <div className="flex items-center gap-2">
               <Search className="w-4 h-4 text-red-500" />
               <h2 className="text-base sm:text-lg font-bold text-white">
-                App-Wide Results for "{searchQuery}"
+                Catalog Results for "{searchQuery}"
               </h2>
             </div>
-            {isLiveSearching && <Loader2 className="w-4 h-4 animate-spin text-red-500" />}
           </div>
 
-          {!isLiveSearching && mergedSearchSongs.length === 0 && mergedSearchArtists.length === 0 && mergedSearchAlbums.length === 0 && localMatchingPlaylists.length === 0 && (
+          {filteredCatalogTracks.length === 0 && localMatchingArtists.length === 0 && localMatchingAlbums.length === 0 && localMatchingPlaylists.length === 0 && (
             <div className="py-8 text-center text-neutral-400 text-xs">
-              No matching songs, artists, albums, or playlists found for "{searchQuery}".
+              No matching uploaded songs, artists, albums, or playlists found for "{searchQuery}".
             </div>
           )}
 
-          {mergedSearchSongs.length > 0 && (
+          {filteredCatalogTracks.length > 0 && (
             <div className="space-y-2">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-neutral-400">Songs ({mergedSearchSongs.length})</h3>
+              <h3 className="text-xs font-bold uppercase tracking-wider text-neutral-400">Songs ({filteredCatalogTracks.length})</h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                {mergedSearchSongs.slice(0, 12).map((song, i) => (
+                {filteredCatalogTracks.slice(0, 12).map((song) => (
                   <div
-                    key={song.id || i}
-                    onClick={() => {
-                      const trk: Track = {
-                        id: song.id || `rel_${song.videoId || i}`,
-                        title: song.title,
-                        artist: song.artist || 'Unknown Artist',
-                        artistId: song.artistId || '',
-                        album: song.album || 'Single',
-                        duration: Number(song.duration) || 0,
-                        genre: song.genre || 'Music',
-                        coverUrl: resolveArtworkUrl(song.coverUrl || song.cover_url, 'track', song.title),
-                        audioUrl: song.audioUrl || song.audio_url || '',
-                        videoId: song.videoId || song.video_id || undefined,
-                        streams: Number(song.streams) || 0,
-                        likes: Number(song.likes) || 0,
-                        releaseDate: song.releaseDate || song.release_date || '',
-                        isExplicit: Boolean(song.isExplicit || song.is_explicit),
-                        bpm: Number(song.bpm) || 0,
-                        moods: song.moods || ['all'],
-                        isrc: song.isrc || '',
-                        upc: song.upc || '',
-                        label: song.label || '',
-                        distributor: song.distributor || '',
-                      };
-                      onPlayTrack(trk);
-                    }}
+                    key={song.id}
+                    onClick={() => onPlayTrack(song)}
                     className="p-2.5 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] border border-white/[0.06] flex items-center justify-between gap-3 cursor-pointer group transition-colors"
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
                       <img
-                        src={resolveArtworkUrl(song.coverUrl || song.cover_url, 'track', song.title)}
+                        src={resolveArtworkUrl(song.coverUrl, 'track', song.title)}
                         alt={song.title}
                         onError={(e) => handleImageError(e, song.title, 'track')}
                         className="w-10 h-10 rounded-lg object-cover bg-neutral-800 shrink-0"
@@ -371,14 +213,14 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
             </div>
           )}
 
-          {mergedSearchArtists.length > 0 && (
+          {localMatchingArtists.length > 0 && (
             <div className="space-y-2 pt-2 border-t border-white/[0.06]">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-neutral-400">Artists ({mergedSearchArtists.length})</h3>
+              <h3 className="text-xs font-bold uppercase tracking-wider text-neutral-400">Artists ({localMatchingArtists.length})</h3>
               <div className="flex items-center gap-3 overflow-x-auto no-scrollbar py-1">
-                {mergedSearchArtists.slice(0, 10).map((art, i) => (
+                {localMatchingArtists.slice(0, 10).map((art) => (
                   <button
-                    key={art.browseId || art.id || art.name || i}
-                    onClick={() => onSelectArtist?.(art.id || art.browseId || art.name)}
+                    key={art.id}
+                    onClick={() => onSelectArtist?.(art.id)}
                     className="flex items-center gap-2.5 px-3 py-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] transition-colors shrink-0 cursor-pointer"
                   >
                     <img
@@ -394,65 +236,33 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
             </div>
           )}
 
-          {mergedSearchAlbums.length > 0 && (
+          {localMatchingAlbums.length > 0 && (
             <div className="space-y-2 pt-2 border-t border-white/[0.06]">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-neutral-400">Albums & Releases ({mergedSearchAlbums.length})</h3>
+              <h3 className="text-xs font-bold uppercase tracking-wider text-neutral-400">Albums & Releases ({localMatchingAlbums.length})</h3>
               <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3">
-                {mergedSearchAlbums.slice(0, 6).map((alb, i) => (
+                {localMatchingAlbums.slice(0, 6).map((alb) => (
                   <div
-                    key={alb.browseId || alb.id || alb.title || i}
+                    key={alb.id}
                     onClick={() => {
                       const localTrack = tracks.find(
                         (t) =>
                           t.album?.toLowerCase() === String(alb.title || '').toLowerCase() ||
-                          t.artist?.toLowerCase() === String(alb.artist || '').toLowerCase()
+                          t.artist?.toLowerCase() === String(alb.artist_name || '').toLowerCase()
                       );
                       if (localTrack) {
                         onPlayTrack(localTrack);
-                        return;
-                      }
-                      if (alb.browseId) {
-                        api.getYouTubeMusicAlbum(alb.browseId)
-                          .then((res) => {
-                            if (res && res.album && res.album.tracks && res.album.tracks.length > 0) {
-                              const first = res.album.tracks[0];
-                              onPlayTrack({
-                                id: first.id || `trk_${first.videoId || i}`,
-                                title: first.title,
-                                artist: first.artist || alb.artist || 'Unknown Artist',
-                                artistId: alb.browseId || '',
-                                album: alb.title,
-                                duration: Number(first.duration) || 0,
-                                genre: 'Music',
-                                coverUrl: resolveArtworkUrl(alb.cover_url, 'album', alb.title),
-                                audioUrl: first.audioUrl || '',
-                                videoId: first.videoId,
-                                streams: Number(first.streams) || 0,
-                                likes: Number(first.likes) || 0,
-                                releaseDate: alb.year || '',
-                                isExplicit: false,
-                                bpm: 0,
-                                moods: ['all'],
-                                isrc: '',
-                                upc: '',
-                                label: '',
-                                distributor: '',
-                              });
-                            }
-                          })
-                          .catch(() => {});
                       }
                     }}
                     className="p-2.5 rounded-2xl bg-white/[0.02] hover:bg-white/[0.06] border border-white/[0.05] cursor-pointer group transition-all"
                   >
                     <img
-                      src={resolveArtworkUrl(alb.cover_url, 'album', alb.title)}
+                      src={resolveArtworkUrl(alb.cover_art_url || alb.coverUrl, 'album', alb.title)}
                       alt={alb.title}
                       onError={(e) => handleImageError(e, alb.title, 'album')}
                       className="w-full aspect-square rounded-xl object-cover bg-neutral-800 mb-2 group-hover:scale-[1.02] transition-transform"
                     />
                     <p className="text-xs font-semibold text-white truncate group-hover:text-red-400">{alb.title}</p>
-                    <p className="text-[11px] text-neutral-400 truncate">{alb.artist}</p>
+                    <p className="text-[11px] text-neutral-400 truncate">{alb.artist_name || alb.artist}</p>
                   </div>
                 ))}
               </div>
@@ -482,19 +292,6 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
               </div>
             </div>
           )}
-        </section>
-      )}
-
-      {/* Video Mode Canvas (When Active) */}
-      {isVideoMode && (
-        <section className="space-y-2">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xs md:text-sm font-semibold tracking-wide text-neutral-300 uppercase">
-              Now Streaming · Reactive Video Canvas
-            </h2>
-            <span className="text-xs text-red-400 font-mono">Spectrum Node</span>
-          </div>
-          <VideoModeCanvas currentTrack={currentTrack} isPlaying={isPlaying} />
         </section>
       )}
 
@@ -600,78 +397,6 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
           )}
         </div>
       </section>
-
-      {/* Dynamic Trending Top Hits from Live Discovery API */}
-      {liveCharts.length > 0 && (
-        <section className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Flame className="w-5 h-5 text-red-500" />
-              <h2 className="text-base sm:text-lg font-bold text-white">Trending Top Hits</h2>
-            </div>
-            <span className="text-xs text-neutral-400 font-mono">Live Chart Positions</span>
-          </div>
-
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-            {liveCharts.slice(0, 10).map((item, idx) => (
-              <div
-                key={item.id || item.videoId || idx}
-                onClick={() => {
-                  const trk: Track = {
-                    id: item.id || `trk_chart_${item.videoId || idx}`,
-                    title: item.title,
-                    artist: item.artist || 'Artist',
-                    artistId: item.artistId || '',
-                    album: item.album || 'Single',
-                    duration: Number(item.duration) || 0,
-                    genre: item.genre || 'Music',
-                    coverUrl: resolveArtworkUrl(item.coverUrl || item.cover_url, 'track', item.title),
-                    audioUrl: item.audioUrl || item.audio_url || '',
-                    videoId: item.videoId || item.video_id,
-                    streams: Number(item.streams) || 0,
-                    likes: Number(item.likes) || 0,
-                    releaseDate: item.releaseDate || '',
-                    isExplicit: false,
-                    bpm: 0,
-                    moods: ['energize'],
-                    isrc: '',
-                    upc: '',
-                    label: '',
-                    distributor: '',
-                  };
-                  onPlayTrack(trk);
-                }}
-                className="group relative p-3 rounded-2xl bg-neutral-900/50 hover:bg-neutral-800/80 border border-white/[0.06] transition-all cursor-pointer flex flex-col justify-between"
-              >
-                <div className="relative aspect-square rounded-xl overflow-hidden mb-2.5 bg-neutral-800">
-                  <img
-                    src={resolveArtworkUrl(item.coverUrl || item.cover_url, 'track', item.title)}
-                    alt={item.title}
-                    onError={(e) => handleImageError(e, item.title, 'track')}
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                  />
-                  <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded-md bg-black/70 backdrop-blur-sm text-[10px] font-bold text-white">
-                    #{idx + 1}
-                  </div>
-                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                    <div className="w-10 h-10 rounded-full bg-white text-black flex items-center justify-center shadow-lg transform group-hover:scale-110 transition-transform">
-                      <Play className="w-4 h-4 fill-black ml-0.5" />
-                    </div>
-                  </div>
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold text-white truncate group-hover:text-red-400 transition-colors">
-                    {item.title}
-                  </h4>
-                  <p className="text-[11px] text-neutral-400 truncate mt-0.5">
-                    {item.artist}
-                  </p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
 
       {/* FEATURED ALBUMS & RELEASES CAROUSEL */}
       {albums.length > 0 && (

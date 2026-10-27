@@ -6,9 +6,10 @@
 
 import { Track, Playlist, ArtistProfile, ArtistDiscographyItem, RelatedArtistItem } from '../types/music';
 import { resolveArtworkUrl } from '../utils/artwork';
+import { nativePlatform } from './nativePlatform';
 
 const getApiBaseUrl = (): string => {
-  if (typeof window !== 'undefined') {
+  if (typeof window !== 'undefined' && !nativePlatform.isNative()) {
     const host = window.location.hostname;
     if (host === 'flontmie.ticketplaster.com' || host.endsWith('ticketplaster.com')) {
       return '/phpbackend/api';
@@ -27,6 +28,16 @@ class FlontmieApiService {
     if (typeof window !== 'undefined') {
       this.token = localStorage.getItem('flontmie_jwt');
       this.csrfToken = localStorage.getItem('flontmie_csrf');
+      nativePlatform.getStoredAuthTokens().then(({ token, csrfToken }) => {
+        if (token && !this.token) {
+          this.token = token;
+          localStorage.setItem('flontmie_jwt', token);
+        }
+        if (csrfToken && !this.csrfToken) {
+          this.csrfToken = csrfToken;
+          localStorage.setItem('flontmie_csrf', csrfToken);
+        }
+      });
     }
   }
 
@@ -47,6 +58,7 @@ class FlontmieApiService {
         localStorage.removeItem('flontmie_csrf');
       }
     }
+    nativePlatform.saveAuthTokens(token, csrfToken);
   }
 
   public getToken(): string | null {
@@ -83,23 +95,103 @@ class FlontmieApiService {
     return data as T;
   }
 
+  // --- Parse Real LRC / SRT / Plain-Text Lyrics Without Inventing Timestamps ---
+  public parseLyricsText(rawLyrics: string): { lines: Array<{ time: number | null; endTime?: number; text: string }>; synced: boolean } {
+    if (!rawLyrics || typeof rawLyrics !== 'string') {
+      return { lines: [], synced: false };
+    }
+    if (
+      rawLyrics.includes('Synchronized Catalog Lyrics') ||
+      rawLyrics.includes('Streaming from Flontmie authorized catalog storage')
+    ) {
+      return { lines: [], synced: false };
+    }
+
+    const linesOut: Array<{ time: number | null; endTime?: number; text: string }> = [];
+    let hasTimedLine = false;
+
+    const rawLines = rawLyrics.split(/\r?\n/);
+
+    // Check if SRT format (contains "-->")
+    if (rawLyrics.includes('-->')) {
+      for (let i = 0; i < rawLines.length; i++) {
+        const line = rawLines[i].trim();
+        const srtMatch = line.match(
+          /^(\d{1,2}):(\d{2}):(\d{2})[.,](\d{1,3})\s*-->\s*(\d{1,2}):(\d{2}):(\d{2})[.,](\d{1,3})/
+        );
+        if (srtMatch) {
+          const startSec =
+            parseInt(srtMatch[1], 10) * 3600 +
+            parseInt(srtMatch[2], 10) * 60 +
+            parseInt(srtMatch[3], 10) +
+            parseInt(srtMatch[4].padEnd(3, '0'), 10) / 1000;
+          const endSec =
+            parseInt(srtMatch[5], 10) * 3600 +
+            parseInt(srtMatch[6], 10) * 60 +
+            parseInt(srtMatch[7], 10) +
+            parseInt(srtMatch[8].padEnd(3, '0'), 10) / 1000;
+          const textParts: string[] = [];
+          while (i + 1 < rawLines.length && rawLines[i + 1].trim() !== '') {
+            i++;
+            textParts.push(rawLines[i].trim());
+          }
+          const txt = textParts.join(' ').trim();
+          if (txt) {
+            hasTimedLine = true;
+            linesOut.push({ time: startSec, endTime: endSec, text: txt });
+          }
+        }
+      }
+      if (linesOut.length > 0) {
+        return { lines: linesOut, synced: hasTimedLine };
+      }
+    }
+
+    // Parse LRC or plain text
+    for (const rawLine of rawLines) {
+      const trimmed = rawLine.trim();
+      if (!trimmed) continue;
+      // Ignore LRC metadata tags like [ar:...], [ti:...], [al:...], [by:...], [length:...]
+      if (/^\[(ar|ti|al|au|by|length|offset|re|ve):/i.test(trimmed)) {
+        continue;
+      }
+
+      const lrcRegex = /\[(\d{1,2}):(\d{2})(?:[.:](\d{1,3}))?\]/g;
+      const matches = [...trimmed.matchAll(lrcRegex)];
+      if (matches.length > 0) {
+        const textAfterTags = trimmed.replace(lrcRegex, '').trim();
+        for (const m of matches) {
+          const mins = parseInt(m[1], 10);
+          const secs = parseInt(m[2], 10);
+          const frac = m[3] ? parseInt(m[3].padEnd(3, '0'), 10) / 1000 : 0;
+          const timeSec = mins * 60 + secs + frac;
+          if (textAfterTags) {
+            hasTimedLine = true;
+            linesOut.push({ time: timeSec, text: textAfterTags });
+          }
+        }
+      } else {
+        linesOut.push({ time: null, text: trimmed });
+      }
+    }
+
+    if (hasTimedLine) {
+      // Keep only timed lines or sort timed lines in chronological order and populate endTime
+      linesOut.sort((a, b) => (a.time ?? 0) - (b.time ?? 0));
+      for (let i = 0; i < linesOut.length; i++) {
+        if (linesOut[i].time !== null && i + 1 < linesOut.length && linesOut[i + 1].time !== null) {
+          linesOut[i].endTime = linesOut[i + 1].time ?? undefined;
+        }
+      }
+    }
+
+    return { lines: linesOut, synced: hasTimedLine };
+  }
+
   // --- Map DB Track to Frontend Track Interface ---
   public mapDbTrack(dbTrack: any): Track {
     const rawLyrics = dbTrack.lyrics || '';
-    const parsedLyrics = rawLyrics
-      ? String(rawLyrics)
-          .split(/\r?\n/)
-          .filter((l: string) => l.trim().length > 0)
-          .map((line: string, index: number) => {
-            const lrcMatch = line.match(/^\[(\d{1,2}):(\d{2})(?:\.\d{1,3})?\](.*)$/);
-            if (lrcMatch) {
-              const mins = parseInt(lrcMatch[1], 10);
-              const secs = parseInt(lrcMatch[2], 10);
-              return { time: mins * 60 + secs, text: lrcMatch[3].trim() || '♪' };
-            }
-            return { time: index * 6, text: line.trim() };
-          })
-      : [];
+    const { lines: parsedLyrics, synced: lyricsSynced } = this.parseLyricsText(String(rawLyrics));
 
     const moods = Array.isArray(dbTrack.mood_tags) && dbTrack.mood_tags.length > 0
       ? dbTrack.mood_tags
@@ -134,7 +226,10 @@ class FlontmieApiService {
     }
 
     const rawId = String(dbTrack.id || '');
-    const explicitVid = dbTrack.video_id || dbTrack.videoId || (rawId.startsWith('trk_yt_') ? rawId.replace('trk_yt_', '') : (rawId.startsWith('yt_') ? rawId.replace('yt_', '') : undefined));
+    const explicitVid = dbTrack.video_id || dbTrack.videoId || undefined;
+
+    const hasLocalAudio = dbTrack.has_local_audio !== undefined ? Boolean(dbTrack.has_local_audio) : Boolean(resolvedAudioUrl);
+    const hasLocalVideo = dbTrack.has_local_video !== undefined ? Boolean(dbTrack.has_local_video) : Boolean(resolvedVideoUrl);
 
     return {
       id: rawId,
@@ -146,8 +241,10 @@ class FlontmieApiService {
       duration: Number(dbTrack.duration) || 180,
       genre: (dbTrack.genre || 'Pop') as any,
       coverUrl: resolvedCoverUrl,
-      audioUrl: resolvedAudioUrl,
-      videoUrl: resolvedVideoUrl || undefined,
+      audioUrl: hasLocalAudio ? resolvedAudioUrl : '',
+      videoUrl: hasLocalVideo && resolvedVideoUrl ? resolvedVideoUrl : undefined,
+      hasLocalAudio,
+      hasLocalVideo,
       streams: Number(dbTrack.stream_count ?? dbTrack.streams) || 0,
       ytPlays: dbTrack.yt_plays ?? dbTrack.ytPlays ?? null,
       flontmiePlays: Number(dbTrack.flontmie_plays ?? dbTrack.flontmiePlays) || 0,
@@ -156,6 +253,8 @@ class FlontmieApiService {
       isExplicit: Boolean(Number(dbTrack.explicit)),
       releaseDate: dbTrack.release_date || '2026-01-01',
       lyrics: parsedLyrics,
+      rawLyrics: parsedLyrics.length > 0 ? String(rawLyrics) : undefined,
+      lyricsSynced,
       bpm: Number(dbTrack.bpm) || 120,
       moods: moods as any,
       isrc: dbTrack.isrc || '',
@@ -247,19 +346,27 @@ class FlontmieApiService {
     };
   }
 
-  // --- Fetch All Tracks ---
+  // --- Fetch All Tracks (With Graceful Offline Fallback to Downloaded Device Tracks) ---
   public async getTracks(filters?: { genre?: string; q?: string; artist_id?: string; distributor_id?: string; label_id?: string }): Promise<Track[]> {
-    const params = new URLSearchParams();
-    if (filters?.genre && filters.genre !== 'all') params.set('genre', filters.genre);
-    if (filters?.q) params.set('q', filters.q);
-    if (filters?.artist_id) params.set('artist_id', filters.artist_id);
-    if (filters?.distributor_id) params.set('distributor_id', filters.distributor_id);
-    if (filters?.label_id) params.set('label_id', filters.label_id);
+    try {
+      const params = new URLSearchParams();
+      if (filters?.genre && filters.genre !== 'all') params.set('genre', filters.genre);
+      if (filters?.q) params.set('q', filters.q);
+      if (filters?.artist_id) params.set('artist_id', filters.artist_id);
+      if (filters?.distributor_id) params.set('distributor_id', filters.distributor_id);
+      if (filters?.label_id) params.set('label_id', filters.label_id);
 
-    const queryStr = params.toString() ? `?${params.toString()}` : '';
-    const res = await this.request<{ status: string; tracks: any[] }>(`tracks.php${queryStr}`);
-    if (res.status === 'success' && Array.isArray(res.tracks)) {
-      return res.tracks.map((t) => this.mapDbTrack(t));
+      const queryStr = params.toString() ? `?${params.toString()}` : '';
+      const res = await this.request<{ status: string; tracks: any[] }>(`tracks.php${queryStr}`);
+      if (res.status === 'success' && Array.isArray(res.tracks)) {
+        return res.tracks.map((t) => this.mapDbTrack(t));
+      }
+    } catch (err) {
+      const offlineTracks = nativePlatform.getDownloadedTracks();
+      if (offlineTracks.length > 0) {
+        return offlineTracks;
+      }
+      throw err;
     }
     return [];
   }
@@ -1153,184 +1260,24 @@ class FlontmieApiService {
     });
   }
 
-  // --- Unified Platform & YouTube Music Discovery API ---
-  public async searchYouTubeMusic(
-    query: string,
-    filter: 'songs' | 'videos' | 'albums' | 'artists' | 'playlists' | 'all' = 'all',
-    extra?: { country?: string; year?: string; genre?: string }
-  ): Promise<{
-    status: string;
-    query: string;
-    results: {
-      songs: any[];
-      albums: any[];
-      artists: any[];
-      playlists: any[];
-    };
-  }> {
+  // --- Catalog Lyrics & Admin/Distributor Storage Sync APIs ---
+  public async getTrackLyrics(
+    trackId: string,
+    extra?: { trackId?: string; title?: string; artist?: string }
+  ): Promise<{ status: string; lyrics: string | null; synced?: boolean; source?: string }> {
     const params = new URLSearchParams({
-      action: 'search',
-      q: query,
-      filter,
+      action: 'lyrics',
+      track_id: extra?.trackId || trackId || '',
     });
-    if (extra?.country) params.set('country', extra.country);
-    if (extra?.year && extra.year !== 'All') params.set('year', extra.year);
-    if (extra?.genre && extra.genre !== 'All') params.set('genre', extra.genre);
-
-    return this.request(`youtube_music.php?${params.toString()}`);
-  }
-
-  public async getYouTubeMusicSuggestions(query: string): Promise<string[]> {
-    try {
-      const res = await this.request<{ status: string; suggestions: string[] }>(
-        `youtube_music.php?action=suggestions&q=${encodeURIComponent(query)}`
-      );
-      return res.suggestions || [];
-    } catch {
-      return [];
-    }
-  }
-
-  public async getYouTubeMusicHome(): Promise<{
-    status: string;
-    shelves: Array<{ title: string; subtitle: string; items: any[] }>;
-  }> {
-    return this.request('youtube_music.php?action=home');
-  }
-
-  public async getYouTubeMusicCharts(country: string = 'US'): Promise<{
-    status: string;
-    country: string;
-    charts: any[];
-  }> {
-    return this.request(`youtube_music.php?action=charts&country=${encodeURIComponent(country)}`);
-  }
-
-  public async getYouTubeMusicAlbum(browseId: string): Promise<any> {
-    return this.request(`youtube_music.php?action=album&browseId=${encodeURIComponent(browseId)}`);
-  }
-
-  public async getYouTubeMusicPlaylist(browseId: string): Promise<any> {
-    return this.request(`youtube_music.php?action=playlist&browseId=${encodeURIComponent(browseId)}`);
-  }
-
-  public async getYouTubeMusicArtist(browseId: string, name: string = ''): Promise<any> {
-    return this.request(
-      `youtube_music.php?action=artist&browseId=${encodeURIComponent(browseId)}&name=${encodeURIComponent(name)}`
-    );
-  }
-
-  public async getYouTubeMusicLyrics(videoId: string): Promise<{ status: string; lyrics: string }> {
-    return this.request(`youtube_music.php?action=lyrics&videoId=${encodeURIComponent(videoId)}`);
-  }
-
-  public async importYouTubeMusicTrack(payload: {
-    title: string;
-    artist: string;
-    album?: string;
-    genre?: string;
-    country?: string;
-    release_year?: number;
-    duration?: number;
-    cover_url?: string;
-    videoId: string;
-    license_status?: string;
-    auto_publish?: boolean;
-    force_resync?: boolean;
-  }): Promise<any> {
-    return this.request('youtube_music.php?action=import', {
-      method: 'POST',
-      body: JSON.stringify({ ...payload, csrf_token: this.csrfToken }),
-    });
-  }
-
-  public async bulkImportYouTubeMusicTracks(payload: {
-    items: any[];
-    genre?: string;
-    country?: string;
-    license_status?: string;
-    auto_publish?: boolean;
-  }): Promise<any> {
-    return this.request('youtube_music.php?action=bulk_import', {
-      method: 'POST',
-      body: JSON.stringify({ ...payload, csrf_token: this.csrfToken }),
-    });
-  }
-
-  public async importYouTubeMusicCollection(payload: {
-    collection_type: 'album' | 'artist' | 'playlist';
-    title: string;
-    artist: string;
-    cover_url?: string;
-    description?: string;
-    genre?: string;
-    country?: string;
-    license_status?: string;
-    tracks: any[];
-  }): Promise<any> {
-    return this.request('youtube_music.php?action=import_collection', {
-      method: 'POST',
-      body: JSON.stringify({ ...payload, csrf_token: this.csrfToken }),
-    });
-  }
-
-  public async retryImportJob(jobId: string): Promise<any> {
-    return this.request('youtube_music.php?action=retry_job', {
-      method: 'POST',
-      body: JSON.stringify({ job_id: jobId, csrf_token: this.csrfToken }),
-    });
-  }
-
-  public async cancelImportJob(jobId: string): Promise<any> {
-    return this.request('youtube_music.php?action=cancel_job', {
-      method: 'POST',
-      body: JSON.stringify({ job_id: jobId, csrf_token: this.csrfToken }),
-    });
-  }
-
-  public async createImportSchedule(payload: {
-    name: string;
-    search_query: string;
-    filter_type?: string;
-    genre?: string;
-    country?: string;
-    release_year?: string;
-    max_items?: number;
-    auto_publish?: boolean;
-    license_status?: string;
-    frequency?: string;
-  }): Promise<any> {
-    return this.request('youtube_music.php?action=create_schedule', {
-      method: 'POST',
-      body: JSON.stringify({ ...payload, csrf_token: this.csrfToken }),
-    });
-  }
-
-  public async runImportSchedule(scheduleId: string): Promise<any> {
-    return this.request('youtube_music.php?action=run_schedule', {
-      method: 'POST',
-      body: JSON.stringify({ schedule_id: scheduleId, csrf_token: this.csrfToken }),
-    });
-  }
-
-  public async toggleImportSchedule(scheduleId: string): Promise<any> {
-    return this.request('youtube_music.php?action=toggle_schedule', {
-      method: 'POST',
-      body: JSON.stringify({ schedule_id: scheduleId, csrf_token: this.csrfToken }),
-    });
-  }
-
-  public async deleteImportSchedule(scheduleId: string): Promise<any> {
-    return this.request('youtube_music.php?action=delete_schedule', {
-      method: 'POST',
-      body: JSON.stringify({ schedule_id: scheduleId, csrf_token: this.csrfToken }),
-    });
+    if (extra?.title) params.set('title', extra.title);
+    if (extra?.artist) params.set('artist', extra.artist);
+    return this.request(`tracks.php?${params.toString()}`);
   }
 
   public async syncAllStorage(): Promise<any> {
-    return this.request('youtube_music.php?action=sync_all_storage', {
+    return this.request('media_scanner.php?action=scan_now', {
       method: 'POST',
-      body: JSON.stringify({ csrf_token: this.csrfToken }),
+      body: JSON.stringify({ batch_size: 50, csrf_token: this.csrfToken }),
     });
   }
 
@@ -1428,6 +1375,103 @@ class FlontmieApiService {
 
   public async searchCatalogForMediaMatch(query: string): Promise<any> {
     return this.request(`media_scanner.php?action=search_tracks&q=${encodeURIComponent(query)}`);
+  }
+
+  public async hydrateSavedTokens(): Promise<void> {
+    const stored = await nativePlatform.getStoredAuthTokens();
+    if (stored.token) {
+      this.setToken(stored.token, stored.csrfToken);
+    }
+  }
+
+  public async getSearchSuggestions(query: string): Promise<Array<{
+    text: string;
+    type: 'query' | 'song' | 'artist' | 'album';
+    artist?: string;
+    track_id?: string;
+    cover_url?: string;
+  }>> {
+    const q = query.trim().toLowerCase();
+    if (!q || q.length < 2) return [];
+    try {
+      const tracks = await this.getTracks({ q });
+      const items: Array<{
+        text: string;
+        type: 'query' | 'song' | 'artist' | 'album';
+        artist?: string;
+        track_id?: string;
+        cover_url?: string;
+      }> = [];
+      const seenArtists = new Set<string>();
+      for (const t of tracks.slice(0, 8)) {
+        items.push({
+          text: t.title,
+          type: 'song',
+          artist: t.artist,
+          track_id: t.id,
+          cover_url: t.coverUrl,
+        });
+        if (t.artist && !seenArtists.has(t.artist.toLowerCase())) {
+          seenArtists.add(t.artist.toLowerCase());
+          items.push({
+            text: t.artist,
+            type: 'artist',
+            cover_url: t.coverUrl,
+          });
+        }
+      }
+      return items.slice(0, 8);
+    } catch {
+      return [];
+    }
+  }
+
+  public async uploadTrack(payload: {
+    title: string;
+    artist: string;
+    album?: string;
+    genre?: string;
+    lyrics?: string;
+    audioFile?: File | null;
+    videoFile?: File | null;
+    lyricsFile?: File | null;
+    artworkFile?: File | null;
+  }): Promise<any> {
+    const formData = new FormData();
+    formData.append('title', payload.title);
+    formData.append('artist_name', payload.artist);
+    formData.append('album_name', payload.album || 'Single');
+    formData.append('genre', payload.genre || 'Afrobeats');
+    if (payload.lyrics) {
+      formData.append('lyrics', payload.lyrics);
+    }
+    if (payload.audioFile) {
+      formData.append('audio_file', payload.audioFile);
+    }
+    if (payload.videoFile) {
+      formData.append('video_file', payload.videoFile);
+    }
+    if (payload.lyricsFile) {
+      formData.append('lyrics_file', payload.lyricsFile);
+    }
+    if (payload.artworkFile) {
+      formData.append('artwork_file', payload.artworkFile);
+    }
+    return this.uploadReleaseMultipartWithProgress(formData);
+  }
+
+  public async retryImportJob(jobId: string): Promise<any> {
+    return this.request('admin.php?action=retry_import_job', {
+      method: 'POST',
+      body: JSON.stringify({ job_id: jobId, csrf_token: this.csrfToken }),
+    });
+  }
+
+  public async cancelImportJob(jobId: string): Promise<any> {
+    return this.request('admin.php?action=cancel_import_job', {
+      method: 'POST',
+      body: JSON.stringify({ job_id: jobId, csrf_token: this.csrfToken }),
+    });
   }
 }
 

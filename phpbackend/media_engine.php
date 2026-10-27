@@ -104,123 +104,13 @@ class MediaEngine {
     }
 
     /**
-     * Call YouTube Music Innertube API
+     * External YouTube Music / Innertube API disabled (strictly Admin & Distributor uploads only)
      */
     public static function callInnertube(string $endpoint, array $payload = [], string $country = 'US', string $clientType = 'WEB_REMIX'): ?array {
-        $url = "https://music.youtube.com/youtubei/v1/{$endpoint}?prettyPrint=false";
-        if (in_array($clientType, ['ANDROID_VR', 'ANDROID_TESTSUITE', 'IOS'], true)) {
-            $url = "https://www.youtube.com/youtubei/v1/{$endpoint}?prettyPrint=false";
-        }
-
-        $clients = [
-            'WEB_REMIX' => [
-                'clientName' => 'WEB_REMIX',
-                'clientVersion' => '1.20240401.01.00',
-                'hl' => 'en',
-                'gl' => strtoupper(substr($country ?: 'US', 0, 2))
-            ],
-            'ANDROID_VR' => [
-                'clientName' => 'ANDROID_VR',
-                'clientVersion' => '1.56.21',
-                'androidSdkVersion' => 32,
-                'osName' => 'Android',
-                'osVersion' => '12',
-                'hl' => 'en',
-                'gl' => strtoupper(substr($country ?: 'US', 0, 2))
-            ],
-            'ANDROID_TESTSUITE' => [
-                'clientName' => 'ANDROID_TESTSUITE',
-                'clientVersion' => '1.9',
-                'androidSdkVersion' => 30,
-                'osName' => 'Android',
-                'osVersion' => '11',
-                'hl' => 'en',
-                'gl' => strtoupper(substr($country ?: 'US', 0, 2))
-            ],
-            'IOS' => [
-                'clientName' => 'IOS',
-                'clientVersion' => '19.29.1',
-                'deviceMake' => 'Apple',
-                'deviceModel' => 'iPhone16,2',
-                'osName' => 'iPhone',
-                'osVersion' => '17.5.1.21F90',
-                'hl' => 'en',
-                'gl' => strtoupper(substr($country ?: 'US', 0, 2))
-            ]
-        ];
-
-        $clientCfg = $clients[$clientType] ?? $clients['WEB_REMIX'];
-        $body = array_merge(['context' => ['client' => $clientCfg]], $payload);
-        $jsonBody = json_encode($body);
-
-        $headers = [
-            'Content-Type: application/json',
-            'Origin: https://music.youtube.com',
-            'Referer: https://music.youtube.com/',
-            'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-        ];
-        if ($clientType === 'ANDROID_VR') {
-            $headers[] = 'User-Agent: com.google.android.apps.youtube.vr.oculus/1.56.21 (Linux; U; Android 12; en_US; Quest 3; Build/SQ3A.220605.009.A1; Cronet/107.0.5284.2)';
-        } elseif ($clientType === 'ANDROID_TESTSUITE') {
-            $headers[] = 'User-Agent: com.google.android.youtube/1.9 (Linux; U; Android 11; en_US)';
-        } elseif ($clientType === 'IOS') {
-            $headers[] = 'User-Agent: com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)';
-        }
-
-        if (function_exists('curl_init')) {
-            $ch = curl_init($url);
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_POST, true);
-            curl_setopt($ch, CURLOPT_POSTFIELDS, $jsonBody);
-            curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
-            curl_setopt($ch, CURLOPT_TIMEOUT, 12);
-            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-            $res = curl_exec($ch);
-            curl_close($ch);
-            if ($res) {
-                return json_decode($res, true);
-            }
-        }
         return null;
     }
 
-    /**
-     * Stage 1: Attempt direct audio extraction via Innertube player (athlon1600 / ytmusicapi technique)
-     */
     private static function tryExtractInnertubeAudio(?string $videoId): ?array {
-        if (empty($videoId) || strlen($videoId) < 8) {
-            return null;
-        }
-
-        foreach (['ANDROID_VR', 'ANDROID_TESTSUITE', 'IOS'] as $clientType) {
-            $playerData = self::callInnertube('player', [
-                'videoId' => $videoId,
-                'contentCheckOk' => true,
-                'racyCheckOk' => true
-            ], 'US', $clientType);
-
-            $adaptive = $playerData['streamingData']['adaptiveFormats'] ?? [];
-            $formats = $playerData['streamingData']['formats'] ?? [];
-            $allFormats = array_merge($adaptive, $formats);
-
-            foreach ($allFormats as $fmt) {
-                $mime = $fmt['mimeType'] ?? '';
-                $url = $fmt['url'] ?? '';
-                if (!empty($url) && (strpos($mime, 'audio/mp4') !== false || strpos($mime, 'audio/webm') !== false)) {
-                    // Download up to 8MB of audio stream
-                    $binary = self::downloadBinary($url, ['Range: bytes=0-8388607'], 12);
-                    if ($binary && strlen($binary) > 32768) {
-                        $ext = strpos($mime, 'webm') !== false ? 'webm' : 'm4a';
-                        return [
-                            'binary' => $binary,
-                            'ext' => $ext,
-                            'method' => 'ytmusic_innertube_stream',
-                            'duration' => isset($fmt['approxDurationMs']) ? (int)round($fmt['approxDurationMs'] / 1000) : null
-                        ];
-                    }
-                }
-            }
-        }
         return null;
     }
 
@@ -349,18 +239,25 @@ class MediaEngine {
             @mkdir($fullDir, 0755, true);
         }
 
-        // Check if already exists locally
+        // Check if already exists locally (ignore legacy 705644-byte synthesized wav files)
         foreach (['m4a', 'mp3', 'webm', 'wav'] as $ext) {
             $existingRel = "{$subDir}/{$safeId}.{$ext}";
             $existingFull = STORAGE_ROOT . '/' . $existingRel;
-            if (file_exists($existingFull) && filesize($existingFull) > 4096) {
-                return [
-                    'relative_path' => $existingRel,
-                    'file_size' => (int)filesize($existingFull),
-                    'format' => $ext,
-                    'method' => 'cached_local_storage',
-                    'extra' => []
-                ];
+            if (file_exists($existingFull)) {
+                $fsize = (int)filesize($existingFull);
+                if ($ext === 'wav' && $fsize === 705644) {
+                    @unlink($existingFull);
+                    continue;
+                }
+                if ($fsize > 4096) {
+                    return [
+                        'relative_path' => $existingRel,
+                        'file_size' => $fsize,
+                        'format' => $ext,
+                        'method' => 'cached_local_storage',
+                        'extra' => []
+                    ];
+                }
             }
         }
 
@@ -401,17 +298,12 @@ class MediaEngine {
             ];
         }
 
-        // 3. Fallback: Synthesize local studio WAV file on disk so local streaming always succeeds
-        $wavBinary = self::generateHarmonicWavBinary($genre, 16);
-        $relPath = "{$subDir}/{$safeId}.wav";
-        $fullPath = STORAGE_ROOT . '/' . $relPath;
-        @file_put_contents($fullPath, $wavBinary);
-
+        // No real audio stream found: return null path instead of generating mock/synthesized audio
         return [
-            'relative_path' => $relPath,
-            'file_size' => strlen($wavBinary),
-            'format' => 'wav',
-            'method' => 'harmonic_master_wav',
+            'relative_path' => null,
+            'file_size' => 0,
+            'format' => null,
+            'method' => 'unavailable',
             'extra' => []
         ];
     }
@@ -468,35 +360,41 @@ class MediaEngine {
     }
 
     /**
-     * Fetch lyrics from YouTube Music Innertube API
+     * Fetch real timestamped (LRC) or plain lyrics from LRCLIB / YouTube Music Innertube API
+     * Never invents placeholder lyrics or fake timestamps.
      */
     public static function fetchTrackLyrics(?string $videoId, string $title, string $artist): string {
-        if (!empty($videoId)) {
-            $nextData = self::callInnertube('next', ['videoId' => $videoId]);
-            $lyricsBrowseId = null;
-            $tabs = $nextData['contents']['singleColumnMusicWatchNextResultsRenderer']['tabbedRenderer']['watchNextTabbedResultsRenderer']['tabs'] ?? [];
-            foreach ($tabs as $t) {
-                $tr = $t['tabRenderer'] ?? [];
-                if (($tr['title'] ?? '') === 'Lyrics') {
-                    $lyricsBrowseId = $tr['endpoint']['browseEndpoint']['browseId'] ?? null;
-                    break;
-                }
-            }
-            if ($lyricsBrowseId) {
-                $browseData = self::callInnertube('browse', ['browseId' => $lyricsBrowseId]);
-                $runs = $browseData['contents']['sectionListRenderer']['contents'][0]['musicDescriptionShelfRenderer']['description']['runs'] ?? [];
-                if (!empty($runs)) {
-                    $lyricsText = '';
-                    foreach ($runs as $r) {
-                        $lyricsText .= $r['text'] ?? '';
+        $cleanTitle = trim((string)preg_replace('/\s*\(.*?\)\s*|\s*\[.*?\]\s*/', ' ', $title));
+        $cleanArtist = trim(explode(',', $artist)[0] ?? $artist);
+        if (stripos($cleanArtist, 'YouTube Music') !== false) {
+            $cleanArtist = '';
+        }
+
+        // 1. Try LRCLIB for verified timestamped LRC lyrics
+        if (!empty($cleanTitle)) {
+            $qs = http_build_query(array_filter([
+                'track_name' => $cleanTitle,
+                'artist_name' => $cleanArtist ?: null,
+            ]));
+            $lrcRaw = self::downloadBinary("https://lrclib.net/api/search?{$qs}", ['User-Agent: FlontmieMusicPlayer/2.0 (https://flontmie.ticketplaster.com)'], 6);
+            if ($lrcRaw) {
+                $lrcData = json_decode($lrcRaw, true);
+                if (is_array($lrcData)) {
+                    foreach ($lrcData as $item) {
+                        if (!empty($item['syncedLyrics']) && is_string($item['syncedLyrics'])) {
+                            return trim($item['syncedLyrics']);
+                        }
                     }
-                    if (!empty(trim($lyricsText))) {
-                        return trim($lyricsText);
+                    foreach ($lrcData as $item) {
+                        if (!empty($item['plainLyrics']) && is_string($item['plainLyrics'])) {
+                            return trim($item['plainLyrics']);
+                        }
                     }
                 }
             }
         }
-        return "[Synchronized Catalog Lyrics — {$title} · {$artist}]\n\n[Verse 1]\nStreaming from Flontmie authorized catalog storage\nEvery frequency balanced in studio clarity\n\n[Chorus]\n{$title} — {$artist}\nLicensed & synchronized on Flontmie Music Hub";
+
+        return '';
     }
 
     /**

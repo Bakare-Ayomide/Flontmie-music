@@ -21,14 +21,84 @@ function formatTrackForOutput(array $t, array $likedMap = []): array {
     $t['yt_plays'] = ArtistEnrichment::parseMetric((string)($t['stream_count'] ?? '0'))['compact'];
     $t['flontmie_plays'] = (int)($t['flontmie_plays'] ?? 0);
     $t['is_liked'] = isset($likedMap[$t['id']]);
-    $t['has_local_audio'] = !empty($t['local_audio_path']);
-    $t['has_local_video'] = !empty($t['local_video_path']) || !empty($t['video_url']);
-    $t['audio_url'] = '/phpbackend/api/stream.php?id=' . urlencode($t['id']);
-    if (!empty($t['local_video_path'])) {
-        $t['video_url'] = '/phpbackend/api/stream.php?id=' . urlencode($t['id']) . '&type=video';
+
+    // Never return legacy placeholder lyrics
+    if (!empty($t['lyrics']) && strpos($t['lyrics'], 'Synchronized Catalog Lyrics') !== false) {
+        $t['lyrics'] = null;
     }
+
+    // Load uploaded lyrics file (.lrc, .srt, .txt) if lyrics column is empty
+    if (empty($t['lyrics']) && !empty($t['local_lyrics_path'])) {
+        $relLyr = ltrim($t['local_lyrics_path'], '/');
+        $projectRoot = realpath(__DIR__ . '/../..') ?: dirname(__DIR__, 2);
+        foreach ([BASE_DIR . '/storage/' . $relLyr, BASE_DIR . '/' . $relLyr, $projectRoot . '/' . $relLyr] as $candLyr) {
+            if (is_file($candLyr) && is_readable($candLyr)) {
+                $t['lyrics'] = trim((string)@file_get_contents($candLyr));
+                break;
+            }
+        }
+    }
+
+    $audioExt = strtolower(pathinfo($t['local_audio_path'] ?? '', PATHINFO_EXTENSION));
+    $isSynthesizedWav = ($audioExt === 'wav' && (int)($t['audio_file_size'] ?? 0) === 705644);
+    $isAudioPathVideo = in_array($audioExt, ['mp4', 'webm', 'm4v', 'mov', 'mkv'], true);
+
+    $hasRealAudio = (!empty($t['local_audio_path']) && !$isSynthesizedWav) || !empty($t['local_video_path']);
+    $hasRealVideo = !empty($t['local_video_path']) || !empty($t['video_url']) || $isAudioPathVideo;
+
+    $t['has_local_audio'] = $hasRealAudio;
+    $t['has_local_video'] = $hasRealVideo;
+    $t['audio_url'] = $hasRealAudio ? ('/phpbackend/api/stream.php?id=' . urlencode($t['id'])) : '';
+    if ($hasRealVideo) {
+        $t['video_url'] = '/phpbackend/api/stream.php?id=' . urlencode($t['id']) . '&type=video';
+    } else {
+        $t['video_url'] = null;
+    }
+
     unset($t['local_audio_path'], $t['local_artwork_path'], $t['local_video_path'], $t['local_lyrics_path']);
     return $t;
+}
+
+// --- 0. GET SYNCHRONIZED OR PLAIN LYRICS FOR TRACK ---
+if ($method === 'GET' && $action === 'lyrics') {
+    $trackId = trim($_GET['track_id'] ?? $_GET['id'] ?? '');
+    if (empty($trackId)) {
+        json_response(['status' => 'error', 'message' => 'track_id is required'], 400);
+    }
+
+    $stmt = $pdo->prepare("SELECT id, title, artist_name, lyrics, local_lyrics_path, lyrics_file_path FROM tracks WHERE id = ? OR video_id = ? LIMIT 1");
+    $stmt->execute([$trackId, $trackId]);
+    $row = $stmt->fetch();
+
+    if (!$row) {
+        json_response(['status' => 'success', 'lyrics' => '', 'source' => 'not_found']);
+    }
+
+    $lyricsText = trim((string)($row['lyrics'] ?? ''));
+    if (!empty($lyricsText) && strpos($lyricsText, 'Synchronized Catalog Lyrics') !== false) {
+        $lyricsText = '';
+    }
+
+    // Check uploaded .lrc/.srt/.txt file if column is empty
+    if (empty($lyricsText)) {
+        $relLyr = ltrim((string)($row['local_lyrics_path'] ?? $row['lyrics_file_path'] ?? ''), '/');
+        if (!empty($relLyr)) {
+            $projectRoot = realpath(__DIR__ . '/../..') ?: dirname(__DIR__, 2);
+            foreach ([BASE_DIR . '/storage/' . $relLyr, BASE_DIR . '/' . $relLyr, $projectRoot . '/' . $relLyr] as $candLyr) {
+                if (is_file($candLyr) && is_readable($candLyr)) {
+                    $lyricsText = trim((string)@file_get_contents($candLyr));
+                    break;
+                }
+            }
+        }
+    }
+
+    json_response([
+        'status' => 'success',
+        'track_id' => $row['id'],
+        'lyrics' => $lyricsText,
+        'source' => !empty($lyricsText) ? 'uploaded_catalog' : 'none'
+    ]);
 }
 
 // --- 1. STREAM COUNT INCREMENT & LISTENING HISTORY ---

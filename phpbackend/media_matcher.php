@@ -614,17 +614,37 @@ class MediaMatcher {
                     // Database Integration: link file to track record!
                     // Preserve existing IDs, artwork, albums, artist relations, metadata
                     $streamUrl = "/phpbackend/api/stream.php?id=" . urlencode($bestMatch['id']);
-                    $pdo->prepare("
-                        UPDATE tracks 
-                        SET local_audio_path = ?, audio_file_size = ?, audio_format = ?, audio_url = ?, import_status = 'synced', last_synced_at = NOW()
-                        WHERE id = ?
-                    ")->execute([
-                        $relPath,
-                        $size,
-                        $ext,
-                        $streamUrl,
-                        $bestMatch['id']
-                    ]);
+                    if ($isVideo) {
+                        $videoUrl = "/phpbackend/api/stream.php?id=" . urlencode($bestMatch['id']) . "&type=video";
+                        $pdo->prepare("
+                            UPDATE tracks 
+                            SET local_video_path = ?,
+                                video_url = ?,
+                                local_audio_path = COALESCE(NULLIF(local_audio_path, ''), ?),
+                                audio_url = COALESCE(NULLIF(audio_url, ''), ?),
+                                import_status = 'synced',
+                                last_synced_at = NOW()
+                            WHERE id = ?
+                        ")->execute([
+                            $relPath,
+                            $videoUrl,
+                            $relPath,
+                            $streamUrl,
+                            $bestMatch['id']
+                        ]);
+                    } else {
+                        $pdo->prepare("
+                            UPDATE tracks 
+                            SET local_audio_path = ?, audio_file_size = ?, audio_format = ?, audio_url = ?, import_status = 'synced', last_synced_at = NOW()
+                            WHERE id = ?
+                        ")->execute([
+                            $relPath,
+                            $size,
+                            $ext,
+                            $streamUrl,
+                            $bestMatch['id']
+                        ]);
+                    }
                 }
             } elseif ($bestMatch && $bestScore >= self::AMBIGUOUS_THRESHOLD) {
                 $matchStatus = 'ambiguous';
@@ -782,17 +802,37 @@ class MediaMatcher {
         }
 
         $streamUrl = "/phpbackend/api/stream.php?id=" . urlencode($track['id']);
-        $pdo->prepare("
-            UPDATE tracks 
-            SET local_audio_path = ?, audio_file_size = ?, audio_format = ?, audio_url = ?, import_status = 'synced', last_synced_at = NOW()
-            WHERE id = ?
-        ")->execute([
-            $file['file_path'],
-            $file['file_size'],
-            $file['file_extension'],
-            $streamUrl,
-            $track['id']
-        ]);
+        if (!empty($file['is_video'])) {
+            $videoUrl = "/phpbackend/api/stream.php?id=" . urlencode($track['id']) . "&type=video";
+            $pdo->prepare("
+                UPDATE tracks 
+                SET local_video_path = ?,
+                    video_url = ?,
+                    local_audio_path = COALESCE(NULLIF(local_audio_path, ''), ?),
+                    audio_url = COALESCE(NULLIF(audio_url, ''), ?),
+                    import_status = 'synced',
+                    last_synced_at = NOW()
+                WHERE id = ?
+            ")->execute([
+                $file['file_path'],
+                $videoUrl,
+                $file['file_path'],
+                $streamUrl,
+                $track['id']
+            ]);
+        } else {
+            $pdo->prepare("
+                UPDATE tracks 
+                SET local_audio_path = ?, audio_file_size = ?, audio_format = ?, audio_url = ?, import_status = 'synced', last_synced_at = NOW()
+                WHERE id = ?
+            ")->execute([
+                $file['file_path'],
+                $file['file_size'],
+                $file['file_extension'],
+                $streamUrl,
+                $track['id']
+            ]);
+        }
 
         $pdo->prepare("
             UPDATE media_scan_files 
