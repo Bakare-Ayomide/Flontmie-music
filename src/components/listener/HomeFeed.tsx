@@ -612,10 +612,10 @@ export const HomeFeed: React.FC<HomeFeedProps> = ({
           subtitle="Discover top streaming recording artists and their official releases"
         >
           {artistList.map((artist) => {
-            const formattedAudience =
-              artist.ytMonthlyAudience ||
-              (artist.monthlyListeners ? `${formatCompactNumber(artist.monthlyListeners)} monthly listeners` : null) ||
-              (artist.totalStreams ? `${formatCompactNumber(artist.totalStreams)} plays` : '0 plays');
+            const artistPlays = tracks
+              .filter((t) => t.artistId === artist.id || (t.artist || '').toLowerCase() === (artist.name || '').toLowerCase())
+              .reduce((sum, t) => sum + (Number(t.flontmiePlays ?? t.streams) || 0), 0);
+            const formattedAudience = `${formatCompactNumber(artistPlays)} plays`;
             return (
               <div
                 key={artist.id}

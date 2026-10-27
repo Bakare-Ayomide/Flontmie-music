@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Play,
   Pause,
@@ -16,9 +16,13 @@ import {
   Headphones,
   Video,
   FileText,
+  Download,
+  CheckCircle2,
+  Loader2,
 } from 'lucide-react';
 import { Track, PlayerTabMode } from '../../types/music';
 import { resolveArtworkUrl, handleImageError } from '../../utils/artwork';
+import { nativePlatform } from '../../services/nativePlatform';
 
 interface BottomPlayerProps {
   currentTrack: Track | null;
@@ -79,7 +83,33 @@ export const BottomPlayer: React.FC<BottomPlayerProps> = ({
   onSelectArtist,
   onOpenFullPlayer,
 }) => {
+  const [isDownloadedOffline, setIsDownloadedOffline] = useState<boolean>(false);
+  const [downloadPct, setDownloadPct] = useState<number | null>(null);
+
+  useEffect(() => {
+    const unsub = nativePlatform.subscribeOfflineTracks((records) => {
+      setIsDownloadedOffline(Boolean(currentTrack && records[currentTrack.id]));
+    });
+    return () => unsub();
+  }, [currentTrack?.id]);
+
   if (!currentTrack) return null;
+
+  const handleToggleOfflineDownload = async () => {
+    if (!currentTrack || downloadPct !== null) return;
+    if (isDownloadedOffline) {
+      await nativePlatform.removeOfflineTrack(currentTrack.id);
+      return;
+    }
+    setDownloadPct(1);
+    try {
+      await nativePlatform.downloadTrackForOffline(currentTrack, (pct) => setDownloadPct(pct));
+    } catch {
+      // Handled gracefully
+    } finally {
+      setDownloadPct(null);
+    }
+  };
 
   const formatTime = (sec: number) => {
     const safeSec = Number.isFinite(sec) && sec >= 0 ? sec : 0;
@@ -166,10 +196,36 @@ export const BottomPlayer: React.FC<BottomPlayerProps> = ({
           </p>
         </div>
 
-        <div className="hidden sm:flex items-center gap-1">
+        <div className="flex items-center gap-1">
+          <button
+            onClick={handleToggleOfflineDownload}
+            className={`p-2 rounded-lg transition-colors cursor-pointer ${
+              isDownloadedOffline
+                ? 'text-emerald-400 bg-emerald-500/10'
+                : 'text-zinc-400 hover:text-emerald-400'
+            }`}
+            title={
+              isDownloadedOffline
+                ? 'Saved Offline (Click to Remove)'
+                : 'Download for Offline Playback'
+            }
+            aria-label={
+              isDownloadedOffline
+                ? 'Saved Offline'
+                : 'Download for Offline Playback'
+            }
+          >
+            {downloadPct !== null ? (
+              <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
+            ) : isDownloadedOffline ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+            ) : (
+              <Download className="w-4 h-4" />
+            )}
+          </button>
           <button
             onClick={() => onToggleLike(currentTrack.id)}
-            className={`p-2 rounded-lg transition-colors cursor-pointer ${
+            className={`hidden sm:inline-flex p-2 rounded-lg transition-colors cursor-pointer ${
               isLiked ? 'text-rose-500 hover:text-rose-400' : 'text-zinc-500 hover:text-zinc-300'
             }`}
             title={isLiked ? 'Remove from Liked' : 'Save to Liked'}
@@ -180,7 +236,7 @@ export const BottomPlayer: React.FC<BottomPlayerProps> = ({
           {onDislike && (
             <button
               onClick={() => onDislike(currentTrack.id)}
-              className={`p-2 rounded-lg transition-colors cursor-pointer ${
+              className={`hidden sm:inline-flex p-2 rounded-lg transition-colors cursor-pointer ${
                 isDisliked ? 'text-amber-400 bg-amber-500/10' : 'text-zinc-500 hover:text-zinc-300'
               }`}
               title="Dislike / Not Interested"
@@ -191,7 +247,7 @@ export const BottomPlayer: React.FC<BottomPlayerProps> = ({
           )}
           <button
             onClick={() => onOpenShare(currentTrack)}
-            className="p-2 rounded-lg text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer"
+            className="hidden sm:inline-flex p-2 rounded-lg text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer"
             title="Share Track"
             aria-label="Share Track"
           >

@@ -68,9 +68,9 @@ export const PublicArtistPage: React.FC<PublicArtistPageProps> = ({
     return localStorage.getItem(key) === 'true';
   });
   const [followersCount, setFollowersCount] = useState<number>(
-    typeof initialArtist.followers === 'number' && initialArtist.followers > 0
+    typeof initialArtist.followers === 'number' && initialArtist.followers >= 0
       ? initialArtist.followers
-      : 1420000
+      : 0
   );
 
   // Release Tracklist Modal state when user clicks any Album, Single/EP, or Featured item
@@ -296,8 +296,9 @@ export const PublicArtistPage: React.FC<PublicArtistPageProps> = ({
 
   const resolvedAvatar = resolveArtworkUrl(artist.avatarUrl, 'artist', artist.name);
   const resolvedHeader = resolveArtworkUrl(artist.headerUrl || artist.avatarUrl, 'artist', artist.name);
-  const monthlyListenersDisplay = formatCompactNumber(artist.monthlyListeners || 28500000);
-  const totalStreamsDisplay = formatCompactNumber(artist.totalStreams || 480000000);
+  const realArtistStreams = popularSongs.reduce((sum, t) => sum + (Number(t.flontmiePlays ?? t.streams) || 0), 0);
+  const monthlyListenersDisplay = formatCompactNumber(artist.flontmieStreams ?? realArtistStreams);
+  const totalStreamsDisplay = formatCompactNumber(artist.flontmieStreams ?? realArtistStreams);
   const followersDisplay = formatCompactNumber(followersCount);
 
   return (
@@ -837,36 +838,7 @@ export const PublicArtistPage: React.FC<PublicArtistPageProps> = ({
                 </div>
               ) : releaseTracks.length === 0 ? (
                 <div className="py-10 text-center space-y-3">
-                  <p className="text-xs text-neutral-400">Ready to stream title release.</p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onPlayTrack({
-                        id: selectedRelease.id,
-                        title: selectedRelease.title,
-                        artist: artist.name,
-                        artistId: artist.id || `art_${artist.name}`,
-                        album: selectedRelease.title,
-                        duration: 210,
-                        genre: artist.primaryGenre || 'Music',
-                        coverUrl: selectedRelease.coverUrl,
-                        audioUrl: '',
-                        streams: 150000,
-                        likes: 5400,
-                        releaseDate: selectedRelease.year ? `${selectedRelease.year}-01-01` : '2024-01-01',
-                        bpm: 120,
-                        moods: ['all'],
-                        isrc: 'USFLM2026001',
-                        upc: '012345678901',
-                        label: 'Flontmie Records',
-                        distributor: 'Flontmie Direct',
-                      });
-                      setSelectedRelease(null);
-                    }}
-                    className="px-4 py-2 rounded-full bg-red-600 hover:bg-red-500 text-white text-xs font-bold"
-                  >
-                    Play Release
-                  </button>
+                  <p className="text-xs text-neutral-400">No uploaded tracks linked to this release yet.</p>
                 </div>
               ) : (
                 releaseTracks.map((t, idx) => (

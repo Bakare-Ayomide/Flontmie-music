@@ -14,12 +14,42 @@ $action = $_GET['action'] ?? '';
 $id = trim($_GET['id'] ?? '');
 $pdo = Database::getConnection();
 
+// Helper to verify if a relative storage path points to a real uploaded audio/video file on the server
+function resolveUploadedFilePath(?string $rawRelPath): ?string {
+    if (empty($rawRelPath)) return null;
+    $rel = ltrim(trim($rawRelPath), '/');
+    $relStripped = preg_replace('#^phpbackend/storage/#', '', $rel);
+    $projectRoot = realpath(__DIR__ . '/../..') ?: dirname(__DIR__, 2);
+    $candidates = [
+        STORAGE_ROOT . '/' . $rel,
+        STORAGE_ROOT . '/' . $relStripped,
+        BASE_DIR . '/' . $rel,
+        $projectRoot . '/' . $rel
+    ];
+    foreach ($candidates as $cand) {
+        if (is_file($cand) && is_readable($cand)) {
+            $fsize = (int)@filesize($cand);
+            $ext = strtolower(pathinfo($cand, PATHINFO_EXTENSION));
+            $bname = basename($cand);
+            // Exclude legacy 705644-byte synthesized WAVs and 30s iTunes preview .m4a files
+            if ($ext === 'wav' && $fsize === 705644) continue;
+            if ($ext === 'm4a' && strpos($bname, 'trk_yt_') === 0 && $fsize < 1500000) continue;
+            if ($fsize > 4096) {
+                return $cand;
+            }
+        }
+    }
+    return null;
+}
+
 // Helper to enrich track row for API output
 function formatTrackForOutput(array $t, array $likedMap = []): array {
+    $realPlays = (int)($t['flontmie_plays'] ?? 0);
     $t['mood_tags'] = !empty($t['mood_tags_json']) ? json_decode($t['mood_tags_json'], true) : [];
     $t['cover_art_url'] = ArtistEnrichment::resolveArtworkUrl($t['cover_art_url'] ?? '', $t['video_id'] ?? $t['id']);
-    $t['yt_plays'] = ArtistEnrichment::parseMetric((string)($t['stream_count'] ?? '0'))['compact'];
-    $t['flontmie_plays'] = (int)($t['flontmie_plays'] ?? 0);
+    $t['flontmie_plays'] = $realPlays;
+    $t['stream_count'] = $realPlays;
+    $t['yt_plays'] = null;
     $t['is_liked'] = isset($likedMap[$t['id']]);
 
     // Never return legacy placeholder lyrics
@@ -39,12 +69,14 @@ function formatTrackForOutput(array $t, array $likedMap = []): array {
         }
     }
 
-    $audioExt = strtolower(pathinfo($t['local_audio_path'] ?? '', PATHINFO_EXTENSION));
-    $isSynthesizedWav = ($audioExt === 'wav' && (int)($t['audio_file_size'] ?? 0) === 705644);
+    $verifiedAudioFile = resolveUploadedFilePath($t['local_audio_path'] ?? null);
+    $verifiedVideoFile = resolveUploadedFilePath($t['local_video_path'] ?? null);
+
+    $audioExt = strtolower(pathinfo($verifiedAudioFile ?? '', PATHINFO_EXTENSION));
     $isAudioPathVideo = in_array($audioExt, ['mp4', 'webm', 'm4v', 'mov', 'mkv'], true);
 
-    $hasRealAudio = (!empty($t['local_audio_path']) && !$isSynthesizedWav) || !empty($t['local_video_path']);
-    $hasRealVideo = !empty($t['local_video_path']) || !empty($t['video_url']) || $isAudioPathVideo;
+    $hasRealAudio = ($verifiedAudioFile !== null) || ($verifiedVideoFile !== null);
+    $hasRealVideo = ($verifiedVideoFile !== null) || ($verifiedAudioFile !== null && $isAudioPathVideo);
 
     $t['has_local_audio'] = $hasRealAudio;
     $t['has_local_video'] = $hasRealVideo;
@@ -329,14 +361,18 @@ if ($method === 'GET') {
         }
     }
 
-    foreach ($tracks as &$t) {
-        $t = formatTrackForOutput($t, $likedMap);
+    $verifiedTracks = [];
+    foreach ($tracks as $t) {
+        $formatted = formatTrackForOutput($t, $likedMap);
+        if (!empty($formatted['has_local_audio']) || !empty($formatted['has_local_video'])) {
+            $verifiedTracks[] = $formatted;
+        }
     }
 
     json_response([
         'status' => 'success',
-        'count' => count($tracks),
-        'tracks' => $tracks
+        'count' => count($verifiedTracks),
+        'tracks' => $verifiedTracks
     ]);
 }
 

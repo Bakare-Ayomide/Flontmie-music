@@ -274,12 +274,16 @@ foreach ($audioPathsToTry as $rawRelPath) {
         if (is_file($fullAudioPath)) {
             $fsize = (int)filesize($fullAudioPath);
             $ext = strtolower(pathinfo($fullAudioPath, PATHINFO_EXTENSION));
-            // Never serve legacy 705644-byte synthesized harmonic wav
+            $bname = basename($fullAudioPath);
+            // Never serve legacy 705644-byte synthesized harmonic wav or 30s trk_yt_*.m4a iTunes previews
             if ($ext === 'wav' && $fsize === 705644) {
                 continue;
             }
+            if ($ext === 'm4a' && strpos($bname, 'trk_yt_') === 0 && $fsize < 1500000) {
+                continue;
+            }
             if ($fsize > 1024) {
-                serveBinaryWithRange($fullAudioPath, resolveMimeType($ext), basename($fullAudioPath));
+                serveBinaryWithRange($fullAudioPath, resolveMimeType($ext), $bname);
             }
         }
     }
@@ -297,45 +301,19 @@ try {
             if (is_file($candPath)) {
                 $fsize = (int)filesize($candPath);
                 $ext = strtolower(pathinfo($candPath, PATHINFO_EXTENSION));
+                $bname = basename($candPath);
                 if ($ext === 'wav' && $fsize === 705644) continue;
+                if ($ext === 'm4a' && strpos($bname, 'trk_yt_') === 0 && $fsize < 1500000) continue;
                 if ($fsize > 1024) {
                     $pdo->prepare("UPDATE tracks SET local_audio_path = ?, audio_format = ? WHERE id = ?")->execute([$rel, $ext, $track['id']]);
-                    serveBinaryWithRange($candPath, resolveMimeType($ext), basename($candPath));
+                    serveBinaryWithRange($candPath, resolveMimeType($ext), $bname);
                 }
             }
         }
     }
 } catch (Exception $e) {}
 
-$audioRes = MediaEngine::acquireAndStoreAudio(
-    $track['id'],
-    $track['video_id'],
-    $track['title'],
-    $track['artist_name'],
-    $track['genre'] ?: 'Pop',
-    $track['country'] ?: 'US'
-);
-
-if (!empty($audioRes['relative_path'])) {
-    $pdo->prepare("
-        UPDATE tracks 
-        SET local_audio_path = ?, audio_file_size = ?, audio_format = ?, import_status = 'synced', last_synced_at = NOW() 
-        WHERE id = ?
-    ")->execute([
-        $audioRes['relative_path'],
-        $audioRes['file_size'],
-        $audioRes['format'],
-        $track['id']
-    ]);
-
-    $fullAudioPath = STORAGE_ROOT . '/' . ltrim($audioRes['relative_path'], '/');
-    if (is_file($fullAudioPath)) {
-        $ext = strtolower(pathinfo($fullAudioPath, PATHINFO_EXTENSION));
-        serveBinaryWithRange($fullAudioPath, resolveMimeType($ext), basename($fullAudioPath));
-    }
-}
-
 http_response_code(404);
 header('Content-Type: application/json');
-echo json_encode(['status' => 'error', 'message' => 'Audio stream unavailable']);
+echo json_encode(['status' => 'error', 'message' => 'Uploaded audio stream unavailable on server']);
 exit;

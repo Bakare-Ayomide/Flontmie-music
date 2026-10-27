@@ -231,6 +231,8 @@ class FlontmieApiService {
     const hasLocalAudio = dbTrack.has_local_audio !== undefined ? Boolean(dbTrack.has_local_audio) : Boolean(resolvedAudioUrl);
     const hasLocalVideo = dbTrack.has_local_video !== undefined ? Boolean(dbTrack.has_local_video) : Boolean(resolvedVideoUrl);
 
+    const realFlontmiePlays = Number(dbTrack.flontmie_plays ?? dbTrack.flontmiePlays ?? 0) || 0;
+
     return {
       id: rawId,
       videoId: explicitVid,
@@ -245,9 +247,9 @@ class FlontmieApiService {
       videoUrl: hasLocalVideo && resolvedVideoUrl ? resolvedVideoUrl : undefined,
       hasLocalAudio,
       hasLocalVideo,
-      streams: Number(dbTrack.stream_count ?? dbTrack.streams) || 0,
-      ytPlays: dbTrack.yt_plays ?? dbTrack.ytPlays ?? null,
-      flontmiePlays: Number(dbTrack.flontmie_plays ?? dbTrack.flontmiePlays) || 0,
+      streams: realFlontmiePlays,
+      ytPlays: null,
+      flontmiePlays: realFlontmiePlays,
       likes: Number(dbTrack.likes_count ?? dbTrack.likes) || 0,
       dislikes: Number(dbTrack.dislikes_count ?? dbTrack.dislikes) || 0,
       isExplicit: Boolean(Number(dbTrack.explicit)),
@@ -309,6 +311,9 @@ class FlontmieApiService {
       : [];
 
     const mappedTracks: Track[] = rawTracks.map((t: any) => this.mapDbTrack(t));
+    const computedFlontmieStreams =
+      Number(a.flontmie_streams) ||
+      mappedTracks.reduce((sum, t) => sum + (Number(t.flontmiePlays ?? t.streams) || 0), 0);
 
     return {
       id: a.id,
@@ -319,14 +324,14 @@ class FlontmieApiService {
       bioSource: a.bio_source || a.bioSource || undefined,
       bioUrl: a.bio_url || a.bioUrl || undefined,
       wikidataId: a.wikidata_id || a.wikidataId || undefined,
-      ytBrowseId: a.yt_browse_id || a.ytBrowseId || undefined,
+      ytBrowseId: undefined,
       verified: Boolean(Number(a.verified ?? 0)),
-      monthlyListeners: a.monthly_listeners !== null && a.monthly_listeners !== undefined ? Number(a.monthly_listeners) : 0,
-      ytMonthlyAudience: a.yt_monthly_audience || null,
-      ytSubscribers: a.yt_subscribers || null,
-      ytTotalViews: a.yt_total_views || null,
-      totalStreams: a.total_streams !== null && a.total_streams !== undefined ? Number(a.total_streams) : 0,
-      flontmieStreams: Number(a.flontmie_streams) || 0,
+      monthlyListeners: computedFlontmieStreams,
+      ytMonthlyAudience: null,
+      ytSubscribers: null,
+      ytTotalViews: null,
+      totalStreams: computedFlontmieStreams,
+      flontmieStreams: computedFlontmieStreams,
       followers: a.followers !== null && a.followers !== undefined ? Number(a.followers) : 0,
       flontmieFollowers: Number(a.flontmie_followers ?? a.followers) || 0,
       label: a.label_name || a.label || '',

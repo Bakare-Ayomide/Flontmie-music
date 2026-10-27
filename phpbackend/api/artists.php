@@ -251,46 +251,40 @@ if ($method === 'GET') {
     $stmt->execute($params);
     $artists = $stmt->fetchAll();
 
-    foreach ($artists as &$a) {
+    $verifiedArtists = [];
+    foreach ($artists as $a) {
         $artId = $a['id'];
+        // Sum real flontmie_plays and verify artist has at least one uploaded track (or was created by admin/distributor)
+        $tStmt = $pdo->prepare("SELECT local_audio_path, local_video_path, COALESCE(flontmie_plays, 0) AS fp FROM tracks WHERE (artist_id = ? OR LOWER(artist_name) = LOWER(?)) AND is_deleted = 0");
+        $tStmt->execute([$artId, $a['name']]);
+        $tRows = $tStmt->fetchAll();
+        $realStreams = 0;
+        $uploadedTrackCount = 0;
+        foreach ($tRows as $tr) {
+            if (ArtistEnrichment::hasVerifiedFile($tr['local_audio_path'] ?? null) !== null || ArtistEnrichment::hasVerifiedFile($tr['local_video_path'] ?? null) !== null) {
+                $uploadedTrackCount++;
+                $realStreams += (int)$tr['fp'];
+            }
+        }
+        if ($uploadedTrackCount === 0 && empty($a['created_by_user_id'])) {
+            continue;
+        }
+
         $a['avatar_url'] = ArtistEnrichment::resolveArtworkUrl($a['avatar_url'] ?? '', $artId);
         $a['header_url'] = ArtistEnrichment::resolveArtworkUrl($a['header_url'] ?? $a['avatar_url'], $artId);
         $a['genres'] = !empty($a['genres_json']) ? json_decode($a['genres_json'], true) : [];
         $a['social_links'] = !empty($a['social_links_json']) ? json_decode($a['social_links_json'], true) : [];
-        $a['yt_monthly_audience'] = ArtistEnrichment::parseMetric((string)($a['monthly_listeners'] ?? ''))['compact'];
-        $a['yt_subscribers'] = ArtistEnrichment::parseMetric((string)($a['followers'] ?? ''))['compact'];
-        $a['yt_total_views'] = ArtistEnrichment::parseMetric((string)($a['total_streams'] ?? ''))['compact'];
-        $a['country'] = $a['country'] ?? (ArtistEnrichment::$KNOWN_ARTISTS[$artId]['country'] ?? 'US');
-
-        $safeCacheId = preg_replace('/[^a-zA-Z0-9_-]/', '_', $artId);
-        $cacheFile = STORAGE_ROOT . "/cache/artists/{$safeCacheId}_v2.json";
-        if (is_file($cacheFile)) {
-            $cached = json_decode((string)file_get_contents($cacheFile), true);
-            if (!empty($cached['wiki']['bio']) && empty($a['bio'])) {
-                $a['bio'] = $cached['wiki']['bio'];
-                $a['bio_source'] = $cached['wiki']['bio_source'] ?? 'Official Biography';
-                $a['bio_url'] = $cached['wiki']['bio_url'] ?? null;
-                $a['wikidata_id'] = $cached['wiki']['wikidata_id'] ?? null;
-            }
-            if (!empty($cached['yt']['avatar_url']) && empty($a['avatar_url'])) {
-                $a['avatar_url'] = $cached['yt']['avatar_url'];
-                $a['header_url'] = $cached['yt']['header_url'] ?? $cached['yt']['avatar_url'];
-            }
-            if (!empty($cached['yt']['monthly_audience_compact'])) {
-                $a['yt_monthly_audience'] = $cached['yt']['monthly_audience_compact'];
-                $a['monthly_listeners'] = $cached['yt']['monthly_audience_num'] ?? $a['monthly_listeners'];
-            }
-            if (!empty($cached['yt']['subscribers_compact'])) {
-                $a['yt_subscribers'] = $cached['yt']['subscribers_compact'];
-            }
-            if (!empty($cached['yt']['total_views_compact'])) {
-                $a['yt_total_views'] = $cached['yt']['total_views_compact'];
-                $a['total_streams'] = $cached['yt']['total_views_num'] ?? $a['total_streams'];
-            }
-        }
+        $a['monthly_listeners'] = $realStreams;
+        $a['total_streams'] = $realStreams;
+        $a['flontmie_streams'] = $realStreams;
+        $a['yt_monthly_audience'] = null;
+        $a['yt_subscribers'] = null;
+        $a['yt_total_views'] = null;
+        $a['country'] = $a['country'] ?? (ArtistEnrichment::$KNOWN_ARTISTS[$artId]['country'] ?? 'NG');
+        $verifiedArtists[] = $a;
     }
 
-    json_response(['status' => 'success', 'count' => count($artists), 'artists' => $artists]);
+    json_response(['status' => 'success', 'count' => count($verifiedArtists), 'artists' => $verifiedArtists]);
 }
 
 // --- 7. CREATE ARTIST (POST) ---

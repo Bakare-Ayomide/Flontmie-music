@@ -20,7 +20,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
 
       - name: Set up JDK 21 (Required for Capacitor 8 / Android Gradle Plugin)
         uses: actions/setup-java@v4
@@ -39,8 +38,12 @@ jobs:
           npm run lint
           npm run build
 
-      - name: Sync Web Assets to Capacitor Android Project
-        run: npx cap sync android
+      - name: Ensure & Sync Capacitor Android Project
+        run: |
+          if [ ! -d "android" ] || [ ! -f "android/gradlew" ]; then
+            npx cap add android
+          fi
+          npx cap sync android
 
       - name: Decode Release Keystore (Optional if Secrets Configured)
         env:

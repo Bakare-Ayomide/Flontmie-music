@@ -391,8 +391,56 @@ export const FullPlaybackScreen: React.FC<FullPlaybackScreenProps> = ({
           })}
         </div>
 
-        {/* Right spacer / Queue button to keep the three icon-only tabs centered */}
-        <div className="flex items-center justify-end w-10 sm:w-24">
+        {/* Right action buttons: Offline Download & Queue */}
+        <div className="flex items-center justify-end gap-2">
+          <button
+            onClick={async () => {
+              if (downloadPct !== null) return;
+              if (isDownloadedOffline) {
+                await nativePlatform.removeOfflineTrack(currentTrack.id);
+                return;
+              }
+              setDownloadPct(1);
+              try {
+                await nativePlatform.downloadTrackForOffline(currentTrack, (p) => setDownloadPct(p));
+              } catch {} finally {
+                setDownloadPct(null);
+              }
+            }}
+            title={
+              isDownloadedOffline
+                ? 'Saved for Offline Listening (Click to Remove)'
+                : 'Download Track for Native Offline Playback'
+            }
+            aria-label={
+              isDownloadedOffline
+                ? 'Saved for Offline Listening'
+                : 'Download Track for Native Offline Playback'
+            }
+            className={`flex items-center gap-1.5 px-3 py-2.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
+              isDownloadedOffline
+                ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+                : 'bg-white/5 hover:bg-white/10 border-white/10 text-zinc-200 hover:text-white'
+            }`}
+          >
+            {downloadPct !== null ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
+                <span className="hidden sm:inline">{downloadPct}%</span>
+              </>
+            ) : isDownloadedOffline ? (
+              <>
+                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                <span className="hidden sm:inline">Offline</span>
+              </>
+            ) : (
+              <>
+                <Download className="w-4 h-4 text-emerald-400" />
+                <span className="hidden sm:inline">Download</span>
+              </>
+            )}
+          </button>
+
           <button
             onClick={onToggleQueue}
             title="Queue"
@@ -671,38 +719,36 @@ export const FullPlaybackScreen: React.FC<FullPlaybackScreenProps> = ({
                 >
                   <MessageSquare className="w-5 h-5" />
                 </button>
-                {nativePlatform.canDownloadTrack(currentTrack) && (
-                  <button
-                    onClick={async () => {
-                      if (downloadPct !== null) return;
-                      if (isDownloadedOffline) {
-                        await nativePlatform.removeOfflineTrack(currentTrack.id);
-                        return;
-                      }
-                      setDownloadPct(1);
-                      try {
-                        await nativePlatform.downloadTrackForOffline(currentTrack, (p) => setDownloadPct(p));
-                      } catch {} finally {
-                        setDownloadPct(null);
-                      }
-                    }}
-                    className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
-                      isDownloadedOffline
-                        ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400'
-                        : 'bg-white/5 border-white/10 text-zinc-400 hover:text-white'
-                    }`}
-                    title={isDownloadedOffline ? 'Downloaded for Offline Listening (Click to Remove)' : 'Download for Offline Listening'}
-                    aria-label={isDownloadedOffline ? 'Downloaded for Offline Listening' : 'Download for Offline Listening'}
-                  >
-                    {downloadPct !== null ? (
-                      <Loader2 className="w-5 h-5 animate-spin text-emerald-400" />
-                    ) : isDownloadedOffline ? (
-                      <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-                    ) : (
-                      <Download className="w-5 h-5" />
-                    )}
-                  </button>
-                )}
+                <button
+                  onClick={async () => {
+                    if (downloadPct !== null) return;
+                    if (isDownloadedOffline) {
+                      await nativePlatform.removeOfflineTrack(currentTrack.id);
+                      return;
+                    }
+                    setDownloadPct(1);
+                    try {
+                      await nativePlatform.downloadTrackForOffline(currentTrack, (p) => setDownloadPct(p));
+                    } catch {} finally {
+                      setDownloadPct(null);
+                    }
+                  }}
+                  className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
+                    isDownloadedOffline
+                      ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400'
+                      : 'bg-white/5 border-white/10 text-zinc-400 hover:text-white'
+                  }`}
+                  title={isDownloadedOffline ? 'Downloaded for Offline Listening (Click to Remove)' : 'Download for Offline Listening'}
+                  aria-label={isDownloadedOffline ? 'Downloaded for Offline Listening' : 'Download for Offline Listening'}
+                >
+                  {downloadPct !== null ? (
+                    <Loader2 className="w-5 h-5 animate-spin text-emerald-400" />
+                  ) : isDownloadedOffline ? (
+                    <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                  ) : (
+                    <Download className="w-5 h-5" />
+                  )}
+                </button>
                 <button
                   onClick={() => onOpenShare(currentTrack)}
                   className="p-2.5 rounded-xl bg-white/5 border border-white/10 text-zinc-400 hover:text-white transition-all cursor-pointer"

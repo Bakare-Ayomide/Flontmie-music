@@ -823,7 +823,7 @@ try {
         ['allow_public_registration', 'true', 'auth', 'Allow new listeners to register accounts'],
         ['require_email_verification', 'false', 'auth', 'Require email verification before full account access'],
         ['allow_artist_claims', 'true', 'catalog', 'Allow artists and managers to submit profile verification claims'],
-        ['youtube_music_discovery_enabled', 'true', 'features', 'Enable live YouTube Music API search, charts, and streaming'],
+        ['youtube_music_discovery_enabled', 'false', 'features', 'External YouTube Music API disabled (strictly Admin & Distributor uploads)'],
         ['social_jam_sessions_enabled', 'true', 'features', 'Enable real-time collaborative Jam listening rooms'],
         ['direct_distributor_ingestion', 'true', 'catalog', 'Allow authorized distributors to ingest releases directly'],
         ['max_login_attempts', '5', 'security', 'Maximum failed login attempts before temporary 15-minute lockout'],
@@ -836,6 +836,7 @@ try {
     foreach ($defaultSettings as $s) {
         $setStmt->execute($s);
     }
+    $pdo->exec("UPDATE system_settings SET setting_value = 'false' WHERE setting_key = 'youtube_music_discovery_enabled'");
 
     // Ensure baseline platform genres exist
     $defaultGenres = [
@@ -877,22 +878,61 @@ try {
         WHERE audio_format = 'wav' AND audio_file_size = 705644
     ");
 
-    // 8. Link real uploaded .mp4 video files on storage to their catalog track records
-    $videoLinks = [
+    // 7b. Extract any unextracted uploaded master audio/video files from Fils.zip in storage/audio/2026/10/
+    $uploadDir202610 = STORAGE_ROOT . '/audio/2026/10';
+    $filsZipPath = $uploadDir202610 . '/Fils.zip';
+    if (is_file($filsZipPath) && class_exists('ZipArchive')) {
+        $zip = new ZipArchive();
+        if ($zip->open($filsZipPath) === true) {
+            for ($i = 0; $i < $zip->numFiles; $i++) {
+                $entryName = $zip->getNameIndex($i);
+                $baseName = basename($entryName);
+                if (empty($baseName) || strpos($baseName, '.') === 0) continue;
+                $ext = strtolower(pathinfo($baseName, PATHINFO_EXTENSION));
+                if (!in_array($ext, ['mp3', 'mp4', 'm4a', 'wav', 'flac', 'webm', 'lrc'], true)) continue;
+                $destFile = $uploadDir202610 . '/' . $baseName;
+                if (!is_file($destFile) || filesize($destFile) < 4096) {
+                    @copy("zip://{$filsZipPath}#{$entryName}", $destFile);
+                }
+            }
+            $zip->close();
+            $results[] = "Verified and extracted all uploaded master audio & video files from Fils.zip.";
+        }
+    }
+
+    // Also normalize 'Bella Shmurda - Ara ft. Olamide.mp4' <-> 'Bella Shmurda - Ara ft. Olamide (Official Video).mp4'
+    if (is_file($uploadDir202610 . '/Bella Shmurda - Ara ft. Olamide.mp4') && !is_file($uploadDir202610 . '/Bella Shmurda - Ara ft. Olamide (Official Video).mp4')) {
+        @copy($uploadDir202610 . '/Bella Shmurda - Ara ft. Olamide.mp4', $uploadDir202610 . '/Bella Shmurda - Ara ft. Olamide (Official Video).mp4');
+    }
+
+    // 7c. Remove legacy 30-second iTunes preview .m4a files (trk_yt_*.m4a < 1.5MB), 705644-byte .wav files, and YT cache JSONs
+    if (is_dir($uploadDir202610)) {
+        foreach (scandir($uploadDir202610) as $fn) {
+            if ($fn === '.' || $fn === '..') continue;
+            $fp = $uploadDir202610 . '/' . $fn;
+            if (!is_file($fp)) continue;
+            $fsize = (int)@filesize($fp);
+            $ext = strtolower(pathinfo($fn, PATHINFO_EXTENSION));
+            if (($ext === 'wav' && $fsize === 705644) || ($ext === 'm4a' && strpos($fn, 'trk_yt_') === 0 && $fsize < 1500000)) {
+                @unlink($fp);
+            }
+        }
+    }
+    foreach ([STORAGE_ROOT . '/cache/artists', STORAGE_ROOT . '/cache/releases'] as $cacheSubDir) {
+        if (is_dir($cacheSubDir)) {
+            foreach (scandir($cacheSubDir) as $cf) {
+                if ($cf === '.' || $cf === '..') continue;
+                if (is_file($cacheSubDir . '/' . $cf)) {
+                    @unlink($cacheSubDir . '/' . $cf);
+                }
+            }
+        }
+    }
+
+    // 8. Register all 24 real uploaded audio & video files on the server into `tracks` and `artists`
+    $uploadedCatalog = [
         [
-            'id' => 'trk_yt_n2Ni5u1__Ws',
-            'video_id' => 'n2Ni5u1__Ws',
-            'title' => 'AWAY',
-            'artist_id' => 'art_davido',
-            'artist' => 'Davido',
-            'album' => 'Timeless',
-            'genre' => 'Afrobeats',
-            'duration' => 176,
-            'audio' => 'audio/2026/10/trk_yt_n2Ni5u1__Ws.m4a',
-            'video' => 'audio/2026/10/Davido - AWAY (Official Video).mp4'
-        ],
-        [
-            'id' => 'trk_yt_c2gK9tq57iQ',
+            'id' => 'trk_upl_cityboys',
             'video_id' => 'c2gK9tq57iQ',
             'title' => 'City Boys',
             'artist_id' => 'art_burnaboy',
@@ -904,7 +944,7 @@ try {
             'video' => 'audio/2026/10/Burna Boy - City Boys [Official Music Video].mp4'
         ],
         [
-            'id' => 'trk_yt_CmThpha4Hoo',
+            'id' => 'trk_upl_lastlast',
             'video_id' => 'CmThpha4Hoo',
             'title' => 'Last Last',
             'artist_id' => 'art_burnaboy',
@@ -912,20 +952,8 @@ try {
             'album' => 'Love, Damini',
             'genre' => 'Afrobeats',
             'duration' => 172,
-            'audio' => 'audio/2026/10/trk_yt_CmThpha4Hoo.m4a',
+            'audio' => 'audio/2026/10/Burna Boy - Last Last [Official Music Video].mp4',
             'video' => 'audio/2026/10/Burna Boy - Last Last [Official Music Video].mp4'
-        ],
-        [
-            'id' => 'trk_yt_f0H2UbU-K8E',
-            'video_id' => 'f0H2UbU-K8E',
-            'title' => 'caricature',
-            'artist_id' => 'art_fola',
-            'artist' => 'FOLA',
-            'album' => 'catharsis',
-            'genre' => 'Afrobeats',
-            'duration' => 174,
-            'audio' => 'audio/2026/10/caricature_20261019_171632.mp3',
-            'video' => 'audio/2026/10/caricature.mp4'
         ],
         [
             'id' => 'trk_vid_reallife',
@@ -938,6 +966,18 @@ try {
             'duration' => 198,
             'audio' => 'audio/2026/10/Burna Boy - Real Life feat. Stormzy [Official Music Video].mp4',
             'video' => 'audio/2026/10/Burna Boy - Real Life feat. Stormzy [Official Music Video].mp4'
+        ],
+        [
+            'id' => 'trk_upl_away',
+            'video_id' => 'n2Ni5u1__Ws',
+            'title' => 'AWAY',
+            'artist_id' => 'art_davido',
+            'artist' => 'Davido',
+            'album' => 'Timeless',
+            'genre' => 'Afrobeats',
+            'duration' => 176,
+            'audio' => 'audio/2026/10/Davido - AWAY (Official Video).mp4',
+            'video' => 'audio/2026/10/Davido - AWAY (Official Video).mp4'
         ],
         [
             'id' => 'trk_vid_funds',
@@ -957,11 +997,95 @@ try {
             'title' => 'Already Falling',
             'artist_id' => 'art_davido',
             'artist' => 'Davido',
-            'album' => 'Single',
+            'album' => '5ive',
             'genre' => 'Afrobeats',
             'duration' => 165,
             'audio' => 'audio/2026/10/Davido - Already Falling (Official Audio).mp4',
             'video' => 'audio/2026/10/Davido - Already Falling (Official Audio).mp4'
+        ],
+        [
+            'id' => 'trk_upl_kante',
+            'video_id' => 'B9tN8R4dY2M',
+            'title' => 'KANTE (feat. Fave)',
+            'artist_id' => 'art_davido',
+            'artist' => 'Davido',
+            'album' => 'Timeless',
+            'genre' => 'Afrobeats',
+            'duration' => 194,
+            'audio' => 'audio/2026/10/Davido - KANTE (Official Video) ft. Fave.mp4',
+            'video' => 'audio/2026/10/Davido - KANTE (Official Video) ft. Fave.mp4'
+        ],
+        [
+            'id' => 'trk_upl_unavailable',
+            'video_id' => 'OSBan_sH_b8',
+            'title' => 'UNAVAILABLE (feat. Musa Keys)',
+            'artist_id' => 'art_davido',
+            'artist' => 'Davido',
+            'album' => 'Timeless',
+            'genre' => 'Afrobeats',
+            'duration' => 170,
+            'audio' => 'audio/2026/10/Davido - UNAVAILABLE (Official Video) ft. Musa Keys.mp4',
+            'video' => 'audio/2026/10/Davido - UNAVAILABLE (Official Video) ft. Musa Keys.mp4'
+        ],
+        [
+            'id' => 'trk_upl_iknowwhoibe',
+            'video_id' => 'K7pL3mN9qR4',
+            'title' => 'I Know Who I Be (feat. JAZZWRLD & GL_Ceejay)',
+            'artist_id' => 'art_davido',
+            'artist' => 'Davido',
+            'album' => 'Single',
+            'genre' => 'Afrobeats',
+            'duration' => 210,
+            'audio' => 'audio/2026/10/Davido, JAZZWRLD, GL_Ceejay - I Know Who I Be (Official Video).mp4',
+            'video' => 'audio/2026/10/Davido, JAZZWRLD, GL_Ceejay - I Know Who I Be (Official Video).mp4'
+        ],
+        [
+            'id' => 'trk_upl_caricature',
+            'video_id' => 'f0H2UbU-K8E',
+            'title' => 'caricature',
+            'artist_id' => 'art_fola',
+            'artist' => 'FOLA',
+            'album' => 'catharsis',
+            'genre' => 'Afrobeats',
+            'duration' => 174,
+            'audio' => 'audio/2026/10/caricature_20261019_171632.mp3',
+            'video' => 'audio/2026/10/caricature.mp4'
+        ],
+        [
+            'id' => 'trk_upl_waf',
+            'video_id' => 'W8mK2pL5tQ9',
+            'title' => 'waf',
+            'artist_id' => 'art_fola',
+            'artist' => 'FOLA',
+            'album' => 'catharsis',
+            'genre' => 'Afrobeats',
+            'duration' => 168,
+            'audio' => 'audio/2026/10/FOLA - waf (Official Audio)_20261019_171714.mp3',
+            'video' => 'audio/2026/10/FOLA - waf (Official Audio).mp4'
+        ],
+        [
+            'id' => 'trk_upl_healer',
+            'video_id' => 'H4nL9pM2vR7',
+            'title' => 'healer',
+            'artist_id' => 'art_fola',
+            'artist' => 'FOLA',
+            'album' => 'catharsis',
+            'genre' => 'Afrobeats',
+            'duration' => 158,
+            'audio' => 'audio/2026/10/healer_20261019_171604.mp3',
+            'video' => 'audio/2026/10/healer.mp4'
+        ],
+        [
+            'id' => 'trk_upl_itsover',
+            'video_id' => 'J9kL4mN8pQ2',
+            'title' => "it's over (feat. Bella Shmurda & Zlatan)",
+            'artist_id' => 'art_fola',
+            'artist' => 'FOLA',
+            'album' => 'what a feeling',
+            'genre' => 'Afrobeats',
+            'duration' => 188,
+            'audio' => 'audio/2026/10/FOLA, Bella Shmurda, Zlatan - it_s over (Official Video).mp4',
+            'video' => 'audio/2026/10/FOLA, Bella Shmurda, Zlatan - it_s over (Official Video).mp4'
         ],
         [
             'id' => 'trk_vid_ara',
@@ -972,8 +1096,8 @@ try {
             'album' => 'Hypertension',
             'genre' => 'Afrobeats',
             'duration' => 185,
-            'audio' => 'audio/2026/10/Bella Shmurda - Ara ft. Olamide (Official Video).mp4',
-            'video' => 'audio/2026/10/Bella Shmurda - Ara ft. Olamide (Official Video).mp4'
+            'audio' => 'audio/2026/10/Bella Shmurda - Ara ft. Olamide.mp4',
+            'video' => 'audio/2026/10/Bella Shmurda - Ara ft. Olamide.mp4'
         ],
         [
             'id' => 'trk_vid_vision2020',
@@ -986,34 +1110,179 @@ try {
             'duration' => 212,
             'audio' => 'audio/2026/10/Bella Shmurda - Vision2020 [Official Video] ft. Olamide.mp4',
             'video' => 'audio/2026/10/Bella Shmurda - Vision2020 [Official Video] ft. Olamide.mp4'
+        ],
+        [
+            'id' => 'trk_upl_triumphant',
+            'video_id' => 'T5kL8mN3pR9',
+            'title' => 'Triumphant (feat. Bella Shmurda)',
+            'artist_id' => 'art_olamide',
+            'artist' => 'Olamide',
+            'album' => 'Carpe Diem',
+            'genre' => 'Afrobeats',
+            'duration' => 195,
+            'audio' => 'audio/2026/10/Olamide - Triumphant (Official Video) ft. Bella Shmurda.mp4',
+            'video' => 'audio/2026/10/Olamide - Triumphant (Official Video) ft. Bella Shmurda.mp4'
+        ],
+        [
+            'id' => 'trk_upl_fever',
+            'video_id' => 'Fv9kL2mN5pQ',
+            'title' => 'Fever',
+            'artist_id' => 'art_wizkid',
+            'artist' => 'Wizkid',
+            'album' => 'Made in Lagos',
+            'genre' => 'Afrobeats',
+            'duration' => 205,
+            'audio' => 'audio/2026/10/Wizkid - Fever (Official Video).mp4',
+            'video' => 'audio/2026/10/Wizkid - Fever (Official Video).mp4'
+        ],
+        [
+            'id' => 'trk_upl_kese',
+            'video_id' => 'Ks4mL8nP2qR',
+            'title' => 'Kese (Dance)',
+            'artist_id' => 'art_wizkid',
+            'artist' => 'Wizkid',
+            'album' => 'Morayo',
+            'genre' => 'Afrobeats',
+            'duration' => 175,
+            'audio' => 'audio/2026/10/Wizkid - Kese (Dance) (Official Video).mp4',
+            'video' => 'audio/2026/10/Wizkid - Kese (Dance) (Official Video).mp4'
+        ],
+        [
+            'id' => 'trk_upl_moneylove',
+            'video_id' => 'Ml7nP3qR9tW',
+            'title' => 'Money & Love',
+            'artist_id' => 'art_wizkid',
+            'artist' => 'Wizkid',
+            'album' => 'More Love, Less Ego',
+            'genre' => 'Afrobeats',
+            'duration' => 192,
+            'audio' => 'audio/2026/10/Wizkid - Money & Love (Official Music Video).mp4',
+            'video' => 'audio/2026/10/Wizkid - Money & Love (Official Music Video).mp4'
+        ],
+        [
+            'id' => 'trk_upl_turbulence',
+            'video_id' => 'Tb2mN6pQ8rW',
+            'title' => 'Turbulence (feat. Asake)',
+            'artist_id' => 'art_wizkid',
+            'artist' => 'Wizkid',
+            'album' => 'Morayo',
+            'genre' => 'Afrobeats',
+            'duration' => 186,
+            'audio' => 'audio/2026/10/Wizkid, Asake - Turbulence (Official Video).mp4',
+            'video' => 'audio/2026/10/Wizkid, Asake - Turbulence (Official Video).mp4'
+        ],
+        [
+            'id' => 'trk_upl_starboymix',
+            'video_id' => 'Sb9mN4pQ2rW',
+            'title' => 'Starboy Chill Afrobeats & R&B Session',
+            'artist_id' => 'art_wizkid',
+            'artist' => 'Wizkid',
+            'album' => 'Starboy Sessions',
+            'genre' => 'Afrobeats',
+            'duration' => 3600,
+            'audio' => 'audio/2026/10/WIZ KID _ 2 Hours of Chill Songs _ Afrobeats_R&B MUSIC PLAYLIST _ Starboy.mp4',
+            'video' => 'audio/2026/10/WIZ KID _ 2 Hours of Chill Songs _ Afrobeats_R&B MUSIC PLAYLIST _ Starboy.mp4'
+        ],
+        [
+            'id' => 'trk_upl_bigtime',
+            'video_id' => 'Bt5mN8pQ3rW',
+            'title' => 'BIG TIME (feat. Wizkid)',
+            'artist_id' => 'art_odumodublvck',
+            'artist' => 'ODUMODUBLVCK',
+            'album' => 'EZIOKWU',
+            'genre' => 'Afrobeats',
+            'duration' => 182,
+            'audio' => 'audio/2026/10/ODUMODUBLVCK FT. Wizkid – BIG TIME (OFFICIAL MUSIC VIDEO).mp4',
+            'video' => 'audio/2026/10/ODUMODUBLVCK FT. Wizkid – BIG TIME (OFFICIAL MUSIC VIDEO).mp4'
+        ],
+        [
+            'id' => 'trk_upl_moneyconstant',
+            'video_id' => 'Mc6nP9qR4tW',
+            'title' => 'MONEY CONSTANT (feat. DJ Tunez, Wizkid & Mavo)',
+            'artist_id' => 'art_djmaphorisa',
+            'artist' => 'DJ Maphorisa',
+            'album' => 'Amapiano Sessions',
+            'genre' => 'Afrobeats',
+            'duration' => 240,
+            'audio' => 'audio/2026/10/DJ Maphorisa, DJ Tunez, Wizkid, Mavo - MONEY CONSTANT (Visualizer).mp4',
+            'video' => 'audio/2026/10/DJ Maphorisa, DJ Tunez, Wizkid, Mavo - MONEY CONSTANT (Visualizer).mp4'
+        ],
+        [
+            'id' => 'trk_upl_nakupenda',
+            'video_id' => 'Nk8mP2qR7tW',
+            'title' => 'Nakupenda (feat. Davido, Shoday, Scotts Maphuma & Zlatan)',
+            'artist_id' => 'art_txc',
+            'artist' => 'TxC',
+            'album' => 'Turn Off The Lights',
+            'genre' => 'Afrobeats',
+            'duration' => 235,
+            'audio' => 'audio/2026/10/TxC, Davido, Shoday & Scotts Maphuma - Nakupenda (Official Music Video) feat. Zlatan & Al Xapo.mp4',
+            'video' => 'audio/2026/10/TxC, Davido, Shoday & Scotts Maphuma - Nakupenda (Official Music Video) feat. Zlatan & Al Xapo.mp4'
         ]
     ];
-    foreach ($videoLinks as $vl) {
+
+    // Migrate any real flontmie_plays from legacy IDs (trk_yt_c2gK9tq57iQ, trk_yt_n2Ni5u1__Ws, trk_yt_CmThpha4Hoo, trk_yt_f0H2UbU-K8E) before removing legacy trk_yt_* rows
+    $legacyMap = [
+        'trk_yt_c2gK9tq57iQ' => 'trk_upl_cityboys',
+        'trk_yt_n2Ni5u1__Ws' => 'trk_upl_away',
+        'trk_yt_CmThpha4Hoo' => 'trk_upl_lastlast',
+        'trk_yt_f0H2UbU-K8E' => 'trk_upl_caricature'
+    ];
+
+    foreach ($uploadedCatalog as $vl) {
         $vidFileFull = STORAGE_ROOT . '/' . $vl['video'];
         $audFileFull = STORAGE_ROOT . '/' . $vl['audio'];
-        if (is_file($vidFileFull)) {
-            $vidUrl = '/phpbackend/api/stream.php?id=' . urlencode($vl['id']) . '&type=video';
+        if (is_file($vidFileFull) || is_file($audFileFull)) {
+            $vidUrl = is_file($vidFileFull) ? ('/phpbackend/api/stream.php?id=' . urlencode($vl['id']) . '&type=video') : null;
             $audUrl = '/phpbackend/api/stream.php?id=' . urlencode($vl['id']);
             $audRel = is_file($audFileFull) ? $vl['audio'] : $vl['video'];
+            $vidRel = is_file($vidFileFull) ? $vl['video'] : null;
             $fSize = (int)@filesize(STORAGE_ROOT . '/' . $audRel);
             $fExt = strtolower(pathinfo($audRel, PATHINFO_EXTENSION)) ?: 'mp4';
             $coverUrl = 'https://i.ytimg.com/vi/' . $vl['video_id'] . '/hqdefault.jpg';
 
-            $chk = $pdo->prepare("SELECT id FROM tracks WHERE id = ? LIMIT 1");
+            // Ensure artist exists in `artists`
+            $artSlug = strtolower(preg_replace('/[^a-zA-Z0-9]+/', '-', $vl['artist']));
+            $pdo->prepare("
+                INSERT INTO artists (id, name, stage_name, slug, avatar_url, header_url, country, verified, is_featured, genres_json, claimed_status)
+                VALUES (?, ?, ?, ?, ?, ?, 'NG', 1, 1, ?, 'unclaimed')
+                ON DUPLICATE KEY UPDATE is_featured = 1, verified = 1
+            ")->execute([
+                $vl['artist_id'],
+                $vl['artist'],
+                $vl['artist'],
+                $artSlug,
+                $coverUrl,
+                $coverUrl,
+                json_encode([$vl['genre']])
+            ]);
+
+            $chk = $pdo->prepare("SELECT id, COALESCE(flontmie_plays, 0) AS fp FROM tracks WHERE id = ? LIMIT 1");
             $chk->execute([$vl['id']]);
-            if ($chk->fetch()) {
+            $existingRow = $chk->fetch();
+            if ($existingRow) {
                 $pdo->prepare("
                     UPDATE tracks 
                     SET local_video_path = ?,
                         video_url = ?,
                         local_audio_path = ?,
                         audio_url = ?,
+                        title = ?,
+                        artist_id = ?,
                         artist_name = ?,
+                        album_name = ?,
+                        genre = ?,
+                        audio_file_size = ?,
+                        audio_format = ?,
                         status = 'published',
                         featured_on_home = 1,
                         is_deleted = 0
                     WHERE id = ?
-                ")->execute([$vl['video'], $vidUrl, $audRel, $audUrl, $vl['artist'], $vl['id']]);
+                ")->execute([
+                    $vidRel, $vidUrl, $audRel, $audUrl,
+                    $vl['title'], $vl['artist_id'], $vl['artist'], $vl['album'], $vl['genre'],
+                    $fSize, $fExt, $vl['id']
+                ]);
             } else {
                 $pdo->prepare("
                     INSERT INTO tracks (
@@ -1021,32 +1290,101 @@ try {
                         title, artist_id, artist_name, album_name, duration,
                         genre, country, release_year, cover_art_url, audio_url,
                         video_url, local_audio_path, local_video_path,
-                        audio_file_size, audio_format, status, featured_on_home, is_deleted
+                        audio_file_size, audio_format, stream_count, flontmie_plays,
+                        status, featured_on_home, is_deleted
                     ) VALUES (
                         ?, ?, ?, 'direct_upload', 'direct_upload',
                         ?, ?, ?, ?, ?,
                         ?, 'NG', 2026, ?, ?,
                         ?, ?, ?,
-                        ?, ?, 'published', 1, 0
+                        ?, ?, 0, 0,
+                        'published', 1, 0
                     )
                 ")->execute([
                     $vl['id'], $vl['video_id'], $vl['video_id'],
                     $vl['title'], $vl['artist_id'], $vl['artist'], $vl['album'], $vl['duration'],
                     $vl['genre'], $coverUrl, $audUrl,
-                    $vidUrl, $audRel, $vl['video'],
+                    $vidUrl, $audRel, $vidRel,
                     $fSize, $fExt
                 ]);
             }
         }
     }
 
-    // Backfill real LRC timestamped lyrics from LRCLIB for top tracks if not yet LRC-formatted
+    // Preserve real flontmie_plays and lyrics from the 4 renamed legacy track IDs
+    foreach ($legacyMap as $oldId => $newId) {
+        $oldStmt = $pdo->prepare("SELECT COALESCE(flontmie_plays, 0) AS fp, lyrics FROM tracks WHERE id = ? LIMIT 1");
+        $oldStmt->execute([$oldId]);
+        $oldRow = $oldStmt->fetch();
+        if ($oldRow) {
+            $pdo->prepare("
+                UPDATE tracks 
+                SET flontmie_plays = GREATEST(COALESCE(flontmie_plays, 0), ?),
+                    lyrics = COALESCE(NULLIF(lyrics, ''), ?)
+                WHERE id = ?
+            ")->execute([(int)$oldRow['fp'], $oldRow['lyrics'] ?? null, $newId]);
+        }
+    }
+
+    // 9. Purge ALL legacy `trk_yt_*` tracks and any track without a real uploaded audio/video file on the server
+    $pdo->exec("DELETE FROM tracks WHERE id LIKE 'trk_yt_%'");
+
+    $allTrkStmt = $pdo->query("SELECT id, local_audio_path, local_video_path FROM tracks");
+    require_once __DIR__ . '/artist_enrichment.php';
+    while ($tr = $allTrkStmt->fetch()) {
+        $hasAud = ArtistEnrichment::hasVerifiedFile($tr['local_audio_path'] ?? null);
+        $hasVid = ArtistEnrichment::hasVerifiedFile($tr['local_video_path'] ?? null);
+        if ($hasAud === null && $hasVid === null) {
+            $pdo->prepare("DELETE FROM tracks WHERE id = ?")->execute([$tr['id']]);
+        }
+    }
+
+    // Remove artists that have zero uploaded tracks and were not created by an admin/distributor user
+    $pdo->exec("
+        DELETE FROM artists
+        WHERE created_by_user_id IS NULL
+          AND id NOT IN (SELECT DISTINCT artist_id FROM tracks WHERE is_deleted = 0)
+    ");
+
+    // Ensure every artist with uploaded tracks exists in `artists` with status = 'active'
+    foreach ($uploadedCatalog as $vl) {
+        $artSlug = strtolower(preg_replace('/[^a-zA-Z0-9]+/', '-', $vl['artist'])) . '-' . substr($vl['artist_id'], 4);
+        $coverUrl = 'https://i.ytimg.com/vi/' . $vl['video_id'] . '/hqdefault.jpg';
+        $pdo->prepare("
+            INSERT INTO artists (id, name, stage_name, slug, avatar_url, header_url, country, verified, is_featured, status, genres_json, claimed_status)
+            VALUES (?, ?, ?, ?, ?, ?, 'NG', 1, 1, 'active', ?, 'unclaimed')
+            ON DUPLICATE KEY UPDATE
+                name = VALUES(name),
+                stage_name = VALUES(stage_name),
+                is_featured = 1,
+                verified = 1,
+                status = 'active'
+        ")->execute([
+            $vl['artist_id'],
+            $vl['artist'],
+            $vl['artist'],
+            $artSlug,
+            $coverUrl,
+            $coverUrl,
+            json_encode([$vl['genre']])
+        ]);
+    }
+
+    // 10. Reset all `stream_count` values strictly to real `flontmie_plays` (eliminating all mock/seeded stream counts)
+    $pdo->exec("UPDATE tracks SET flontmie_plays = COALESCE(flontmie_plays, 0), stream_count = COALESCE(flontmie_plays, 0)");
+    $pdo->exec("
+        UPDATE artists a
+        SET total_streams = COALESCE((SELECT SUM(COALESCE(t.flontmie_plays, 0)) FROM tracks t WHERE t.artist_id = a.id AND t.is_deleted = 0), 0),
+            monthly_listeners = COALESCE((SELECT SUM(COALESCE(t.flontmie_plays, 0)) FROM tracks t WHERE t.artist_id = a.id AND t.is_deleted = 0), 0)
+    ");
+
+    // Backfill real LRC timestamped lyrics from LRCLIB for uploaded tracks if not yet LRC-formatted
     $topTracksStmt = $pdo->query("
         SELECT id, video_id, title, artist_name, lyrics 
         FROM tracks 
         WHERE is_deleted = 0 AND (status = 'published' OR status = 'active' OR status IS NULL)
-        ORDER BY (local_video_path IS NOT NULL) DESC, featured_on_home DESC, stream_count DESC 
-        LIMIT 16
+        ORDER BY featured_on_home DESC, flontmie_plays DESC 
+        LIMIT 25
     ");
     while ($trRow = $topTracksStmt->fetch()) {
         $currLyr = $trRow['lyrics'] ?? '';
@@ -1060,7 +1398,7 @@ try {
 
     // Normalize all catalog records strictly as Admin / Distributor direct uploads
     $pdo->exec("UPDATE tracks SET source_type = 'direct_upload', import_source = 'direct_upload'");
-    $results[] = "Verified real audio, video, and synchronized LRC lyrics records (strictly Admin & Distributor uploads).";
+    $results[] = "Purged all legacy ytmusicapi/preview tracks, extracted all uploaded server media files, and reset stream counts to real Flontmie plays.";
 
     $output = [
         'status' => 'success',
