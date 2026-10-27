@@ -183,6 +183,7 @@ if ($method === 'POST' && $action === 'claim' && !empty($id)) {
     $pdo->prepare("UPDATE artists SET claimed_status = 'pending' WHERE id = ?")->execute([$id]);
 
     Auth::logAudit($user['id'], 'ARTIST_CLAIM_SUBMITTED', 'ARTIST', $id, ['claim_id' => $claimId]);
+    Auth::logUserActivity($user, 'artist_claim_submitted', 'artist', $id, $artist['name'] ?? $id, ['claim_id' => $claimId]);
 
     json_response([
         'status' => 'success',
@@ -191,11 +192,55 @@ if ($method === 'POST' && $action === 'claim' && !empty($id)) {
     ], 201);
 }
 
-// --- 4. FOLLOW ARTIST ---
+// --- 4. FOLLOW / UNFOLLOW ARTIST ---
 if ($method === 'POST' && $action === 'follow' && !empty($id)) {
     $user = Auth::requireAuth();
-    $pdo->prepare("UPDATE artists SET followers = followers + 1 WHERE id = ?")->execute([$id]);
-    json_response(['status' => 'success', 'message' => 'Followed artist']);
+    $input = get_json_input();
+    $mode = strtolower(trim($input['mode'] ?? 'toggle'));
+
+    $artStmt = $pdo->prepare("SELECT id, name, followers FROM artists WHERE id = ? LIMIT 1");
+    $artStmt->execute([$id]);
+    $artistRow = $artStmt->fetch();
+    $artistName = $artistRow['name'] ?? $id;
+
+    $chk = $pdo->prepare("SELECT 1 FROM user_followed_artists WHERE user_id = ? AND artist_id = ? LIMIT 1");
+    $chk->execute([$user['id'], $id]);
+    $alreadyFollowing = (bool)$chk->fetchColumn();
+
+    if ($mode === 'follow') {
+        $shouldFollow = true;
+    } elseif ($mode === 'unfollow') {
+        $shouldFollow = false;
+    } else {
+        $shouldFollow = !$alreadyFollowing;
+    }
+
+    if ($shouldFollow && !$alreadyFollowing) {
+        $pdo->prepare("INSERT IGNORE INTO user_followed_artists (user_id, artist_id) VALUES (?, ?)")->execute([$user['id'], $id]);
+    } elseif (!$shouldFollow && $alreadyFollowing) {
+        $pdo->prepare("DELETE FROM user_followed_artists WHERE user_id = ? AND artist_id = ?")->execute([$user['id'], $id]);
+    }
+
+    $cntStmt = $pdo->prepare("SELECT COUNT(*) FROM user_followed_artists WHERE artist_id = ?");
+    $cntStmt->execute([$id]);
+    $followersCount = (int)$cntStmt->fetchColumn();
+    $pdo->prepare("UPDATE artists SET followers = ? WHERE id = ?")->execute([$followersCount, $id]);
+
+    Auth::logUserActivity(
+        $user,
+        $shouldFollow ? 'artist_followed' : 'artist_unfollowed',
+        'artist',
+        $id,
+        $artistName,
+        ['followers_count' => $followersCount]
+    );
+
+    json_response([
+        'status' => 'success',
+        'following' => $shouldFollow,
+        'followers_count' => $followersCount,
+        'message' => $shouldFollow ? 'Followed artist' : 'Unfollowed artist'
+    ]);
 }
 
 // --- 5. GET SINGLE ENRICHED ARTIST BY ID, SLUG, BROWSE_ID, OR NAME ---

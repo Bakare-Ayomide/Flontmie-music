@@ -45,12 +45,18 @@ function resolveUploadedFilePath(?string $rawRelPath): ?string {
 // Helper to enrich track row for API output
 function formatTrackForOutput(array $t, array $likedMap = []): array {
     $realPlays = (int)($t['flontmie_plays'] ?? 0);
+    $realLikes = isset($t['real_likes_count']) ? (int)$t['real_likes_count'] : (int)($t['likes_count'] ?? 0);
+    $realComments = isset($t['real_comments_count']) ? (int)$t['real_comments_count'] : (int)($t['comments_count'] ?? 0);
+
     $t['mood_tags'] = !empty($t['mood_tags_json']) ? json_decode($t['mood_tags_json'], true) : [];
     $t['cover_art_url'] = ArtistEnrichment::resolveArtworkUrl($t['cover_art_url'] ?? '', $t['video_id'] ?? $t['id']);
     $t['flontmie_plays'] = $realPlays;
     $t['stream_count'] = $realPlays;
+    $t['likes_count'] = $realLikes;
+    $t['comments_count'] = $realComments;
     $t['yt_plays'] = null;
     $t['is_liked'] = isset($likedMap[$t['id']]);
+    unset($t['real_likes_count'], $t['real_comments_count']);
 
     // Never return legacy placeholder lyrics
     if (!empty($t['lyrics']) && strpos($t['lyrics'], 'Synchronized Catalog Lyrics') !== false) {
@@ -91,7 +97,79 @@ function formatTrackForOutput(array $t, array $likedMap = []): array {
     return $t;
 }
 
-// --- 0. GET SYNCHRONIZED OR PLAIN LYRICS FOR TRACK ---
+// Helper to resolve canonical track row by id or video_id
+function resolveTrackRow(PDO $pdo, string $identifier): ?array {
+    if (empty($identifier)) return null;
+    $stmt = $pdo->prepare("SELECT id, video_id, title, artist_id, artist_name FROM tracks WHERE (id = ? OR video_id = ?) AND is_deleted = 0 LIMIT 1");
+    $stmt->execute([$identifier, $identifier]);
+    $row = $stmt->fetch();
+    return $row ?: null;
+}
+
+// --- 0A. AUTHORITATIVE ENGAGEMENT SYNC (POLLING & REAL-TIME RECONCILIATION) ---
+if ($method === 'GET' && $action === 'engagement_sync') {
+    $focusTrackId = trim($_GET['track_id'] ?? $_GET['id'] ?? '');
+    $stmt = $pdo->query("
+        SELECT
+            t.id,
+            COALESCE(t.flontmie_plays, 0) AS flontmie_plays,
+            (SELECT COUNT(*) FROM user_favorites uf WHERE uf.track_id = t.id) AS likes_count,
+            (SELECT COUNT(*) FROM track_comments tc WHERE tc.track_id = t.id) AS comments_count
+        FROM tracks t
+        WHERE t.is_deleted = 0
+    ");
+    $countsMap = [];
+    while ($r = $stmt->fetch()) {
+        $countsMap[$r['id']] = [
+            'likes_count' => (int)$r['likes_count'],
+            'comments_count' => (int)$r['comments_count'],
+            'flontmie_plays' => (int)$r['flontmie_plays']
+        ];
+    }
+
+    $user = Auth::getCurrentUser();
+    $likedIds = null;
+    if ($user) {
+        $favStmt = $pdo->prepare("SELECT track_id FROM user_favorites WHERE user_id = ?");
+        $favStmt->execute([$user['id']]);
+        $likedIds = array_values(array_unique(array_column($favStmt->fetchAll(), 'track_id')));
+    }
+
+    $comments = null;
+    if (!empty($focusTrackId)) {
+        $resolved = resolveTrackRow($pdo, $focusTrackId);
+        $canonicalId = $resolved ? $resolved['id'] : $focusTrackId;
+        $cStmt = $pdo->prepare("
+            SELECT
+                c.id,
+                c.track_id,
+                c.user_id,
+                COALESCE(NULLIF(u.display_name, ''), c.author_name, 'Listener') AS author_name,
+                u.username AS author_username,
+                COALESCE(u.role, 'listener') AS author_role,
+                COALESCE(NULLIF(u.avatar_url, ''), c.author_avatar) AS author_avatar,
+                COALESCE(NULLIF(c.body, ''), c.comment_text, '') AS body,
+                c.created_at
+            FROM track_comments c
+            LEFT JOIN users u ON c.user_id = u.id
+            WHERE c.track_id = ?
+            ORDER BY c.created_at DESC, c.id DESC
+            LIMIT 200
+        ");
+        $cStmt->execute([$canonicalId]);
+        $comments = $cStmt->fetchAll();
+    }
+
+    json_response([
+        'status' => 'success',
+        'counts' => $countsMap,
+        'liked_track_ids' => $likedIds,
+        'comments' => $comments,
+        'timestamp' => date('Y-m-d H:i:s')
+    ]);
+}
+
+// --- 0B. GET SYNCHRONIZED OR PLAIN LYRICS FOR TRACK ---
 if ($method === 'GET' && $action === 'lyrics') {
     $trackId = trim($_GET['track_id'] ?? $_GET['id'] ?? '');
     if (empty($trackId)) {
@@ -135,81 +213,316 @@ if ($method === 'GET' && $action === 'lyrics') {
 
 // --- 1. STREAM COUNT INCREMENT & LISTENING HISTORY ---
 if ($method === 'POST' && $action === 'stream' && !empty($id)) {
-    $stmt = $pdo->prepare("UPDATE tracks SET stream_count = stream_count + 1, flontmie_plays = COALESCE(flontmie_plays, 0) + 1 WHERE id = ? OR video_id = ?");
-    $stmt->execute([$id, $id]);
+    $resolved = resolveTrackRow($pdo, $id);
+    $canonicalId = $resolved ? $resolved['id'] : $id;
+
+    $stmt = $pdo->prepare("UPDATE tracks SET stream_count = stream_count + 1, flontmie_plays = COALESCE(flontmie_plays, 0) + 1 WHERE id = ?");
+    $stmt->execute([$canonicalId]);
 
     $user = Auth::getCurrentUser();
     if ($user) {
         try {
             $hist = $pdo->prepare("INSERT INTO user_history (user_id, track_id) VALUES (?, ?)");
-            $hist->execute([$user['id'], $id]);
+            $hist->execute([$user['id'], $canonicalId]);
         } catch (Exception $e) {}
     }
 
-    json_response(['status' => 'success', 'message' => 'Stream registered']);
+    json_response(['status' => 'success', 'track_id' => $canonicalId, 'message' => 'Stream registered']);
 }
 
-// --- 2. TOGGLE LIKE / FAVORITE ---
-if ($method === 'POST' && $action === 'like' && !empty($id)) {
-    $user = Auth::requireAuth();
-    $userId = $user['id'];
-
-    $check = $pdo->prepare("SELECT id FROM user_favorites WHERE user_id = ? AND track_id = ?");
-    $check->execute([$userId, $id]);
-    $existing = $check->fetch();
-
-    if ($existing) {
-        $del = $pdo->prepare("DELETE FROM user_favorites WHERE user_id = ? AND track_id = ?");
-        $del->execute([$userId, $id]);
-        $pdo->prepare("UPDATE tracks SET likes_count = GREATEST(0, likes_count - 1) WHERE id = ?")->execute([$id]);
-        json_response(['status' => 'success', 'liked' => false, 'message' => 'Removed from favorites']);
-    } else {
-        $ins = $pdo->prepare("INSERT INTO user_favorites (user_id, track_id) VALUES (?, ?)");
-        $ins->execute([$userId, $id]);
-        $pdo->prepare("UPDATE tracks SET likes_count = likes_count + 1 WHERE id = ?")->execute([$id]);
-        json_response(['status' => 'success', 'liked' => true, 'message' => 'Added to favorites']);
-    }
-}
-
-// --- 3. REAL TRACK COMMENTS (GET & POST) ---
-if ($method === 'GET' && $action === 'comments' && !empty($id)) {
-    $stmt = $pdo->prepare("SELECT id, track_id, user_id, author_name, author_avatar, body, created_at FROM track_comments WHERE track_id = ? ORDER BY created_at DESC LIMIT 100");
-    $stmt->execute([$id]);
-    json_response(['status' => 'success', 'comments' => $stmt->fetchAll()]);
-}
-
-if ($method === 'POST' && $action === 'comment' && !empty($id)) {
+// --- 2. TOGGLE LIKE / FAVORITE (AUTHORITATIVE MYSQL PERSISTENCE & DEDUPLICATION) ---
+if ($method === 'POST' && $action === 'like') {
     $user = Auth::requireAuth();
     $input = get_json_input();
-    $body = trim($input['body'] ?? '');
-    if (empty($body)) {
-        json_response(['status' => 'error', 'message' => 'Comment text cannot be empty.'], 400);
+    $targetId = !empty($id) ? $id : trim($input['track_id'] ?? $input['id'] ?? '');
+    if (empty($targetId)) {
+        json_response(['status' => 'error', 'message' => 'Track ID is required.'], 400);
     }
-    $commentId = 'cmt_' . bin2hex(random_bytes(6));
-    $pdo->prepare("
-        INSERT INTO track_comments (id, track_id, user_id, author_name, author_avatar, body)
-        VALUES (?, ?, ?, ?, ?, ?)
-    ")->execute([$commentId, $id, $user['id'], $user['display_name'], $user['avatar_url'] ?? null, substr($body, 0, 1000)]);
+
+    $trackRow = resolveTrackRow($pdo, $targetId);
+    if (!$trackRow) {
+        json_response(['status' => 'error', 'message' => 'Track not found.'], 404);
+    }
+
+    $canonicalId = $trackRow['id'];
+    $userId = $user['id'];
+    $requestedMode = strtolower(trim((string)($input['mode'] ?? $_GET['mode'] ?? '')));
+    if ($requestedMode === '') {
+        if (!empty($input['unlike'])) {
+            $requestedMode = 'unlike';
+        } elseif (isset($input['like'])) {
+            $requestedMode = $input['like'] ? 'like' : 'unlike';
+        } else {
+            $requestedMode = 'toggle';
+        }
+    }
+
+    $stateChanged = false;
+    try {
+        $pdo->beginTransaction();
+
+        $check = $pdo->prepare("SELECT id FROM user_favorites WHERE user_id = ? AND track_id = ? FOR UPDATE");
+        $check->execute([$userId, $canonicalId]);
+        $existing = $check->fetch();
+
+        if ($requestedMode === 'unlike' || ($requestedMode === 'toggle' && $existing)) {
+            if ($existing) {
+                $del = $pdo->prepare("DELETE FROM user_favorites WHERE user_id = ? AND track_id = ?");
+                $del->execute([$userId, $canonicalId]);
+                $stateChanged = true;
+            }
+            $liked = false;
+        } else {
+            // Prevent duplicate likes from the same authenticated user on the same track
+            if (!$existing) {
+                $ins = $pdo->prepare("INSERT IGNORE INTO user_favorites (user_id, track_id) VALUES (?, ?)");
+                $ins->execute([$userId, $canonicalId]);
+                $stateChanged = true;
+            }
+            $liked = true;
+        }
+
+        // Compute authoritative count from database rows (never trusting client counts)
+        $cntStmt = $pdo->prepare("SELECT COUNT(*) FROM user_favorites WHERE track_id = ?");
+        $cntStmt->execute([$canonicalId]);
+        $likesCount = (int)$cntStmt->fetchColumn();
+
+        $pdo->prepare("UPDATE tracks SET likes_count = ? WHERE id = ?")->execute([$likesCount, $canonicalId]);
+        $pdo->commit();
+    } catch (Exception $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        json_response(['status' => 'error', 'message' => 'Failed to update like status.'], 500);
+    }
+
+    if ($stateChanged) {
+        Auth::logUserActivity(
+            $user,
+            $liked ? 'track_liked' : 'track_unliked',
+            'track',
+            $canonicalId,
+            $trackRow['title'],
+            [
+                'artist' => $trackRow['artist_name'],
+                'liked' => $liked,
+                'likes_count' => $likesCount
+            ]
+        );
+    }
 
     json_response([
         'status' => 'success',
+        'track_id' => $canonicalId,
+        'liked' => $liked,
+        'likes_count' => $likesCount,
+        'message' => $liked ? 'Added to favorites' : 'Removed from favorites'
+    ]);
+}
+
+// --- 2B. DISLIKE TRACK ---
+if ($method === 'POST' && $action === 'dislike') {
+    $user = Auth::getCurrentUser();
+    $input = get_json_input();
+    $targetId = !empty($id) ? $id : trim($input['track_id'] ?? $input['id'] ?? '');
+    $trackRow = resolveTrackRow($pdo, $targetId);
+    if (!$trackRow) {
+        json_response(['status' => 'error', 'message' => 'Track not found'], 404);
+    }
+    $canonicalId = $trackRow['id'];
+    $pdo->prepare("UPDATE tracks SET dislikes_count = COALESCE(dislikes_count, 0) + 1 WHERE id = ?")->execute([$canonicalId]);
+    $dStmt = $pdo->prepare("SELECT COALESCE(dislikes_count, 0) FROM tracks WHERE id = ?");
+    $dStmt->execute([$canonicalId]);
+    $dislikesCount = (int)$dStmt->fetchColumn();
+    if ($user) {
+        Auth::logUserActivity($user, 'track_disliked', 'track', $canonicalId, $trackRow['title'], ['artist' => $trackRow['artist_name']]);
+    }
+    json_response([
+        'status' => 'success',
+        'track_id' => $canonicalId,
+        'dislikes_count' => $dislikesCount
+    ]);
+}
+
+// --- 3. REAL TRACK COMMENTS (GET, POST & DELETE) ---
+if ($method === 'GET' && $action === 'comments') {
+    $targetId = !empty($id) ? $id : trim($_GET['track_id'] ?? '');
+    if (empty($targetId)) {
+        json_response(['status' => 'error', 'message' => 'Track ID is required'], 400);
+    }
+    $trackRow = resolveTrackRow($pdo, $targetId);
+    $canonicalId = $trackRow ? $trackRow['id'] : $targetId;
+
+    $stmt = $pdo->prepare("
+        SELECT
+            c.id,
+            c.track_id,
+            c.user_id,
+            COALESCE(NULLIF(u.display_name, ''), c.author_name, 'Listener') AS author_name,
+            u.username AS author_username,
+            COALESCE(u.role, 'listener') AS author_role,
+            COALESCE(NULLIF(u.avatar_url, ''), c.author_avatar) AS author_avatar,
+            COALESCE(NULLIF(c.body, ''), c.comment_text, '') AS body,
+            COALESCE(NULLIF(c.comment_text, ''), c.body, '') AS comment_text,
+            c.created_at
+        FROM track_comments c
+        LEFT JOIN users u ON c.user_id = u.id
+        WHERE c.track_id = ?
+        ORDER BY c.created_at DESC, c.id DESC
+        LIMIT 200
+    ");
+    $stmt->execute([$canonicalId]);
+    $comments = $stmt->fetchAll();
+
+    $cntStmt = $pdo->prepare("SELECT COUNT(*) FROM track_comments WHERE track_id = ?");
+    $cntStmt->execute([$canonicalId]);
+    $commentsCount = (int)$cntStmt->fetchColumn();
+
+    $likeStmt = $pdo->prepare("SELECT COUNT(*) FROM user_favorites WHERE track_id = ?");
+    $likeStmt->execute([$canonicalId]);
+    $likesCount = (int)$likeStmt->fetchColumn();
+
+    json_response([
+        'status' => 'success',
+        'track_id' => $canonicalId,
+        'comments_count' => $commentsCount,
+        'likes_count' => $likesCount,
+        'comments' => $comments
+    ]);
+}
+
+if ($method === 'POST' && ($action === 'comment' || $action === 'add_comment')) {
+    $user = Auth::requireAuth();
+    $input = get_json_input();
+    $targetId = !empty($id) ? $id : trim($input['track_id'] ?? $input['id'] ?? '');
+    if (empty($targetId)) {
+        json_response(['status' => 'error', 'message' => 'Track ID is required.'], 400);
+    }
+
+    $trackRow = resolveTrackRow($pdo, $targetId);
+    if (!$trackRow) {
+        json_response(['status' => 'error', 'message' => 'Track not found.'], 404);
+    }
+    $canonicalId = $trackRow['id'];
+
+    $rawBody = trim((string)($input['body'] ?? $input['comment_text'] ?? $input['text'] ?? ''));
+    if (empty($rawBody)) {
+        json_response(['status' => 'error', 'message' => 'Comment text cannot be empty.'], 400);
+    }
+    $cleanBody = substr($rawBody, 0, 1000);
+    $commentId = 'cmt_' . bin2hex(random_bytes(6));
+    $createdAt = date('Y-m-d H:i:s');
+
+    try {
+        $pdo->beginTransaction();
+
+        $pdo->prepare("
+            INSERT INTO track_comments (id, track_id, user_id, author_name, author_avatar, body, comment_text, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ")->execute([
+            $commentId,
+            $canonicalId,
+            $user['id'],
+            $user['display_name'],
+            $user['avatar_url'] ?? null,
+            $cleanBody,
+            $cleanBody,
+            $createdAt
+        ]);
+
+        $cntStmt = $pdo->prepare("SELECT COUNT(*) FROM track_comments WHERE track_id = ?");
+        $cntStmt->execute([$canonicalId]);
+        $commentsCount = (int)$cntStmt->fetchColumn();
+
+        $pdo->prepare("UPDATE tracks SET comments_count = ? WHERE id = ?")->execute([$commentsCount, $canonicalId]);
+        $pdo->commit();
+    } catch (Exception $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        json_response(['status' => 'error', 'message' => 'Failed to save comment.'], 500);
+    }
+
+    Auth::logUserActivity(
+        $user,
+        'track_commented',
+        'track',
+        $canonicalId,
+        $trackRow['title'],
+        [
+            'comment_id' => $commentId,
+            'artist' => $trackRow['artist_name'],
+            'excerpt' => substr($cleanBody, 0, 120),
+            'comments_count' => $commentsCount
+        ]
+    );
+
+    json_response([
+        'status' => 'success',
+        'track_id' => $canonicalId,
+        'comments_count' => $commentsCount,
         'comment' => [
             'id' => $commentId,
-            'track_id' => $id,
+            'track_id' => $canonicalId,
             'user_id' => $user['id'],
             'author_name' => $user['display_name'],
+            'author_username' => $user['username'] ?? null,
+            'author_role' => $user['role'] ?? 'listener',
             'author_avatar' => $user['avatar_url'] ?? null,
-            'body' => substr($body, 0, 1000),
-            'created_at' => date('Y-m-d H:i:s')
+            'body' => $cleanBody,
+            'comment_text' => $cleanBody,
+            'created_at' => $createdAt
         ]
     ], 201);
+}
+
+if (($method === 'POST' || $method === 'DELETE') && $action === 'delete_comment') {
+    $user = Auth::requireAuth();
+    $input = get_json_input();
+    $commentId = trim($_GET['comment_id'] ?? $input['comment_id'] ?? $id ?? '');
+    if (empty($commentId)) {
+        json_response(['status' => 'error', 'message' => 'comment_id is required'], 400);
+    }
+
+    $cStmt = $pdo->prepare("SELECT * FROM track_comments WHERE id = ? LIMIT 1");
+    $cStmt->execute([$commentId]);
+    $commentRow = $cStmt->fetch();
+    if (!$commentRow) {
+        json_response(['status' => 'error', 'message' => 'Comment not found'], 404);
+    }
+
+    if ($user['role'] !== 'admin' && $commentRow['user_id'] !== $user['id']) {
+        json_response(['status' => 'error', 'message' => 'Forbidden: You can only delete your own comments.'], 403);
+    }
+
+    $canonicalId = $commentRow['track_id'];
+    $pdo->prepare("DELETE FROM track_comments WHERE id = ?")->execute([$commentId]);
+
+    $cntStmt = $pdo->prepare("SELECT COUNT(*) FROM track_comments WHERE track_id = ?");
+    $cntStmt->execute([$canonicalId]);
+    $commentsCount = (int)$cntStmt->fetchColumn();
+    $pdo->prepare("UPDATE tracks SET comments_count = ? WHERE id = ?")->execute([$commentsCount, $canonicalId]);
+
+    Auth::logUserActivity($user, 'comment_deleted', 'comment', $commentId, $canonicalId, ['track_id' => $canonicalId]);
+
+    json_response([
+        'status' => 'success',
+        'track_id' => $canonicalId,
+        'comment_id' => $commentId,
+        'comments_count' => $commentsCount,
+        'message' => 'Comment deleted.'
+    ]);
 }
 
 // --- 4. GET LIKED TRACKS ---
 if ($method === 'GET' && $action === 'liked') {
     $user = Auth::requireAuth();
     $stmt = $pdo->prepare("
-        SELECT t.* FROM tracks t 
+        SELECT
+            t.*,
+            (SELECT COUNT(*) FROM user_favorites uf WHERE uf.track_id = t.id) AS real_likes_count,
+            (SELECT COUNT(*) FROM track_comments tc WHERE tc.track_id = t.id) AS real_comments_count
+        FROM tracks t 
         JOIN user_favorites f ON t.id = f.track_id 
         WHERE f.user_id = ? AND t.is_deleted = 0 
         ORDER BY f.created_at DESC
@@ -231,7 +544,11 @@ if ($method === 'GET' && $action === 'liked') {
 if ($method === 'GET' && $action === 'history') {
     $user = Auth::requireAuth();
     $stmt = $pdo->prepare("
-        SELECT t.*, MAX(h.played_at) AS last_played_at
+        SELECT
+            t.*,
+            MAX(h.played_at) AS last_played_at,
+            (SELECT COUNT(*) FROM user_favorites uf WHERE uf.track_id = t.id) AS real_likes_count,
+            (SELECT COUNT(*) FROM track_comments tc WHERE tc.track_id = t.id) AS real_comments_count
         FROM user_history h
         JOIN tracks t ON t.id = h.track_id
         WHERE h.user_id = ? AND t.is_deleted = 0
@@ -249,7 +566,15 @@ if ($method === 'GET' && $action === 'history') {
 
 // --- 6. GET SINGLE TRACK ---
 if ($method === 'GET' && !empty($id)) {
-    $stmt = $pdo->prepare("SELECT * FROM tracks WHERE (id = ? OR video_id = ?) AND is_deleted = 0 LIMIT 1");
+    $stmt = $pdo->prepare("
+        SELECT
+            t.*,
+            (SELECT COUNT(*) FROM user_favorites uf WHERE uf.track_id = t.id) AS real_likes_count,
+            (SELECT COUNT(*) FROM track_comments tc WHERE tc.track_id = t.id) AS real_comments_count
+        FROM tracks t
+        WHERE (t.id = ? OR t.video_id = ?) AND t.is_deleted = 0
+        LIMIT 1
+    ");
     $stmt->execute([$id, $id]);
     $track = $stmt->fetch();
 
@@ -284,47 +609,54 @@ if ($method === 'GET') {
     $limit = min(200, max(1, (int)($_GET['limit'] ?? 60)));
     $offset = max(0, (int)($_GET['offset'] ?? 0));
 
-    $sql = "SELECT * FROM tracks WHERE is_deleted = 0 AND (status IS NULL OR status = 'published' OR status = 'active') AND audio_url NOT LIKE '%soundhelix%'";
+    $sql = "
+        SELECT
+            t.*,
+            (SELECT COUNT(*) FROM user_favorites uf WHERE uf.track_id = t.id) AS real_likes_count,
+            (SELECT COUNT(*) FROM track_comments tc WHERE tc.track_id = t.id) AS real_comments_count
+        FROM tracks t
+        WHERE t.is_deleted = 0 AND (t.status IS NULL OR t.status = 'published' OR t.status = 'active') AND t.audio_url NOT LIKE '%soundhelix%'
+    ";
     $params = [];
 
     if (!empty($genre) && strtolower($genre) !== 'all') {
-        $sql .= " AND (genre = ? OR mood_tags_json LIKE ?)";
+        $sql .= " AND (t.genre = ? OR t.mood_tags_json LIKE ?)";
         $params[] = $genre;
         $params[] = '%' . $genre . '%';
     }
 
     if (!empty($artistId)) {
-        $sql .= " AND artist_id = ?";
+        $sql .= " AND t.artist_id = ?";
         $params[] = $artistId;
     }
 
     if (!empty($albumId)) {
-        $sql .= " AND album_id = ?";
+        $sql .= " AND t.album_id = ?";
         $params[] = $albumId;
     }
 
     if (!empty($distributorId)) {
-        $sql .= " AND distributor_id = ?";
+        $sql .= " AND t.distributor_id = ?";
         $params[] = $distributorId;
     }
 
     if (!empty($labelId)) {
-        $sql .= " AND label_id = ?";
+        $sql .= " AND t.label_id = ?";
         $params[] = $labelId;
     }
 
     if (!empty($country) && strtolower($country) !== 'all') {
-        $sql .= " AND country = ?";
+        $sql .= " AND t.country = ?";
         $params[] = strtoupper($country);
     }
 
     if (!empty($year) && strtolower($year) !== 'all' && is_numeric($year)) {
-        $sql .= " AND release_year = ?";
+        $sql .= " AND t.release_year = ?";
         $params[] = (int)$year;
     }
 
     if (!empty($search)) {
-        $sql .= " AND (title LIKE ? OR artist_name LIKE ? OR album_name LIKE ? OR genre LIKE ?)";
+        $sql .= " AND (t.title LIKE ? OR t.artist_name LIKE ? OR t.album_name LIKE ? OR t.genre LIKE ?)";
         $searchTerm = '%' . $search . '%';
         $params[] = $searchTerm;
         $params[] = $searchTerm;
@@ -332,7 +664,7 @@ if ($method === 'GET') {
         $params[] = $searchTerm;
     }
 
-    $sql .= " ORDER BY featured_on_home DESC, editorial_boost DESC, flontmie_plays DESC, stream_count DESC, created_at DESC LIMIT {$limit} OFFSET {$offset}";
+    $sql .= " ORDER BY t.featured_on_home DESC, t.editorial_boost DESC, t.flontmie_plays DESC, t.stream_count DESC, t.created_at DESC LIMIT {$limit} OFFSET {$offset}";
 
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
@@ -372,6 +704,7 @@ if ($method === 'GET') {
     json_response([
         'status' => 'success',
         'count' => count($verifiedTracks),
+        'liked_track_ids' => $user ? array_keys($likedMap) : null,
         'tracks' => $verifiedTracks
     ]);
 }
@@ -428,17 +761,17 @@ if ($method === 'POST') {
             id, title, artist_id, artist_name, album_id, album_name, duration, genre,
             cover_art_url, audio_url, video_url, lyrics, isrc, explicit, scale, bpm,
             mood_tags_json, featured_artists, producer, composer,
-            distributor_id, label_id, uploaded_by_user_id, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'published')
+            distributor_id, label_id, uploaded_by_user_id, created_by_user_id, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'published')
     ");
     $stmt->execute([
         $trackId, $title, $artistId, $artistName, $albumId, $albumName, $duration, $genre,
         $cover, $audioUrl, $videoUrl, $lyrics, $isrc, $explicit, $scale, $bpm,
         json_encode($moodTags), $featured, $producer, $composer,
-        $distributorId, $labelId, $user['id']
+        $distributorId, $labelId, $user['id'], $user['id']
     ]);
 
-    Auth::logAudit($user['id'], 'TRACK_CREATED', 'TRACK', $trackId, ['title' => $title, 'artist' => $artistName]);
+    Auth::logUserActivity($user, 'track_uploaded', 'track', $trackId, $title, ['artist' => $artistName, 'album' => $albumName, 'genre' => $genre]);
     json_response([
         'status' => 'success',
         'message' => 'Track saved to database.',
@@ -496,6 +829,7 @@ if ($method === 'PUT' && !empty($id)) {
         $id
     ]);
 
+    Auth::logUserActivity($user, 'track_updated', 'track', $id, $input['title'] ?? $existing['title'], ['artist' => $existing['artist_name']]);
     json_response(['status' => 'success', 'message' => 'Track updated successfully']);
 }
 
@@ -523,8 +857,9 @@ if ($method === 'DELETE' && !empty($id)) {
     $stmt = $pdo->prepare("UPDATE tracks SET is_deleted = 1, status = 'removed' WHERE id = ?");
     $stmt->execute([$id]);
 
-    Auth::logAudit($user['id'], 'TRACK_DELETED', 'TRACK', $id, ['soft_delete' => true]);
+    Auth::logUserActivity($user, 'track_deleted', 'track', $id, $existing['title'], ['soft_delete' => true]);
     json_response(['status' => 'success', 'message' => 'Track deleted.']);
 }
 
 json_response(['status' => 'error', 'message' => 'Method not allowed'], 405);
+

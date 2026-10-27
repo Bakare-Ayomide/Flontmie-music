@@ -36,6 +36,8 @@ export interface Track {
   ytPlays?: string | number | null;
   flontmiePlays?: number;
   likes: number;
+  commentsCount?: number;
+  isLiked?: boolean;
   dislikes?: number;
   isExplicit?: boolean;
   lyrics?: LyricLine[];
@@ -72,6 +74,11 @@ export interface Playlist {
   coverUrl: string;
   curator: string;
   curatorAvatar?: string;
+  creatorId?: string;
+  creatorUsername?: string;
+  creatorEmail?: string;
+  creatorRole?: string;
+  isAdminCreated?: boolean;
   isPublic: boolean;
   isCollaborative: boolean;
   collaborators?: string[];
@@ -80,6 +87,7 @@ export interface Playlist {
   category: MoodCategory;
   genreCategory?: string; // e.g. "love_songs", "old_school", "workout"
   createdAt: string;
+  updatedAt?: string;
   isSeries?: boolean;
   country?: string;
 }

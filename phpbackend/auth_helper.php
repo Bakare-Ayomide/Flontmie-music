@@ -375,6 +375,63 @@ class Auth {
     }
 
     /**
+     * Record a persistent user/platform activity entry for admin visibility
+     * Never logs passwords, tokens, or sensitive credentials.
+     */
+    public static function logUserActivity(?array $user, string $actionType, string $targetType, ?string $targetId, ?string $targetTitle = null, array $metadata = []): void {
+        try {
+            $pdo = Database::getConnection();
+            $ip = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
+
+            // Strip any sensitive keys from metadata
+            $safeMeta = [];
+            foreach ($metadata as $k => $v) {
+                $lk = strtolower((string)$k);
+                if (
+                    strpos($lk, 'password') !== false ||
+                    strpos($lk, 'token') !== false ||
+                    strpos($lk, 'secret') !== false ||
+                    strpos($lk, 'hash') !== false ||
+                    strpos($lk, 'csrf') !== false
+                ) {
+                    continue;
+                }
+                $safeMeta[$k] = $v;
+            }
+
+            $userId = $user['id'] ?? 'anonymous';
+            $userEmail = $user['email'] ?? null;
+            $userName = $user['display_name'] ?? ($user['username'] ?? null);
+            $userRole = $user['role'] ?? 'listener';
+
+            $stmt = $pdo->prepare("
+                INSERT INTO user_activities (
+                    user_id, user_email, user_name, user_role,
+                    action_type, target_type, target_id, target_title,
+                    metadata_json, ip_address
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ");
+            $stmt->execute([
+                $userId,
+                $userEmail,
+                $userName,
+                $userRole,
+                $actionType,
+                $targetType,
+                $targetId,
+                $targetTitle !== null ? substr($targetTitle, 0, 250) : null,
+                !empty($safeMeta) ? json_encode($safeMeta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null,
+                $ip
+            ]);
+
+            self::logAudit($user['id'] ?? null, strtoupper($actionType), strtoupper($targetType), $targetId, array_merge(
+                $targetTitle ? ['title' => $targetTitle] : [],
+                $safeMeta
+            ));
+        } catch (Exception $e) {}
+    }
+
+    /**
      * Record a security event entry
      */
     public static function logSecurityEvent(?string $userId, ?string $email, string $eventType, string $severity = 'info', string $details = ''): void {
@@ -390,3 +447,4 @@ class Auth {
         } catch (Exception $e) {}
     }
 }
+

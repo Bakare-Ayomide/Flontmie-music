@@ -261,7 +261,9 @@ try {
     safeAlter($pdo, "ALTER TABLE tracks ADD COLUMN audio_file_size BIGINT DEFAULT 0");
     safeAlter($pdo, "ALTER TABLE tracks ADD COLUMN audio_format VARCHAR(32) DEFAULT 'mp3'");
     safeAlter($pdo, "ALTER TABLE tracks ADD COLUMN flontmie_plays BIGINT DEFAULT 0");
+    safeAlter($pdo, "ALTER TABLE tracks ADD COLUMN likes_count INT DEFAULT 0");
     safeAlter($pdo, "ALTER TABLE tracks ADD COLUMN dislikes_count INT DEFAULT 0");
+    safeAlter($pdo, "ALTER TABLE tracks ADD COLUMN comments_count INT DEFAULT 0");
     safeAlter($pdo, "ALTER TABLE tracks ADD COLUMN upc VARCHAR(50) NULL");
     safeAlter($pdo, "ALTER TABLE tracks ADD COLUMN distributor_id VARCHAR(64) NULL");
     safeAlter($pdo, "ALTER TABLE tracks ADD COLUMN label_id VARCHAR(64) NULL");
@@ -478,6 +480,29 @@ try {
             INDEX idx_audit_time (created_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     ");
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS user_activities (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            source_key VARCHAR(128) NULL UNIQUE,
+            user_id VARCHAR(64) NOT NULL,
+            user_email VARCHAR(191) NULL,
+            user_name VARCHAR(150) NULL,
+            user_role VARCHAR(32) NULL,
+            action_type VARCHAR(64) NOT NULL,
+            target_type VARCHAR(50) NOT NULL,
+            target_id VARCHAR(64) NULL,
+            target_title VARCHAR(255) NULL,
+            metadata_json TEXT NULL,
+            ip_address VARCHAR(64) NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_ua_user (user_id, created_at),
+            INDEX idx_ua_action (action_type, created_at),
+            INDEX idx_ua_target (target_type, target_id),
+            INDEX idx_ua_created (created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    ");
+    safeAlter($pdo, "ALTER TABLE user_activities ADD COLUMN source_key VARCHAR(128) NULL UNIQUE");
 
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS jam_sessions (
@@ -1311,7 +1336,7 @@ try {
         }
     }
 
-    // Preserve real flontmie_plays and lyrics from the 4 renamed legacy track IDs
+    // Preserve real flontmie_plays, likes, comments, and lyrics from the 4 renamed legacy track IDs
     foreach ($legacyMap as $oldId => $newId) {
         $oldStmt = $pdo->prepare("SELECT COALESCE(flontmie_plays, 0) AS fp, lyrics FROM tracks WHERE id = ? LIMIT 1");
         $oldStmt->execute([$oldId]);
@@ -1324,6 +1349,10 @@ try {
                 WHERE id = ?
             ")->execute([(int)$oldRow['fp'], $oldRow['lyrics'] ?? null, $newId]);
         }
+        // Migrate any existing likes and comments referencing legacy track IDs so zero production engagement is lost
+        $pdo->prepare("UPDATE IGNORE user_favorites SET track_id = ? WHERE track_id = ?")->execute([$newId, $oldId]);
+        $pdo->prepare("DELETE FROM user_favorites WHERE track_id = ?")->execute([$oldId]);
+        $pdo->prepare("UPDATE track_comments SET track_id = ? WHERE track_id = ?")->execute([$newId, $oldId]);
     }
 
     // 9. Purge ALL legacy `trk_yt_*` tracks and any track without a real uploaded audio/video file on the server
@@ -1372,10 +1401,149 @@ try {
 
     // 10. Reset all `stream_count` values strictly to real `flontmie_plays` (eliminating all mock/seeded stream counts)
     $pdo->exec("UPDATE tracks SET flontmie_plays = COALESCE(flontmie_plays, 0), stream_count = COALESCE(flontmie_plays, 0)");
+
+    // Deduplicate user_favorites if any legacy duplicate rows exist, and enforce UNIQUE KEY (user_id, track_id)
+    $pdo->exec("
+        DELETE f1 FROM user_favorites f1
+        INNER JOIN user_favorites f2
+        WHERE f1.id > f2.id AND f1.user_id = f2.user_id AND f1.track_id = f2.track_id
+    ");
+    safeAlter($pdo, "ALTER TABLE user_favorites ADD UNIQUE KEY user_track_fav (user_id, track_id)");
+
+    // Normalize track_comments body & comment_text columns so neither is null when the other is populated
+    $pdo->exec("UPDATE track_comments SET body = comment_text WHERE (body IS NULL OR body = '') AND comment_text IS NOT NULL AND comment_text != ''");
+    $pdo->exec("UPDATE track_comments SET comment_text = body WHERE (comment_text IS NULL OR comment_text = '') AND body IS NOT NULL AND body != ''");
+
+    // Reconcile authoritative likes_count and comments_count on tracks from user_favorites and track_comments
+    $pdo->exec("
+        UPDATE tracks t
+        SET likes_count = (SELECT COUNT(*) FROM user_favorites f WHERE f.track_id = t.id),
+            comments_count = (SELECT COUNT(*) FROM track_comments c WHERE c.track_id = t.id)
+    ");
+
+    // Reconcile artist followers and streams from user_followed_artists and tracks
     $pdo->exec("
         UPDATE artists a
         SET total_streams = COALESCE((SELECT SUM(COALESCE(t.flontmie_plays, 0)) FROM tracks t WHERE t.artist_id = a.id AND t.is_deleted = 0), 0),
-            monthly_listeners = COALESCE((SELECT SUM(COALESCE(t.flontmie_plays, 0)) FROM tracks t WHERE t.artist_id = a.id AND t.is_deleted = 0), 0)
+            monthly_listeners = COALESCE((SELECT SUM(COALESCE(t.flontmie_plays, 0)) FROM tracks t WHERE t.artist_id = a.id AND t.is_deleted = 0), 0),
+            followers = GREATEST(COALESCE(followers, 0), (SELECT COUNT(*) FROM user_followed_artists fa WHERE fa.artist_id = a.id))
+    ");
+
+    // Synchronize playlist_tracks relational table with playlists.track_ids_json preserving exact song order
+    $plSyncStmt = $pdo->query("SELECT id, track_ids_json, created_at FROM playlists");
+    while ($plRow = $plSyncStmt->fetch()) {
+        $plId = $plRow['id'];
+        $tIds = !empty($plRow['track_ids_json']) ? json_decode($plRow['track_ids_json'], true) : [];
+        if (is_array($tIds)) {
+            $pdo->prepare("DELETE FROM playlist_tracks WHERE playlist_id = ?")->execute([$plId]);
+            $insPt = $pdo->prepare("INSERT INTO playlist_tracks (playlist_id, track_id, position, added_at) VALUES (?, ?, ?, ?)");
+            $pos = 1;
+            foreach ($tIds as $tid) {
+                if (!empty($tid) && is_string($tid)) {
+                    $insPt->execute([$plId, trim($tid), $pos++, $plRow['created_at'] ?? date('Y-m-d H:i:s')]);
+                }
+            }
+        }
+    }
+
+    // Backfill genuine existing database records into user_activities idempotently (using source_key)
+    // 1) Existing playlists
+    $pdo->exec("
+        INSERT IGNORE INTO user_activities (source_key, user_id, user_email, user_name, user_role, action_type, target_type, target_id, target_title, metadata_json, created_at)
+        SELECT
+            CONCAT('pl_create_', p.id),
+            p.user_id,
+            u.email,
+            COALESCE(u.display_name, u.username, 'User'),
+            COALESCE(u.role, 'listener'),
+            'playlist_created',
+            'playlist',
+            p.id,
+            p.title,
+            JSON_OBJECT('is_public', p.is_public, 'genre_category', COALESCE(p.genre_category, 'all')),
+            p.created_at
+        FROM playlists p
+        LEFT JOIN users u ON p.user_id = u.id
+    ");
+
+    // 2) Existing likes (user_favorites)
+    $pdo->exec("
+        INSERT IGNORE INTO user_activities (source_key, user_id, user_email, user_name, user_role, action_type, target_type, target_id, target_title, metadata_json, created_at)
+        SELECT
+            CONCAT('fav_', f.id),
+            f.user_id,
+            u.email,
+            COALESCE(u.display_name, u.username, 'User'),
+            COALESCE(u.role, 'listener'),
+            'track_liked',
+            'track',
+            f.track_id,
+            COALESCE(t.title, f.track_id),
+            JSON_OBJECT('artist', COALESCE(t.artist_name, '')),
+            f.created_at
+        FROM user_favorites f
+        LEFT JOIN users u ON f.user_id = u.id
+        LEFT JOIN tracks t ON f.track_id = t.id
+    ");
+
+    // 3) Existing comments (track_comments)
+    $pdo->exec("
+        INSERT IGNORE INTO user_activities (source_key, user_id, user_email, user_name, user_role, action_type, target_type, target_id, target_title, metadata_json, created_at)
+        SELECT
+            CONCAT('cmt_', c.id),
+            COALESCE(c.user_id, 'anonymous'),
+            u.email,
+            COALESCE(u.display_name, c.author_name, 'User'),
+            COALESCE(u.role, 'listener'),
+            'track_commented',
+            'track',
+            c.track_id,
+            COALESCE(t.title, c.track_id),
+            JSON_OBJECT('comment_id', c.id, 'excerpt', LEFT(COALESCE(c.body, c.comment_text, ''), 120)),
+            c.created_at
+        FROM track_comments c
+        LEFT JOIN users u ON c.user_id = u.id
+        LEFT JOIN tracks t ON c.track_id = t.id
+    ");
+
+    // 4) Existing artist follows (user_followed_artists)
+    $pdo->exec("
+        INSERT IGNORE INTO user_activities (source_key, user_id, user_email, user_name, user_role, action_type, target_type, target_id, target_title, metadata_json, created_at)
+        SELECT
+            CONCAT('fol_', fa.id),
+            fa.user_id,
+            u.email,
+            COALESCE(u.display_name, u.username, 'User'),
+            COALESCE(u.role, 'listener'),
+            'artist_followed',
+            'artist',
+            fa.artist_id,
+            COALESCE(a.name, fa.artist_id),
+            NULL,
+            fa.created_at
+        FROM user_followed_artists fa
+        LEFT JOIN users u ON fa.user_id = u.id
+        LEFT JOIN artists a ON fa.artist_id = a.id
+    ");
+
+    // 5) Existing uploaded tracks with uploaded_by_user_id
+    $pdo->exec("
+        INSERT IGNORE INTO user_activities (source_key, user_id, user_email, user_name, user_role, action_type, target_type, target_id, target_title, metadata_json, created_at)
+        SELECT
+            CONCAT('trk_upl_', t.id),
+            COALESCE(t.uploaded_by_user_id, t.created_by_user_id, 'usr_admin_earr'),
+            u.email,
+            COALESCE(u.display_name, 'Flontmie Administrator'),
+            COALESCE(u.role, 'admin'),
+            'track_uploaded',
+            'track',
+            t.id,
+            t.title,
+            JSON_OBJECT('artist', t.artist_name, 'album', COALESCE(t.album_name, 'Single'), 'genre', t.genre),
+            t.created_at
+        FROM tracks t
+        LEFT JOIN users u ON COALESCE(t.uploaded_by_user_id, t.created_by_user_id, 'usr_admin_earr') = u.id
+        WHERE t.is_deleted = 0
     ");
 
     // Backfill real LRC timestamped lyrics from LRCLIB for uploaded tracks if not yet LRC-formatted
@@ -1398,7 +1566,7 @@ try {
 
     // Normalize all catalog records strictly as Admin / Distributor direct uploads
     $pdo->exec("UPDATE tracks SET source_type = 'direct_upload', import_source = 'direct_upload'");
-    $results[] = "Purged all legacy ytmusicapi/preview tracks, extracted all uploaded server media files, and reset stream counts to real Flontmie plays.";
+    $results[] = "Purged all legacy ytmusicapi/preview tracks, extracted all uploaded server media files, synchronized likes/comments/playlists, and verified user_activities.";
 
     $output = [
         'status' => 'success',

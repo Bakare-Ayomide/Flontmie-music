@@ -144,6 +144,7 @@ if ($method === 'POST' && $action === 'login') {
     $enrichedUser = enrichUserPayload($pdo, $user);
 
     Auth::logAudit($user['id'], 'USER_LOGIN', 'USER', $user['id'], ['role' => $user['role']]);
+    Auth::logUserActivity($user, 'user_login', 'user', $user['id'], $user['display_name'] ?? $user['email'], ['role' => $user['role']]);
     Auth::logSecurityEvent($user['id'], $user['email'], 'LOGIN_SUCCESS', 'info', "Authenticated as {$user['role']}");
 
     json_response([
@@ -219,6 +220,7 @@ if ($method === 'POST' && $action === 'register') {
     $enrichedUser = enrichUserPayload($pdo, $newUser);
 
     Auth::logAudit($userId, 'USER_REGISTER', 'USER', $userId, ['role' => 'listener', 'email' => $email]);
+    Auth::logUserActivity($newUser, 'user_registered', 'user', $userId, $newUser['display_name'], ['role' => 'listener']);
     Auth::logSecurityEvent($userId, $email, 'ACCOUNT_REGISTERED', 'info', "Registered new listener account");
 
     json_response([
@@ -273,6 +275,7 @@ if ($method === 'POST' && $action === 'update_profile') {
     $updatedUser = enrichUserPayload($pdo, $stmt->fetch());
 
     Auth::logAudit($user['id'], 'PROFILE_UPDATED', 'USER', $user['id'], ['display_name' => $displayName]);
+    Auth::logUserActivity($updatedUser, 'profile_updated', 'user', $user['id'], $displayName, ['country' => $country]);
 
     json_response([
         'status' => 'success',

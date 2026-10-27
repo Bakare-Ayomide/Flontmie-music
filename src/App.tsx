@@ -116,6 +116,13 @@ export default function App() {
   const [isCreatePlaylistOpen, setIsCreatePlaylistOpen] = useState<boolean>(false);
   const [isAddToPlaylistOpen, setIsAddToPlaylistOpen] = useState<boolean>(false);
   const [isSelectTracksOpen, setIsSelectTracksOpen] = useState<boolean>(false);
+  const [actionBanner, setActionBanner] = useState<{ type: 'error' | 'info'; message: string } | null>(null);
+
+  useEffect(() => {
+    if (!actionBanner) return;
+    const timer = setTimeout(() => setActionBanner(null), 4500);
+    return () => clearTimeout(timer);
+  }, [actionBanner]);
 
   // Jam Session Social State
   const [isJamActive, setIsJamActive] = useState<boolean>(false);
@@ -276,6 +283,10 @@ export default function App() {
     api.getTracks().then((backendTracks) => {
       if (backendTracks && backendTracks.length > 0) {
         setTracks(backendTracks);
+        setLikedTrackIds((prev) => {
+          const fromTracks = backendTracks.filter((t) => t.isLiked).map((t) => t.id);
+          return fromTracks.length > 0 ? Array.from(new Set([...prev, ...fromTracks])) : prev;
+        });
         const preferred =
           backendTracks.find((t) => t.hasLocalAudio && t.hasLocalVideo) ||
           backendTracks.find((t) => t.hasLocalAudio) ||
@@ -591,21 +602,169 @@ export default function App() {
     setRepeatMode(nextRepeat[repeatMode]);
   };
 
+  const handleCommentCountChange = useCallback((trackId: string, newCount: number) => {
+    setTracks((prev) =>
+      prev.map((t) => (t.id === trackId ? { ...t, commentsCount: newCount } : t))
+    );
+    setCurrentTrack((curr) =>
+      curr && curr.id === trackId ? { ...curr, commentsCount: newCount } : curr
+    );
+  }, []);
+
+  const handleLikeCountReconcile = useCallback((trackId: string, newCount: number) => {
+    setTracks((prev) =>
+      prev.map((t) => (t.id === trackId ? { ...t, likes: newCount } : t))
+    );
+    setCurrentTrack((curr) =>
+      curr && curr.id === trackId ? { ...curr, likes: newCount } : curr
+    );
+  }, []);
+
+  // Poll authoritative like & comment counts from MySQL backend to keep all clients in sync
+  useEffect(() => {
+    if (!isOnline) return;
+    let cancelled = false;
+
+    const runSync = () => {
+      api
+        .syncEngagement(currentTrack?.id)
+        .then((res) => {
+          if (cancelled || !res || !res.counts) return;
+          const counts = res.counts;
+
+          setTracks((prev) =>
+            prev.map((t) => {
+              const c = counts[t.id];
+              if (!c) return t;
+              if (
+                t.likes === c.likes_count &&
+                (t.commentsCount ?? 0) === c.comments_count &&
+                (t.flontmiePlays ?? 0) === c.flontmie_plays
+              ) {
+                return t;
+              }
+              return {
+                ...t,
+                likes: c.likes_count,
+                commentsCount: c.comments_count,
+                flontmiePlays: c.flontmie_plays,
+                streams: c.flontmie_plays,
+              };
+            })
+          );
+
+          setCurrentTrack((curr) => {
+            if (!curr) return curr;
+            const c = counts[curr.id];
+            if (!c) return curr;
+            if (
+              curr.likes === c.likes_count &&
+              (curr.commentsCount ?? 0) === c.comments_count &&
+              (curr.flontmiePlays ?? 0) === c.flontmie_plays
+            ) {
+              return curr;
+            }
+            return {
+              ...curr,
+              likes: c.likes_count,
+              commentsCount: c.comments_count,
+              flontmiePlays: c.flontmie_plays,
+              streams: c.flontmie_plays,
+            };
+          });
+
+          if (Array.isArray(res.liked_track_ids)) {
+            setLikedTrackIds(res.liked_track_ids);
+          }
+        })
+        .catch(() => {});
+    };
+
+    runSync();
+    const interval = setInterval(runSync, 10000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [isOnline, currentTrack?.id, isFullPlayerOpen, currentUser?.id]);
+
   const handleToggleLike = (trackId?: string) => {
     const targetId = trackId || currentTrack?.id;
     if (!targetId) return;
 
+    if (!currentUser || !api.getToken()) {
+      setActionBanner({
+        type: 'error',
+        message: 'Please sign in to like tracks and save them to your account.',
+      });
+      setAuthInitialMode('login');
+      setIsAuthModalOpen(true);
+      return;
+    }
+
+    const wasLiked = likedTrackIds.includes(targetId);
+    const nextLiked = !wasLiked;
+    const targetTrack = tracks.find((t) => t.id === targetId) || (currentTrack?.id === targetId ? currentTrack : null);
+    const prevLikes = Number(targetTrack?.likes ?? 0);
+    const optimisticLikes = Math.max(0, prevLikes + (nextLiked ? 1 : -1));
+
+    // Optimistic UI update
     setLikedTrackIds((prev) =>
-      prev.includes(targetId) ? prev.filter((id) => id !== targetId) : [...prev, targetId]
+      nextLiked ? (prev.includes(targetId) ? prev : [...prev, targetId]) : prev.filter((id) => id !== targetId)
+    );
+    setTracks((prev) =>
+      prev.map((t) => (t.id === targetId ? { ...t, likes: optimisticLikes, isLiked: nextLiked } : t))
+    );
+    setCurrentTrack((curr) =>
+      curr && curr.id === targetId ? { ...curr, likes: optimisticLikes, isLiked: nextLiked } : curr
     );
 
-    api.toggleLike(targetId).then((res) => {
-      if (res && typeof res.likes_count === 'number') {
-        setTracks((prev) =>
-          prev.map((t) => (t.id === targetId ? { ...t, likes: res.likes_count! } : t))
+    // Server persistence & reconciliation with rollback on error
+    api
+      .toggleLike(targetId, nextLiked ? 'like' : 'unlike')
+      .then((res) => {
+        if (res) {
+          const confirmedLiked = typeof res.liked === 'boolean' ? res.liked : nextLiked;
+          const confirmedCount = typeof res.likes_count === 'number' ? res.likes_count : optimisticLikes;
+          const resolvedTrackId = res.track_id || targetId;
+
+          setLikedTrackIds((prev) =>
+            confirmedLiked
+              ? prev.includes(resolvedTrackId)
+                ? prev
+                : [...prev, resolvedTrackId]
+              : prev.filter((id) => id !== resolvedTrackId && id !== targetId)
+          );
+          setTracks((prev) =>
+            prev.map((t) =>
+              t.id === targetId || t.id === resolvedTrackId
+                ? { ...t, likes: confirmedCount, isLiked: confirmedLiked }
+                : t
+            )
+          );
+          setCurrentTrack((curr) =>
+            curr && (curr.id === targetId || curr.id === resolvedTrackId)
+              ? { ...curr, likes: confirmedCount, isLiked: confirmedLiked }
+              : curr
+          );
+        }
+      })
+      .catch((err) => {
+        // Roll back failed action and show clear error
+        setLikedTrackIds((prev) =>
+          wasLiked ? (prev.includes(targetId) ? prev : [...prev, targetId]) : prev.filter((id) => id !== targetId)
         );
-      }
-    }).catch(() => {});
+        setTracks((prev) =>
+          prev.map((t) => (t.id === targetId ? { ...t, likes: prevLikes, isLiked: wasLiked } : t))
+        );
+        setCurrentTrack((curr) =>
+          curr && curr.id === targetId ? { ...curr, likes: prevLikes, isLiked: wasLiked } : curr
+        );
+        setActionBanner({
+          type: 'error',
+          message: err?.message || 'Failed to update like status on server. Your change was rolled back.',
+        });
+      });
   };
 
   const handleDislikeTrack = (trackId: string) => {
@@ -685,6 +844,16 @@ export default function App() {
 
   // Playlist management (Persisted to MySQL Database)
   const handleCreatePlaylist = (newPlaylist: Partial<Playlist>) => {
+    if (!currentUser || !api.getToken()) {
+      setActionBanner({
+        type: 'error',
+        message: 'Please sign in to create and save playlists to your account.',
+      });
+      setAuthInitialMode('login');
+      setIsAuthModalOpen(true);
+      return;
+    }
+
     const playlistId = `pl_${Date.now()}`;
     const defaultTrackIds =
       newPlaylist.trackIds && newPlaylist.trackIds.length > 0
@@ -697,6 +866,9 @@ export default function App() {
       description: newPlaylist.description || '',
       coverUrl: newPlaylist.coverUrl || IMAGES.synthwave,
       curator: currentUser?.display_name || newPlaylist.curator || 'You',
+      creatorId: currentUser?.id,
+      creatorRole: currentUser?.role,
+      isAdminCreated: currentUser?.role === 'admin',
       isPublic: true,
       isCollaborative: Boolean(newPlaylist.isCollaborative),
       collaborators: newPlaylist.collaborators,
@@ -709,15 +881,23 @@ export default function App() {
     setPlaylists((prev) => [created, ...prev]);
     setSelectedPlaylistId(created.id);
 
-    api.createPlaylist({
-      id: created.id,
-      title: created.title,
-      description: created.description,
-      cover_art_url: created.coverUrl,
-      genre_category: String(created.category || 'all'),
-      is_public: true,
-      track_ids: created.trackIds,
-    }).catch(() => {});
+    api
+      .createPlaylist({
+        id: created.id,
+        title: created.title,
+        description: created.description,
+        cover_art_url: created.coverUrl,
+        genre_category: String(created.category || 'all'),
+        is_public: true,
+        track_ids: created.trackIds,
+      })
+      .catch((err) => {
+        setPlaylists((prev) => prev.filter((p) => p.id !== created.id));
+        setActionBanner({
+          type: 'error',
+          message: err?.message || 'Failed to save playlist to server.',
+        });
+      });
   };
 
   const handleDeletePlaylist = (id: string) => {
@@ -927,6 +1107,19 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#030303] text-white flex flex-col font-sans selection:bg-red-600/30 overflow-x-hidden">
+      {/* Action Error / Rollback Notification Toast */}
+      {actionBanner && (
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-[120] max-w-md w-[92%] px-4 py-3 rounded-2xl bg-red-950/95 border border-red-500/50 text-red-100 text-xs font-semibold shadow-2xl flex items-center justify-between gap-3 animate-in fade-in duration-150">
+          <span>{actionBanner.message}</span>
+          <button
+            onClick={() => setActionBanner(null)}
+            className="px-2 py-0.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[11px] font-bold cursor-pointer shrink-0"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* Offline Mode Status Banner */}
       {!isOnline && (
         <div className="bg-amber-500/20 border-b border-amber-500/40 px-4 py-2 text-xs text-amber-200 flex items-center justify-between gap-3">
@@ -1441,6 +1634,8 @@ export default function App() {
                   onSignOut={async () => {
                     await api.logout();
                     setCurrentUser(null);
+                    setLikedTrackIds([]);
+                    setFollowedArtistIds([]);
                     setCurrentTab('home');
                   }}
                   onSwitchPortal={(role) => {
@@ -1640,6 +1835,16 @@ export default function App() {
           setIsFullPlayerOpen(false);
           handleViewArtist(artistId);
         }}
+        currentUser={currentUser}
+        onRequireAuth={(reason) => {
+          if (reason) {
+            setActionBanner({ type: 'error', message: reason });
+          }
+          setAuthInitialMode('login');
+          setIsAuthModalOpen(true);
+        }}
+        onCommentCountChange={handleCommentCountChange}
+        onLikeCountReconcile={handleLikeCountReconcile}
       />
 
       {/* Up Next / Queue Drawer */}

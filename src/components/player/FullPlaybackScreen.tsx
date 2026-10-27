@@ -66,6 +66,10 @@ interface FullPlaybackScreenProps {
   onOpenAddToPlaylist?: (track: Track) => void;
   onPlayTrack: (track: Track) => void;
   onSelectArtist: (artistId: string) => void;
+  currentUser?: { id: string; email: string; display_name?: string; username?: string; role?: string } | null;
+  onRequireAuth?: (reason?: string) => void;
+  onCommentCountChange?: (trackId: string, count: number) => void;
+  onLikeCountReconcile?: (trackId: string, count: number) => void;
 }
 
 export const FullPlaybackScreen: React.FC<FullPlaybackScreenProps> = ({
@@ -101,12 +105,19 @@ export const FullPlaybackScreen: React.FC<FullPlaybackScreenProps> = ({
   onOpenShare,
   onOpenAddToPlaylist,
   onSelectArtist,
+  currentUser,
+  onRequireAuth,
+  onCommentCountChange,
+  onLikeCountReconcile,
 }) => {
   const [showComments, setShowComments] = useState(false);
   const [showMoreActions, setShowMoreActions] = useState(false);
   const [commentInput, setCommentInput] = useState('');
-  const [comments, setComments] = useState<Array<{ id: string; user: string; text: string; time: string }>>([]);
+  const [comments, setComments] = useState<Array<{ id: string; user: string; text: string; time: string; user_id?: string }>>([]);
+  const [commentsCountState, setCommentsCountState] = useState<number>(0);
   const [loadingComments, setLoadingComments] = useState(false);
+  const [isSubmittingComment, setIsSubmittingComment] = useState(false);
+  const [commentError, setCommentError] = useState<string | null>(null);
 
   // Real lyrics state (from track or loaded from backend)
   const [lyricsLines, setLyricsLines] = useState<LyricLine[]>([]);
@@ -146,26 +157,55 @@ export const FullPlaybackScreen: React.FC<FullPlaybackScreenProps> = ({
     setVideoLoadError(false);
   }, [currentTrack?.id, currentTrack?.videoUrl]);
 
-  // Load real comments for current track
+  // Load and synchronize real comments and counts for current track
   useEffect(() => {
-    if (!currentTrack) return;
+    if (!currentTrack) {
+      setComments([]);
+      setCommentsCountState(0);
+      return;
+    }
+    setCommentsCountState(Number(currentTrack.commentsCount ?? 0));
+    setCommentError(null);
+
     let isMounted = true;
-    setLoadingComments(true);
-    api
-      .getTrackComments(currentTrack.id)
-      .then((list) => {
-        if (isMounted) setComments(Array.isArray(list) ? list : []);
-      })
-      .catch(() => {
-        if (isMounted) setComments([]);
-      })
-      .finally(() => {
-        if (isMounted) setLoadingComments(false);
-      });
+    const fetchCommentsAndCounts = (showSpinner: boolean) => {
+      if (showSpinner) setLoadingComments(true);
+      api
+        .getTrackCommentsWithMeta(currentTrack.id)
+        .then((res) => {
+          if (!isMounted) return;
+          const list = Array.isArray(res.comments) ? res.comments : [];
+          const authCount = typeof res.comments_count === 'number' ? res.comments_count : list.length;
+          setComments(list);
+          setCommentsCountState(authCount);
+          if (onCommentCountChange) {
+            onCommentCountChange(currentTrack.id, authCount);
+          }
+          if (typeof res.likes_count === 'number' && onLikeCountReconcile) {
+            onLikeCountReconcile(currentTrack.id, res.likes_count);
+          }
+        })
+        .catch(() => {
+          if (isMounted && showSpinner) setComments([]);
+        })
+        .finally(() => {
+          if (isMounted && showSpinner) setLoadingComments(false);
+        });
+    };
+
+    fetchCommentsAndCounts(true);
+
+    // Poll when player or comments sheet is open so new comments/likes from other devices appear
+    let pollTimer: any = null;
+    if (isOpen || showComments) {
+      pollTimer = setInterval(() => fetchCommentsAndCounts(false), 8000);
+    }
+
     return () => {
       isMounted = false;
+      if (pollTimer) clearInterval(pollTimer);
     };
-  }, [currentTrack?.id]);
+  }, [currentTrack?.id, isOpen, showComments]);
 
   // Load real lyrics for current track (from track record or backend endpoint, never inventing lyrics/timestamps)
   useEffect(() => {
@@ -320,19 +360,106 @@ export const FullPlaybackScreen: React.FC<FullPlaybackScreenProps> = ({
 
   const handleAddComment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!commentInput.trim()) return;
+    setCommentError(null);
     const text = commentInput.trim();
+    if (!text || isSubmittingComment) return;
+
+    if (!currentUser || !api.getToken()) {
+      setCommentError('Please sign in to post a comment.');
+      if (onRequireAuth) {
+        onRequireAuth('Please sign in to post a comment on this track.');
+      }
+      return;
+    }
+
+    const prevComments = comments;
+    const prevCount = Math.max(Number(currentTrack.commentsCount ?? 0), commentsCountState, comments.length);
+    const optimisticCount = prevCount + 1;
+    const tempId = `temp-${Date.now()}`;
+    const optimisticComment = {
+      id: tempId,
+      user: currentUser.display_name || currentUser.username || 'You',
+      text,
+      time: 'Just now',
+      user_id: currentUser.id,
+    };
+
+    // Optimistic UI update
     setCommentInput('');
+    setIsSubmittingComment(true);
+    setComments((prev) => [optimisticComment, ...prev]);
+    setCommentsCountState(optimisticCount);
+    if (onCommentCountChange) {
+      onCommentCountChange(currentTrack.id, optimisticCount);
+    }
+
     try {
       const saved = await api.postTrackComment(currentTrack.id, text);
       if (saved) {
-        setComments((prev) => [saved, ...prev]);
+        const confirmedCount =
+          typeof saved.comments_count === 'number' ? saved.comments_count : optimisticCount;
+        setComments((prev) =>
+          prev.map((c) =>
+            c.id === tempId
+              ? {
+                  id: saved.id,
+                  user: saved.user,
+                  text: saved.text,
+                  time: saved.time,
+                  user_id: currentUser.id,
+                }
+              : c
+          )
+        );
+        setCommentsCountState(confirmedCount);
+        if (onCommentCountChange) {
+          onCommentCountChange(saved.track_id || currentTrack.id, confirmedCount);
+        }
+      } else {
+        throw new Error('Server did not confirm comment creation.');
       }
-    } catch {
-      setComments((prev) => [
-        { id: `c-${Date.now()}`, user: 'You', text, time: 'Just now' },
-        ...prev,
-      ]);
+    } catch (err: any) {
+      // Roll back optimistic state and display error
+      setComments(prevComments);
+      setCommentsCountState(prevCount);
+      if (onCommentCountChange) {
+        onCommentCountChange(currentTrack.id, prevCount);
+      }
+      setCommentInput(text);
+      setCommentError(err?.message || 'Failed to post comment. Please try again.');
+    } finally {
+      setIsSubmittingComment(false);
+    }
+  };
+
+  const handleDeleteComment = async (commentId: string) => {
+    setCommentError(null);
+    const prevComments = comments;
+    const prevCount = Math.max(Number(currentTrack.commentsCount ?? 0), commentsCountState, comments.length);
+    const nextComments = comments.filter((c) => c.id !== commentId);
+    const optimisticCount = Math.max(0, prevCount - 1);
+
+    setComments(nextComments);
+    setCommentsCountState(optimisticCount);
+    if (onCommentCountChange) {
+      onCommentCountChange(currentTrack.id, optimisticCount);
+    }
+
+    try {
+      const res = await api.deleteTrackComment(commentId);
+      const confirmedCount =
+        typeof res.comments_count === 'number' ? res.comments_count : nextComments.length;
+      setCommentsCountState(confirmedCount);
+      if (onCommentCountChange) {
+        onCommentCountChange(res.track_id || currentTrack.id, confirmedCount);
+      }
+    } catch (err: any) {
+      setComments(prevComments);
+      setCommentsCountState(prevCount);
+      if (onCommentCountChange) {
+        onCommentCountChange(currentTrack.id, prevCount);
+      }
+      setCommentError(err?.message || 'Unable to delete comment.');
     }
   };
 
@@ -371,8 +498,15 @@ export const FullPlaybackScreen: React.FC<FullPlaybackScreenProps> = ({
     },
   ];
 
-  const formattedLikes = Number(currentTrack.likes) > 0 ? formatCompactNumber(currentTrack.likes) : '0';
-  const formattedComments = comments.length > 0 ? formatCompactNumber(comments.length) : '0';
+  const effectiveLikesCount = Math.max(0, Number(currentTrack.likes ?? 0));
+  const effectiveCommentsCount = Math.max(
+    0,
+    Number(currentTrack.commentsCount ?? 0),
+    commentsCountState,
+    comments.length
+  );
+  const formattedLikes = effectiveLikesCount > 0 ? formatCompactNumber(effectiveLikesCount) : '0';
+  const formattedComments = effectiveCommentsCount > 0 ? formatCompactNumber(effectiveCommentsCount) : '0';
 
   return (
     <div
@@ -824,7 +958,7 @@ export const FullPlaybackScreen: React.FC<FullPlaybackScreenProps> = ({
           >
             <div className="flex items-center justify-between border-b border-white/10 pb-3">
               <h3 className="text-sm font-bold text-white">
-                Comments ({comments.length})
+                Comments ({effectiveCommentsCount})
               </h3>
               <button
                 type="button"
@@ -835,19 +969,34 @@ export const FullPlaybackScreen: React.FC<FullPlaybackScreenProps> = ({
               </button>
             </div>
 
+            {commentError && (
+              <div className="px-3.5 py-2.5 rounded-xl bg-red-500/15 border border-red-500/40 text-red-200 text-xs flex items-center justify-between gap-2">
+                <span>{commentError}</span>
+                <button
+                  type="button"
+                  onClick={() => setCommentError(null)}
+                  className="text-white/70 hover:text-white text-[11px] font-bold cursor-pointer"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+
             <form onSubmit={handleAddComment} className="flex gap-2">
               <input
                 type="text"
                 value={commentInput}
                 onChange={(e) => setCommentInput(e.target.value)}
-                placeholder="Add a comment..."
+                placeholder={currentUser ? 'Add a comment...' : 'Sign in to post a comment...'}
+                maxLength={1000}
                 className="flex-1 bg-black border border-white/15 rounded-full px-4 py-2 text-xs text-white placeholder-white/40 focus:outline-none focus:border-white"
               />
               <button
                 type="submit"
-                className="px-4 py-2 rounded-full bg-white text-black font-bold text-xs flex items-center gap-1 hover:bg-neutral-200 transition-colors cursor-pointer"
+                disabled={isSubmittingComment}
+                className="px-4 py-2 rounded-full bg-white text-black font-bold text-xs flex items-center gap-1 hover:bg-neutral-200 disabled:opacity-50 transition-colors cursor-pointer"
               >
-                <Send className="w-3.5 h-3.5" />
+                {isSubmittingComment ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
               </button>
             </form>
 
@@ -859,15 +1008,33 @@ export const FullPlaybackScreen: React.FC<FullPlaybackScreenProps> = ({
                   No comments yet. Be the first to comment on this track.
                 </p>
               ) : (
-                comments.map((c) => (
-                  <div key={c.id} className="p-3 rounded-2xl bg-white/[0.04] border border-white/5">
-                    <div className="flex items-center justify-between text-[11px] mb-1">
-                      <span className="font-bold text-white">{c.user}</span>
-                      <span className="text-white/40">{c.time}</span>
+                comments.map((c) => {
+                  const canDelete = Boolean(
+                    currentUser &&
+                      !String(c.id).startsWith('temp-') &&
+                      (currentUser.role === 'admin' || (c.user_id && c.user_id === currentUser.id))
+                  );
+                  return (
+                    <div key={c.id} className="p-3 rounded-2xl bg-white/[0.04] border border-white/5">
+                      <div className="flex items-center justify-between text-[11px] mb-1 gap-2">
+                        <span className="font-bold text-white truncate">{c.user}</span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-white/40">{c.time}</span>
+                          {canDelete && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteComment(c.id)}
+                              className="text-[10px] font-semibold text-red-400 hover:text-red-300 cursor-pointer"
+                            >
+                              Delete
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <p className="text-xs text-white/85 break-words">{c.text}</p>
                     </div>
-                    <p className="text-xs text-white/80">{c.text}</p>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </div>

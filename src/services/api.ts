@@ -240,6 +240,8 @@ class FlontmieApiService {
       ytPlays: null,
       flontmiePlays: realFlontmiePlays,
       likes: Number(dbTrack.likes_count ?? dbTrack.likes) || 0,
+      commentsCount: Number(dbTrack.comments_count ?? dbTrack.commentsCount) || 0,
+      isLiked: Boolean(dbTrack.is_liked ?? dbTrack.isLiked),
       dislikes: Number(dbTrack.dislikes_count ?? dbTrack.dislikes) || 0,
       isExplicit: Boolean(Number(dbTrack.explicit)),
       releaseDate: dbTrack.release_date || '2026-01-01',
@@ -382,15 +384,48 @@ class FlontmieApiService {
   }
 
   // --- Toggle Track Like ---
-  public async toggleLikeTrack(trackId: string): Promise<{ liked: boolean; likes_count?: number }> {
+  public async toggleLikeTrack(
+    trackId: string,
+    mode?: 'like' | 'unlike' | 'toggle'
+  ): Promise<{ status?: string; track_id?: string; liked: boolean; likes_count?: number }> {
     return this.request(`tracks.php?action=like`, {
       method: 'POST',
-      body: JSON.stringify({ track_id: trackId }),
+      body: JSON.stringify({ track_id: trackId, ...(mode ? { mode } : {}) }),
     });
   }
 
-  public async toggleLike(trackId: string): Promise<{ liked: boolean; likes_count?: number }> {
-    return this.toggleLikeTrack(trackId);
+  public async toggleLike(
+    trackId: string,
+    mode?: 'like' | 'unlike' | 'toggle'
+  ): Promise<{ status?: string; track_id?: string; liked: boolean; likes_count?: number }> {
+    return this.toggleLikeTrack(trackId, mode);
+  }
+
+  // --- Synchronize Authoritative Likes, Comments & Counts Across Clients ---
+  public async syncEngagement(trackId?: string): Promise<{
+    status: string;
+    counts: Record<string, { likes_count: number; comments_count: number; flontmie_plays: number }>;
+    liked_track_ids: string[] | null;
+    comments?: Array<{ id: string; user: string; text: string; time: string; user_id?: string }> | null;
+  }> {
+    const qs = trackId ? `&track_id=${encodeURIComponent(trackId)}` : '';
+    const res = await this.request<any>(`tracks.php?action=engagement_sync${qs}`);
+    let mappedComments: Array<{ id: string; user: string; text: string; time: string; user_id?: string }> | null = null;
+    if (Array.isArray(res.comments)) {
+      mappedComments = res.comments.map((c: any) => ({
+        id: String(c.id),
+        user: c.author_name || 'Listener',
+        text: c.comment_text || c.body || '',
+        time: c.created_at || '',
+        user_id: c.user_id ? String(c.user_id) : undefined,
+      }));
+    }
+    return {
+      status: res.status || 'success',
+      counts: res.counts || {},
+      liked_track_ids: Array.isArray(res.liked_track_ids) ? res.liked_track_ids.map(String) : null,
+      comments: mappedComments,
+    };
   }
 
   // --- Dislike Track ---
@@ -402,25 +437,51 @@ class FlontmieApiService {
   }
 
   // --- Track Comments ---
-  public async getTrackComments(trackId: string): Promise<Array<{ id: string; user: string; text: string; time: string }>> {
-    try {
-      const res = await this.request<{ status: string; comments: any[] }>(
-        `tracks.php?action=comments&track_id=${encodeURIComponent(trackId)}`
-      );
-      if (res.status === 'success' && Array.isArray(res.comments)) {
-        return res.comments.map((c: any) => ({
+  public async getTrackCommentsWithMeta(trackId: string): Promise<{
+    comments: Array<{ id: string; user: string; text: string; time: string; user_id?: string }>;
+    comments_count: number;
+    likes_count?: number;
+  }> {
+    const res = await this.request<{
+      status: string;
+      comments: any[];
+      comments_count?: number;
+      likes_count?: number;
+    }>(`tracks.php?action=comments&track_id=${encodeURIComponent(trackId)}`);
+    const mapped = Array.isArray(res.comments)
+      ? res.comments.map((c: any) => ({
           id: String(c.id),
           user: c.author_name || 'Listener',
-          text: c.comment_text || '',
-          time: c.created_at || ''
-        }));
-      }
+          text: c.comment_text || c.body || '',
+          time: c.created_at || '',
+          user_id: c.user_id ? String(c.user_id) : undefined,
+        }))
+      : [];
+    return {
+      comments: mapped,
+      comments_count: typeof res.comments_count === 'number' ? res.comments_count : mapped.length,
+      likes_count: typeof res.likes_count === 'number' ? res.likes_count : undefined,
+    };
+  }
+
+  public async getTrackComments(trackId: string): Promise<Array<{ id: string; user: string; text: string; time: string; user_id?: string }>> {
+    try {
+      const data = await this.getTrackCommentsWithMeta(trackId);
+      return data.comments;
     } catch {}
     return [];
   }
 
-  public async postTrackComment(trackId: string, text: string): Promise<{ id: string; user: string; text: string; time: string } | null> {
-    const res = await this.request<{ status: string; comment: any }>(`tracks.php?action=add_comment`, {
+  public async postTrackComment(
+    trackId: string,
+    text: string
+  ): Promise<{ id: string; user: string; text: string; time: string; comments_count?: number; track_id?: string } | null> {
+    const res = await this.request<{
+      status: string;
+      track_id?: string;
+      comments_count?: number;
+      comment: any;
+    }>(`tracks.php?action=add_comment`, {
       method: 'POST',
       body: JSON.stringify({ track_id: trackId, text }),
     });
@@ -428,11 +489,20 @@ class FlontmieApiService {
       return {
         id: String(res.comment.id),
         user: res.comment.author_name || 'Listener',
-        text: res.comment.comment_text || text,
-        time: res.comment.created_at || 'Just now'
+        text: res.comment.comment_text || res.comment.body || text,
+        time: res.comment.created_at || 'Just now',
+        comments_count: typeof res.comments_count === 'number' ? res.comments_count : undefined,
+        track_id: res.track_id || trackId,
       };
     }
     return null;
+  }
+
+  public async deleteTrackComment(commentId: string | number): Promise<{ status: string; comment_id: number; track_id: string; comments_count: number }> {
+    return this.request(`tracks.php?action=delete_comment`, {
+      method: 'POST',
+      body: JSON.stringify({ comment_id: commentId }),
+    });
   }
 
   // --- Create / Update / Delete Track ---
@@ -468,12 +538,18 @@ class FlontmieApiService {
         coverUrl: resolveArtworkUrl(p.cover_art_url, 'playlist', p.title),
         trackIds: Array.isArray(p.track_ids) ? p.track_ids : [],
         curator: p.curator_name || 'Flontmie',
+        curatorAvatar: p.curator_avatar || undefined,
+        creatorId: p.user_id || undefined,
+        creatorUsername: p.creator_username || undefined,
+        creatorRole: p.creator_role || undefined,
+        isAdminCreated: Boolean(p.is_admin_created),
         isPublic: Boolean(Number(p.is_public)),
         isCollaborative: false,
         followers: Number(p.followers || 0),
         category: (p.genre_category || 'all') as any,
         genreCategory: p.genre_category || 'all',
         createdAt: p.created_at || new Date().toISOString().split('T')[0],
+        updatedAt: p.updated_at || undefined,
       }));
     }
     return [];
@@ -493,12 +569,18 @@ class FlontmieApiService {
           coverUrl: resolveArtworkUrl(p.cover_art_url, 'playlist', p.title),
           trackIds: Array.isArray(p.track_ids) ? p.track_ids : [],
           curator: p.curator_name || 'Flontmie',
+          curatorAvatar: p.curator_avatar || undefined,
+          creatorId: p.user_id || undefined,
+          creatorUsername: p.creator_username || undefined,
+          creatorRole: p.creator_role || undefined,
+          isAdminCreated: Boolean(p.is_admin_created),
           isPublic: Boolean(Number(p.is_public)),
           isCollaborative: false,
           followers: Number(p.followers || 0),
           category: (p.genre_category || 'all') as any,
           genreCategory: p.genre_category || 'all',
           createdAt: p.created_at || new Date().toISOString().split('T')[0],
+          updatedAt: p.updated_at || undefined,
         };
         const tracks = Array.isArray(res.tracks) ? res.tracks.map((t) => this.mapDbTrack(t)) : [];
         return { playlist, tracks };
@@ -1053,6 +1135,91 @@ class FlontmieApiService {
     return this.request('admin.php?action=clear_security_events', {
       method: 'POST',
       body: JSON.stringify({ csrf_token: this.csrfToken }),
+    });
+  }
+
+  // --- Admin Visibility: Searchable, Paginated Playlists, User Activity, User Profiles & Engagement ---
+  public async getAdminPlaylists(params: {
+    q?: string;
+    creator_type?: 'all' | 'admin' | 'user';
+    visibility?: 'all' | 'public' | 'private';
+    user_id?: string;
+    page?: number;
+    per_page?: number;
+  } = {}): Promise<any> {
+    const qs = new URLSearchParams({ action: 'playlists' });
+    if (params.q) qs.set('q', params.q);
+    if (params.creator_type) qs.set('creator_type', params.creator_type);
+    if (params.visibility) qs.set('visibility', params.visibility);
+    if (params.user_id) qs.set('user_id', params.user_id);
+    if (params.page) qs.set('page', String(params.page));
+    if (params.per_page) qs.set('per_page', String(params.per_page));
+    return this.request(`admin.php?${qs.toString()}`);
+  }
+
+  public async getAdminPlaylistDetail(playlistId: string): Promise<any> {
+    return this.request(`admin.php?action=playlist_detail&playlist_id=${encodeURIComponent(playlistId)}`);
+  }
+
+  public async getAdminActivities(params: {
+    q?: string;
+    user_id?: string;
+    action_type?: string;
+    target_type?: string;
+    date_from?: string;
+    date_to?: string;
+    page?: number;
+    per_page?: number;
+  } = {}): Promise<any> {
+    const qs = new URLSearchParams({ action: 'activities' });
+    if (params.q) qs.set('q', params.q);
+    if (params.user_id) qs.set('user_id', params.user_id);
+    if (params.action_type) qs.set('action_type', params.action_type);
+    if (params.target_type) qs.set('target_type', params.target_type);
+    if (params.date_from) qs.set('date_from', params.date_from);
+    if (params.date_to) qs.set('date_to', params.date_to);
+    if (params.page) qs.set('page', String(params.page));
+    if (params.per_page) qs.set('per_page', String(params.per_page));
+    return this.request(`admin.php?${qs.toString()}`);
+  }
+
+  public async getAdminUserDetail(params: {
+    user_id: string;
+    action_type?: string;
+    date_from?: string;
+    date_to?: string;
+    page?: number;
+    per_page?: number;
+  }): Promise<any> {
+    const qs = new URLSearchParams({ action: 'user_detail', user_id: params.user_id });
+    if (params.action_type) qs.set('action_type', params.action_type);
+    if (params.date_from) qs.set('date_from', params.date_from);
+    if (params.date_to) qs.set('date_to', params.date_to);
+    if (params.page) qs.set('page', String(params.page));
+    if (params.per_page) qs.set('per_page', String(params.per_page));
+    return this.request(`admin.php?${qs.toString()}`);
+  }
+
+  public async getAdminEngagement(params: {
+    q?: string;
+    track_id?: string;
+    user_id?: string;
+    page?: number;
+    per_page?: number;
+  } = {}): Promise<any> {
+    const qs = new URLSearchParams({ action: 'engagement' });
+    if (params.q) qs.set('q', params.q);
+    if (params.track_id) qs.set('track_id', params.track_id);
+    if (params.user_id) qs.set('user_id', params.user_id);
+    if (params.page) qs.set('page', String(params.page));
+    if (params.per_page) qs.set('per_page', String(params.per_page));
+    return this.request(`admin.php?${qs.toString()}`);
+  }
+
+  public async deleteAdminComment(commentId: number | string): Promise<any> {
+    return this.request('admin.php?action=delete_comment', {
+      method: 'POST',
+      body: JSON.stringify({ comment_id: commentId, csrf_token: this.csrfToken }),
     });
   }
 

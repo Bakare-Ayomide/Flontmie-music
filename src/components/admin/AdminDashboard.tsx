@@ -42,7 +42,12 @@ import {
   Sparkles,
   RotateCcw,
   Ban,
-  FolderSearch
+  FolderSearch,
+  Heart,
+  MessageSquare,
+  Eye,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { 
   Track, 
@@ -73,6 +78,8 @@ type AdminSection =
   | 'ytmusic_import'
   | 'catalog'
   | 'users'
+  | 'user_activity'
+  | 'engagement'
   | 'artists_claims'
   | 'distributors_labels'
   | 'moderation'
@@ -176,9 +183,178 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [newTrackArtworkFile, setNewTrackArtworkFile] = useState<File | null>(null);
   const [isCreatingDirectTrack, setIsCreatingDirectTrack] = useState(false);
 
+  // --- Admin Visibility: Playlists, Playlist Contents, User Activity, User Profile Inspector & Engagement ---
+  const [adminPlaylists, setAdminPlaylists] = useState<any[]>([]);
+  const [playlistTotal, setPlaylistTotal] = useState(0);
+  const [playlistTotalPages, setPlaylistTotalPages] = useState(1);
+  const [playlistPage, setPlaylistPage] = useState(1);
+  const [playlistSearch, setPlaylistSearch] = useState('');
+  const [playlistCreatorType, setPlaylistCreatorType] = useState<'all' | 'admin' | 'user'>('all');
+  const [playlistVisibility, setPlaylistVisibility] = useState<'all' | 'public' | 'private'>('all');
+  const [playlistSummary, setPlaylistSummary] = useState<any>(null);
+  const [loadingPlaylists, setLoadingPlaylists] = useState(false);
+
+  // Playlist Detail Inspector Modal
+  const [selectedPlaylistDetail, setSelectedPlaylistDetail] = useState<any | null>(null);
+  const [loadingPlaylistDetail, setLoadingPlaylistDetail] = useState(false);
+
+  // User Activities State
+  const [adminActivities, setAdminActivities] = useState<any[]>([]);
+  const [activitiesTotal, setActivitiesTotal] = useState(0);
+  const [activitiesTotalPages, setActivitiesTotalPages] = useState(1);
+  const [activitiesPage, setActivitiesPage] = useState(1);
+  const [activitySearch, setActivitySearch] = useState('');
+  const [activityUserFilter, setActivityUserFilter] = useState('');
+  const [activityTypeFilter, setActivityTypeFilter] = useState('');
+  const [activityTargetTypeFilter, setActivityTargetTypeFilter] = useState('');
+  const [activityDateFrom, setActivityDateFrom] = useState('');
+  const [activityDateTo, setActivityDateTo] = useState('');
+  const [availableActionTypes, setAvailableActionTypes] = useState<string[]>([]);
+  const [loadingActivities, setLoadingActivities] = useState(false);
+
+  // User Profile Detail Modal State
+  const [selectedUserDetail, setSelectedUserDetail] = useState<any | null>(null);
+  const [loadingUserDetail, setLoadingUserDetail] = useState(false);
+  const [userDetailTab, setUserDetailTab] = useState<'activity' | 'playlists' | 'likes' | 'comments' | 'follows' | 'uploads'>('activity');
+  const [userDetailActType, setUserDetailActType] = useState('');
+  const [userDetailDateFrom, setUserDetailDateFrom] = useState('');
+  const [userDetailDateTo, setUserDetailDateTo] = useState('');
+  const [userDetailPage, setUserDetailPage] = useState(1);
+
+  // Engagement (Likes & Comments) State
+  const [engagementData, setEngagementData] = useState<any | null>(null);
+  const [engagementTab, setEngagementTab] = useState<'tracks' | 'likes' | 'comments'>('tracks');
+  const [engagementSearch, setEngagementSearch] = useState('');
+  const [engagementPage, setEngagementPage] = useState(1);
+  const [loadingEngagement, setLoadingEngagement] = useState(false);
+
   const showNotice = (msg: string) => {
     setNotice(msg);
     setTimeout(() => setNotice(null), 5000);
+  };
+
+  const fetchAdminPlaylists = useCallback(async () => {
+    setLoadingPlaylists(true);
+    try {
+      const res = await api.getAdminPlaylists({
+        q: playlistSearch.trim() || undefined,
+        creator_type: playlistCreatorType,
+        visibility: playlistVisibility,
+        page: playlistPage,
+        per_page: 15,
+      });
+      if (res && res.status === 'success') {
+        setAdminPlaylists(res.playlists || []);
+        setPlaylistTotal(Number(res.total) || 0);
+        setPlaylistTotalPages(Number(res.total_pages) || 1);
+        setPlaylistSummary(res.summary || null);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setLoadingPlaylists(false);
+    }
+  }, [playlistSearch, playlistCreatorType, playlistVisibility, playlistPage]);
+
+  const handleOpenPlaylistDetail = async (playlistId: string) => {
+    setLoadingPlaylistDetail(true);
+    try {
+      const res = await api.getAdminPlaylistDetail(playlistId);
+      if (res && res.status === 'success') {
+        setSelectedPlaylistDetail(res);
+      } else {
+        setError('Could not load playlist contents.');
+      }
+    } catch (err: any) {
+      setError(err?.message || 'Failed to load playlist contents.');
+    } finally {
+      setLoadingPlaylistDetail(false);
+    }
+  };
+
+  const fetchAdminActivitiesList = useCallback(async () => {
+    setLoadingActivities(true);
+    try {
+      const res = await api.getAdminActivities({
+        q: activitySearch.trim() || undefined,
+        user_id: activityUserFilter || undefined,
+        action_type: activityTypeFilter || undefined,
+        target_type: activityTargetTypeFilter || undefined,
+        date_from: activityDateFrom || undefined,
+        date_to: activityDateTo || undefined,
+        page: activitiesPage,
+        per_page: 25,
+      });
+      if (res && res.status === 'success') {
+        setAdminActivities(res.activities || []);
+        setActivitiesTotal(Number(res.total) || 0);
+        setActivitiesTotalPages(Number(res.total_pages) || 1);
+        if (Array.isArray(res.action_types)) {
+          setAvailableActionTypes(res.action_types);
+        }
+      }
+    } catch {
+      // ignore
+    } finally {
+      setLoadingActivities(false);
+    }
+  }, [activitySearch, activityUserFilter, activityTypeFilter, activityTargetTypeFilter, activityDateFrom, activityDateTo, activitiesPage]);
+
+  const handleOpenUserDetail = useCallback(async (userId: string, opts?: { action_type?: string; date_from?: string; date_to?: string; page?: number }) => {
+    if (!userId) return;
+    setLoadingUserDetail(true);
+    try {
+      const actType = opts?.action_type !== undefined ? opts.action_type : userDetailActType;
+      const dFrom = opts?.date_from !== undefined ? opts.date_from : userDetailDateFrom;
+      const dTo = opts?.date_to !== undefined ? opts.date_to : userDetailDateTo;
+      const pg = opts?.page !== undefined ? opts.page : userDetailPage;
+      const res = await api.getAdminUserDetail({
+        user_id: userId,
+        action_type: actType || undefined,
+        date_from: dFrom || undefined,
+        date_to: dTo || undefined,
+        page: pg,
+        per_page: 20,
+      });
+      if (res && res.status === 'success') {
+        setSelectedUserDetail(res);
+      } else {
+        setError('Could not load user profile & creations.');
+      }
+    } catch (err: any) {
+      setError(err?.message || 'Failed to load user profile details.');
+    } finally {
+      setLoadingUserDetail(false);
+    }
+  }, [userDetailActType, userDetailDateFrom, userDetailDateTo, userDetailPage]);
+
+  const fetchAdminEngagementData = useCallback(async () => {
+    setLoadingEngagement(true);
+    try {
+      const res = await api.getAdminEngagement({
+        q: engagementSearch.trim() || undefined,
+        page: engagementPage,
+        per_page: 25,
+      });
+      if (res && res.status === 'success') {
+        setEngagementData(res);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setLoadingEngagement(false);
+    }
+  }, [engagementSearch, engagementPage]);
+
+  const handleDeleteAdminComment = async (commentId: string) => {
+    try {
+      const res = await api.deleteAdminComment(commentId);
+      showNotice(res.message || 'Comment deleted and count reconciled.');
+      fetchAdminEngagementData();
+      fetchAdminData();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to delete comment.');
+    }
   };
 
   const fetchAdminData = useCallback(async () => {
@@ -225,6 +401,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   useEffect(() => {
     fetchAdminData();
   }, [fetchAdminData]);
+
+  useEffect(() => {
+    if (activeSection === 'playlists_genres') {
+      fetchAdminPlaylists();
+    } else if (activeSection === 'user_activity') {
+      fetchAdminActivitiesList();
+    } else if (activeSection === 'engagement') {
+      fetchAdminEngagementData();
+    }
+  }, [activeSection, fetchAdminPlaylists, fetchAdminActivitiesList, fetchAdminEngagementData]);
 
   // --- Handlers ---
   const handleUpdateUser = async (userId: string, updates: { role?: string; status?: 'active' | 'suspended' | 'banned'; email_verified?: boolean }) => {
@@ -530,15 +716,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const navItems: { id: AdminSection; label: string; icon: React.ReactNode; badge?: number }[] = [
     { id: 'overview', label: 'Overview', icon: <Activity className="w-4 h-4" /> },
+    { id: 'playlists_genres', label: 'Playlists & Genres', icon: <ListMusic className="w-4 h-4" />, badge: stats?.total_playlists ?? dbPlaylists.length },
+    { id: 'user_activity', label: 'User Activity & Creations', icon: <Clock className="w-4 h-4 text-amber-400" />, badge: stats?.total_activities },
+    { id: 'engagement', label: 'Likes & Comments', icon: <Heart className="w-4 h-4 text-rose-400" />, badge: (Number(stats?.total_likes) || 0) + (Number(stats?.total_comments) || 0) },
+    { id: 'users', label: 'Users & Profiles', icon: <Users className="w-4 h-4" />, badge: stats?.total_users },
+    { id: 'catalog', label: 'Music Releases', icon: <Music className="w-4 h-4" />, badge: stats?.total_tracks ?? dbTracks.length },
     { id: 'media_scanner', label: 'Media Matching', icon: <FolderSearch className="w-4 h-4 text-indigo-400" />, badge: stats?.media_counts?.ambiguous || undefined },
     { id: 'ytmusic_import', label: 'Direct Upload & Storage', icon: <Upload className="w-4 h-4" />, badge: dbStorage?.audio_files_count ?? dbTracks.length },
-    { id: 'catalog', label: 'Music Releases', icon: <Music className="w-4 h-4" />, badge: stats?.total_tracks ?? dbTracks.length },
-    { id: 'users', label: 'Users', icon: <Users className="w-4 h-4" />, badge: stats?.total_users },
     { id: 'artists_claims', label: 'Artists & Claims', icon: <CheckCircle2 className="w-4 h-4" />, badge: stats?.pending_claims },
     { id: 'distributors_labels', label: 'Distributors & Labels', icon: <Network className="w-4 h-4" /> },
     { id: 'moderation', label: 'Moderation', icon: <Flag className="w-4 h-4" />, badge: stats?.open_reports },
     { id: 'analytics', label: 'Analytics', icon: <BarChart3 className="w-4 h-4" /> },
-    { id: 'playlists_genres', label: 'Playlists & Genres', icon: <ListMusic className="w-4 h-4" /> },
     { id: 'settings', label: 'System Settings', icon: <Settings className="w-4 h-4" /> },
     { id: 'audit_logs', label: 'Audit Logs', icon: <FileText className="w-4 h-4" /> },
     { id: 'security', label: 'Security', icon: <Lock className="w-4 h-4" />, badge: stats?.active_sessions },
@@ -660,13 +848,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       {/* SECTION 1: OVERVIEW */}
       {activeSection === 'overview' && (
         <div className="space-y-6">
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3.5">
             {[
               { label: 'Total Users', val: stats?.total_users ?? dbUsers.length, sub: `${stats?.active_users ?? dbUsers.length} active` },
+              { label: 'Playlists (Admin / User)', val: stats?.total_playlists ?? dbPlaylists.length, sub: `${stats?.admin_playlists_count ?? 0} admin · ${stats?.user_playlists_count ?? 0} user` },
+              { label: 'Likes & Comments', val: `${stats?.total_likes ?? 0} / ${stats?.total_comments ?? 0}`, sub: 'Synchronized DB counts' },
               { label: 'Verified Artists', val: stats?.total_artists ?? dbArtists.length, sub: `${stats?.pending_claims ?? 0} pending claims` },
-              { label: 'Distributors & Labels', val: (stats?.total_distributors ?? dbDistributors.length) + (stats?.total_labels ?? dbLabels.length), sub: `${stats?.total_distributors ?? 4} distributors` },
-              { label: 'Songs & Albums', val: `${stats?.total_tracks ?? dbTracks.length} / ${stats?.total_albums ?? dbAlbums.length}`, sub: `${stats?.total_playlists ?? dbPlaylists.length} playlists` },
-              { label: 'Total Streams', val: ((Number(stats?.total_streams) || 0) / 1000000).toFixed(1) + 'M', sub: 'Verified stream count' },
+              { label: 'Songs & Albums', val: `${stats?.total_tracks ?? dbTracks.length} / ${stats?.total_albums ?? dbAlbums.length}`, sub: `${stats?.total_activities ?? 0} logged activities` },
+              { label: 'Total Streams', val: (Number(stats?.total_streams) || 0).toLocaleString(), sub: 'Verified stream count' },
             ].map((card, i) => (
               <div key={i} className="p-4 rounded-2xl bg-neutral-900/50 border border-white/[0.07] space-y-1">
                 <p className="text-[11px] font-medium text-neutral-400">{card.label}</p>
@@ -823,6 +1012,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <tr>
                     <th className="py-3 px-4">User / Email</th>
                     <th className="py-3 px-4">Role</th>
+                    <th className="py-3 px-4">Creations & Engagement</th>
                     <th className="py-3 px-4">Status</th>
                     <th className="py-3 px-4">Verified</th>
                     <th className="py-3 px-4">Last Login</th>
@@ -852,6 +1042,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         </select>
                       </td>
                       <td className="py-3 px-4">
+                        <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-mono">
+                          <span className="px-2 py-0.5 rounded bg-amber-500/15 text-amber-300">
+                            {u.playlists_count ?? 0} playlists
+                          </span>
+                          <span className="px-2 py-0.5 rounded bg-rose-500/15 text-rose-300">
+                            {u.likes_count ?? 0} likes
+                          </span>
+                          <span className="px-2 py-0.5 rounded bg-blue-500/15 text-blue-300">
+                            {u.comments_count ?? 0} comments
+                          </span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4">
                         <span
                           className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
                             (u.status || 'active') === 'active'
@@ -875,7 +1078,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       <td className="py-3 px-4 font-mono text-[11px] text-neutral-400">
                         {u.last_login_at || u.created_at}
                       </td>
-                      <td className="py-3 px-4 text-right space-x-2">
+                      <td className="py-3 px-4 text-right space-x-2 whitespace-nowrap">
+                        <button
+                          onClick={() => {
+                            setUserDetailTab('activity');
+                            setUserDetailActType('');
+                            setUserDetailDateFrom('');
+                            setUserDetailDateTo('');
+                            setUserDetailPage(1);
+                            handleOpenUserDetail(u.id, { action_type: '', date_from: '', date_to: '', page: 1 });
+                          }}
+                          className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer"
+                        >
+                          <Eye className="w-3 h-3" />
+                          <span>Profile & Activity</span>
+                        </button>
                         {(u.status || 'active') === 'active' ? (
                           <button
                             onClick={() => handleUpdateUser(u.id, { status: 'suspended' })}
@@ -2063,39 +2280,247 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       {/* SECTION 8: PLAYLISTS & GENRES */}
       {activeSection === 'playlists_genres' && (
         <div className="space-y-6">
-          <div className="p-5 rounded-2xl bg-neutral-900/40 border border-white/[0.08] space-y-4">
-            <h3 className="text-sm font-bold text-white">Featured Editorial Playlists & Homepage Carousels ({dbPlaylists.length})</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-              {dbPlaylists.map((pl) => (
-                <div key={pl.id} className="p-3.5 rounded-xl bg-white/[0.02] border border-white/[0.06] flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <img src={pl.cover_art_url} alt={pl.title} className="w-11 h-11 rounded-lg object-cover shrink-0" />
-                    <div className="min-w-0">
-                      <p className="font-semibold text-white truncate">{pl.title}</p>
-                      <p className="text-[11px] text-neutral-400 truncate">
-                        Category: {pl.genre_category || 'all'} · {(pl.track_ids || []).length} tracks
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      onClick={() => handleUpdatePlaylist(pl.id, { is_featured: !Number(pl.is_featured ?? 1) })}
-                      className={`px-2.5 py-1 rounded-lg font-semibold ${
-                        Number(pl.is_featured ?? 1) ? 'bg-amber-500/20 text-amber-300' : 'bg-white/10 text-neutral-400'
-                      }`}
-                    >
-                      {Number(pl.is_featured ?? 1) ? 'Featured' : 'Standard'}
-                    </button>
-                    <button
-                      onClick={() => handleUpdatePlaylist(pl.id, { delete: true })}
-                      className="text-red-400 hover:underline px-2"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              ))}
+          {/* Summary Cards for Playlists */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+            <div className="p-4 rounded-2xl bg-neutral-900/50 border border-white/[0.08]">
+              <p className="text-[11px] text-neutral-400">Total Playlists</p>
+              <p className="text-2xl font-extrabold font-mono text-white">
+                {playlistSummary?.total_playlists ?? stats?.total_playlists ?? dbPlaylists.length}
+              </p>
             </div>
+            <div className="p-4 rounded-2xl bg-amber-950/20 border border-amber-500/25">
+              <p className="text-[11px] text-amber-300">Admin-Created Playlists</p>
+              <p className="text-2xl font-extrabold font-mono text-amber-400">
+                {playlistSummary?.admin_playlists_count ?? stats?.admin_playlists_count ?? 0}
+              </p>
+            </div>
+            <div className="p-4 rounded-2xl bg-indigo-950/20 border border-indigo-500/25">
+              <p className="text-[11px] text-indigo-300">User-Created Playlists</p>
+              <p className="text-2xl font-extrabold font-mono text-indigo-400">
+                {playlistSummary?.user_playlists_count ?? stats?.user_playlists_count ?? 0}
+              </p>
+            </div>
+            <div className="p-4 rounded-2xl bg-neutral-900/50 border border-white/[0.08]">
+              <p className="text-[11px] text-neutral-400">Public vs Private</p>
+              <p className="text-xl font-extrabold font-mono text-emerald-400">
+                {playlistSummary?.public_playlists_count ?? 0} Public · {playlistSummary?.private_playlists_count ?? 0} Private
+              </p>
+            </div>
+          </div>
+
+          {/* Search & Filters for All Platform Playlists */}
+          <div className="p-4 rounded-2xl bg-neutral-900/50 border border-white/[0.08] flex flex-col lg:flex-row items-stretch lg:items-center gap-3">
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 text-neutral-400 absolute left-3 top-2.5" />
+              <input
+                type="text"
+                value={playlistSearch}
+                onChange={(e) => {
+                  setPlaylistSearch(e.target.value);
+                  setPlaylistPage(1);
+                }}
+                placeholder="Search playlists by title, description, creator name, username, or email..."
+                className="w-full pl-9 pr-3 py-2 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white focus:outline-none focus:border-amber-500"
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={playlistCreatorType}
+                onChange={(e) => {
+                  setPlaylistCreatorType(e.target.value as 'all' | 'admin' | 'user');
+                  setPlaylistPage(1);
+                }}
+                className="px-3 py-2 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white"
+              >
+                <option value="all">All Creators (Admin & User)</option>
+                <option value="admin">Admin-Created Only</option>
+                <option value="user">User-Created Only</option>
+              </select>
+
+              <select
+                value={playlistVisibility}
+                onChange={(e) => {
+                  setPlaylistVisibility(e.target.value as 'all' | 'public' | 'private');
+                  setPlaylistPage(1);
+                }}
+                className="px-3 py-2 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white"
+              >
+                <option value="all">All Visibility</option>
+                <option value="public">Public Only</option>
+                <option value="private">Private Only</option>
+              </select>
+
+              <button
+                onClick={fetchAdminPlaylists}
+                className="px-3 py-2 rounded-xl bg-white/[0.06] hover:bg-white/10 border border-white/10 text-xs font-semibold text-white flex items-center gap-1.5 cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loadingPlaylists ? 'animate-spin text-amber-400' : ''}`} />
+                <span>Refresh</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Searchable, Paginated Table of All Platform Playlists */}
+          <div className="border border-white/[0.08] rounded-2xl overflow-hidden bg-neutral-900/30">
+            <div className="p-4 border-b border-white/[0.06] flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-white">
+                  All Platform Playlists ({playlistTotal || dbPlaylists.length})
+                </h3>
+                <p className="text-xs text-neutral-400">
+                  Every admin-created and user-created playlist with creator account details, visibility, track count, and ordered song inspection.
+                </p>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left">
+                <thead className="bg-white/[0.03] text-neutral-400 uppercase text-[11px] border-b border-white/[0.06]">
+                  <tr>
+                    <th className="py-3 px-4">Playlist</th>
+                    <th className="py-3 px-4">Creator Account & Type</th>
+                    <th className="py-3 px-4">Visibility</th>
+                    <th className="py-3 px-4">Tracks</th>
+                    <th className="py-3 px-4">Created / Updated</th>
+                    <th className="py-3 px-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/[0.04]">
+                  {(adminPlaylists.length > 0 ? adminPlaylists : dbPlaylists).map((pl) => {
+                    const isAdminCreated = Boolean(pl.is_admin_created);
+                    const trackCount = pl.track_count ?? (pl.track_ids || []).length;
+                    return (
+                      <tr key={pl.id} className="hover:bg-white/[0.02]">
+                        <td className="py-3 px-4">
+                          <div className="flex items-center gap-3">
+                            <img
+                              src={pl.cover_art_url || '/assets/albums/default_album.jpg'}
+                              alt={pl.title}
+                              className="w-11 h-11 rounded-lg object-cover shrink-0 border border-white/10"
+                            />
+                            <div className="min-w-0">
+                              <div className="font-bold text-white truncate">{pl.title}</div>
+                              <div className="text-[11px] text-neutral-400 truncate max-w-xs">
+                                {pl.description || `Category: ${pl.genre_category || 'all'}`}
+                              </div>
+                              <div className="text-[10px] font-mono text-neutral-500">{pl.id}</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-3 px-4">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                                isAdminCreated
+                                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                  : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                              }`}
+                            >
+                              {isAdminCreated ? 'Admin-Created' : 'User-Created'}
+                            </span>
+                            <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-white/[0.06] text-neutral-300">
+                              {pl.creator_role || 'user'}
+                            </span>
+                          </div>
+                          <div className="mt-1 font-semibold text-white">
+                            {pl.creator_name || pl.curator_name || 'Flontmie Editorial'}
+                          </div>
+                          <div className="text-[11px] font-mono text-neutral-400">
+                            {pl.creator_email ? `${pl.creator_email} · @${pl.creator_username || 'user'}` : 'System Editorial'}
+                          </div>
+                          {pl.user_id && (
+                            <button
+                              onClick={() => handleOpenUserDetail(pl.user_id, { page: 1 })}
+                              className="text-[11px] text-amber-400 hover:underline mt-0.5 inline-block cursor-pointer"
+                            >
+                              Inspect Creator Account →
+                            </button>
+                          )}
+                        </td>
+                        <td className="py-3 px-4">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                              Number(pl.is_public ?? 1) === 1
+                                ? 'bg-emerald-500/20 text-emerald-300'
+                                : 'bg-neutral-700 text-neutral-300'
+                            }`}
+                          >
+                            {Number(pl.is_public ?? 1) === 1 ? 'Public' : 'Private'}
+                          </span>
+                          {Number(pl.is_featured ?? 0) === 1 && (
+                            <span className="ml-1.5 px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-amber-500/20 text-amber-300">
+                              Featured
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 font-mono font-bold text-white">
+                          {trackCount} {trackCount === 1 ? 'song' : 'songs'}
+                        </td>
+                        <td className="py-3 px-4 font-mono text-[11px] text-neutral-400">
+                          <div>Created: {pl.created_at || '—'}</div>
+                          {pl.updated_at && <div className="text-neutral-500">Updated: {pl.updated_at}</div>}
+                        </td>
+                        <td className="py-3 px-4 text-right space-x-2 whitespace-nowrap">
+                          <button
+                            onClick={() => handleOpenPlaylistDetail(pl.id)}
+                            className="px-2.5 py-1.5 rounded-lg bg-amber-500 text-black font-bold text-[11px] inline-flex items-center gap-1 hover:bg-amber-400 cursor-pointer"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>Inspect Songs ({trackCount})</span>
+                          </button>
+                          <button
+                            onClick={async () => {
+                              await handleUpdatePlaylist(pl.id, { is_featured: !Number(pl.is_featured ?? 1) });
+                              fetchAdminPlaylists();
+                            }}
+                            className={`px-2.5 py-1.5 rounded-lg font-semibold text-[11px] cursor-pointer ${
+                              Number(pl.is_featured ?? 1) ? 'bg-amber-500/20 text-amber-300' : 'bg-white/10 text-neutral-400'
+                            }`}
+                          >
+                            {Number(pl.is_featured ?? 1) ? 'Featured' : 'Standard'}
+                          </button>
+                          <button
+                            onClick={async () => {
+                              await handleUpdatePlaylist(pl.id, { delete: true });
+                              fetchAdminPlaylists();
+                            }}
+                            className="text-red-400 hover:underline px-2 text-[11px] cursor-pointer"
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Pagination Footer */}
+            {playlistTotalPages > 1 && (
+              <div className="p-3.5 border-t border-white/[0.06] flex items-center justify-between text-xs">
+                <span className="text-neutral-400">
+                  Page <strong className="text-white">{playlistPage}</strong> of <strong className="text-white">{playlistTotalPages}</strong> ({playlistTotal} playlists)
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    disabled={playlistPage <= 1}
+                    onClick={() => setPlaylistPage((p) => Math.max(1, p - 1))}
+                    className="px-3 py-1 rounded-lg bg-white/[0.06] text-white disabled:opacity-40 flex items-center gap-1 cursor-pointer"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" /> Prev
+                  </button>
+                  <button
+                    disabled={playlistPage >= playlistTotalPages}
+                    onClick={() => setPlaylistPage((p) => Math.min(playlistTotalPages, p + 1))}
+                    className="px-3 py-1 rounded-lg bg-white/[0.06] text-white disabled:opacity-40 flex items-center gap-1 cursor-pointer"
+                  >
+                    Next <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="p-5 rounded-2xl bg-neutral-900/40 border border-white/[0.08] space-y-4">
@@ -2139,6 +2564,468 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </button>
             </form>
           </div>
+        </div>
+      )}
+
+      {/* SECTION: USER ACTIVITY & CREATIONS */}
+      {activeSection === 'user_activity' && (
+        <div className="space-y-6">
+          <div className="p-4 rounded-2xl bg-neutral-900/50 border border-white/[0.08] space-y-3">
+            <div className="flex flex-col lg:flex-row items-stretch lg:items-center gap-3">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 text-neutral-400 absolute left-3 top-2.5" />
+                <input
+                  type="text"
+                  value={activitySearch}
+                  onChange={(e) => {
+                    setActivitySearch(e.target.value);
+                    setActivitiesPage(1);
+                  }}
+                  placeholder="Search user activities by user, email, song/playlist title, or action..."
+                  className="w-full pl-9 pr-3 py-2 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <select
+                value={activityUserFilter}
+                onChange={(e) => {
+                  setActivityUserFilter(e.target.value);
+                  setActivitiesPage(1);
+                }}
+                className="px-3 py-2 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white"
+              >
+                <option value="">All Users</option>
+                {dbUsers.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.display_name} ({u.email})
+                  </option>
+                ))}
+              </select>
+
+              <select
+                value={activityTypeFilter}
+                onChange={(e) => {
+                  setActivityTypeFilter(e.target.value);
+                  setActivitiesPage(1);
+                }}
+                className="px-3 py-2 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white"
+              >
+                <option value="">All Activity Types</option>
+                {(availableActionTypes.length > 0
+                  ? availableActionTypes
+                  : [
+                      'playlist_created',
+                      'playlist_updated',
+                      'playlist_deleted',
+                      'track_liked',
+                      'track_unliked',
+                      'track_commented',
+                      'comment_deleted',
+                      'track_uploaded',
+                      'track_updated',
+                      'artist_followed',
+                      'artist_unfollowed',
+                      'user_registered',
+                      'user_login',
+                    ]
+                ).map((at) => (
+                  <option key={at} value={at}>
+                    {at}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                value={activityTargetTypeFilter}
+                onChange={(e) => {
+                  setActivityTargetTypeFilter(e.target.value);
+                  setActivitiesPage(1);
+                }}
+                className="px-3 py-2 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white"
+              >
+                <option value="">All Target Types</option>
+                <option value="playlist">Playlist</option>
+                <option value="track">Track</option>
+                <option value="comment">Comment</option>
+                <option value="artist">Artist</option>
+                <option value="user">User</option>
+              </select>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="text-neutral-400">Date From:</span>
+                <input
+                  type="date"
+                  value={activityDateFrom}
+                  onChange={(e) => {
+                    setActivityDateFrom(e.target.value);
+                    setActivitiesPage(1);
+                  }}
+                  className="px-2.5 py-1.5 rounded-xl bg-neutral-950 border border-white/10 text-white"
+                />
+                <span className="text-neutral-400">To:</span>
+                <input
+                  type="date"
+                  value={activityDateTo}
+                  onChange={(e) => {
+                    setActivityDateTo(e.target.value);
+                    setActivitiesPage(1);
+                  }}
+                  className="px-2.5 py-1.5 rounded-xl bg-neutral-950 border border-white/10 text-white"
+                />
+                {(activitySearch || activityUserFilter || activityTypeFilter || activityTargetTypeFilter || activityDateFrom || activityDateTo) && (
+                  <button
+                    onClick={() => {
+                      setActivitySearch('');
+                      setActivityUserFilter('');
+                      setActivityTypeFilter('');
+                      setActivityTargetTypeFilter('');
+                      setActivityDateFrom('');
+                      setActivityDateTo('');
+                      setActivitiesPage(1);
+                    }}
+                    className="px-2.5 py-1.5 rounded-xl bg-white/10 text-neutral-300 hover:text-white cursor-pointer"
+                  >
+                    Clear Filters
+                  </button>
+                )}
+              </div>
+
+              <button
+                onClick={fetchAdminActivitiesList}
+                className="px-3 py-1.5 rounded-xl bg-white/[0.06] hover:bg-white/10 border border-white/10 text-xs font-semibold text-white flex items-center gap-1.5 cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loadingActivities ? 'animate-spin text-amber-400' : ''}`} />
+                <span>Refresh Activity Feed</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="border border-white/[0.08] rounded-2xl overflow-hidden bg-neutral-900/30">
+            <div className="p-4 border-b border-white/[0.06] flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-white">
+                  Platform User Creations & Activity History ({activitiesTotal})
+                </h3>
+                <p className="text-xs text-neutral-400">
+                  Real recorded platform actions across playlists, likes, comments, uploads, follows, and accounts.
+                </p>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left">
+                <thead className="bg-white/[0.03] text-neutral-400 uppercase text-[11px] border-b border-white/[0.06]">
+                  <tr>
+                    <th className="py-3 px-4">Timestamp</th>
+                    <th className="py-3 px-4">User Account</th>
+                    <th className="py-3 px-4">Activity Type</th>
+                    <th className="py-3 px-4">Target Object</th>
+                    <th className="py-3 px-4">Details</th>
+                    <th className="py-3 px-4 text-right">Inspect</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/[0.04]">
+                  {adminActivities.map((act) => (
+                    <tr key={act.id} className="hover:bg-white/[0.02]">
+                      <td className="py-3 px-4 font-mono text-[11px] text-neutral-400 whitespace-nowrap">
+                        {act.created_at}
+                      </td>
+                      <td className="py-3 px-4">
+                        <div className="font-semibold text-white">
+                          {act.display_name || act.user_name || 'User'}
+                        </div>
+                        <div className="text-[11px] font-mono text-neutral-400">
+                          {act.email || act.user_email || act.user_id} ·{' '}
+                          <span className="uppercase text-amber-300">{act.role || act.user_role || 'listener'}</span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4">
+                        <span className="px-2.5 py-1 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-300 font-mono font-bold text-[11px]">
+                          {act.action_type}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4">
+                        <div className="font-semibold text-white">{act.target_title || act.target_id || '—'}</div>
+                        <div className="text-[10px] font-mono uppercase text-neutral-400">
+                          {act.target_type} {act.target_id ? `· ${act.target_id}` : ''}
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 font-mono text-[11px] text-neutral-400 max-w-xs truncate">
+                        {act.metadata ? JSON.stringify(act.metadata) : '—'}
+                      </td>
+                      <td className="py-3 px-4 text-right space-x-1.5 whitespace-nowrap">
+                        {act.target_type === 'playlist' && act.target_id && (
+                          <button
+                            onClick={() => handleOpenPlaylistDetail(act.target_id)}
+                            className="px-2.5 py-1 rounded-lg bg-indigo-500/20 text-indigo-300 font-semibold text-[11px] cursor-pointer"
+                          >
+                            Open Playlist
+                          </button>
+                        )}
+                        {act.user_id && (
+                          <button
+                            onClick={() => handleOpenUserDetail(act.user_id, { page: 1 })}
+                            className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/15 text-white font-semibold text-[11px] cursor-pointer"
+                          >
+                            User Profile
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                  {adminActivities.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="py-8 text-center text-neutral-500">
+                        No matching activity records found.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {activitiesTotalPages > 1 && (
+              <div className="p-3.5 border-t border-white/[0.06] flex items-center justify-between text-xs">
+                <span className="text-neutral-400">
+                  Page <strong className="text-white">{activitiesPage}</strong> of{' '}
+                  <strong className="text-white">{activitiesTotalPages}</strong> ({activitiesTotal} activities)
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    disabled={activitiesPage <= 1}
+                    onClick={() => setActivitiesPage((p) => Math.max(1, p - 1))}
+                    className="px-3 py-1 rounded-lg bg-white/[0.06] text-white disabled:opacity-40 flex items-center gap-1 cursor-pointer"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" /> Prev
+                  </button>
+                  <button
+                    disabled={activitiesPage >= activitiesTotalPages}
+                    onClick={() => setActivitiesPage((p) => Math.min(activitiesTotalPages, p + 1))}
+                    className="px-3 py-1 rounded-lg bg-white/[0.06] text-white disabled:opacity-40 flex items-center gap-1 cursor-pointer"
+                  >
+                    Next <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* SECTION: ENGAGEMENT (LIKES & COMMENTS) */}
+      {activeSection === 'engagement' && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="p-4 rounded-2xl bg-rose-950/20 border border-rose-500/25">
+              <p className="text-xs text-rose-300 font-semibold flex items-center gap-1.5">
+                <Heart className="w-4 h-4 text-rose-400" /> Total Persistent Track Likes
+              </p>
+              <p className="text-2xl font-extrabold font-mono text-white mt-1">
+                {engagementData?.totals?.total_likes ?? stats?.total_likes ?? 0}
+              </p>
+            </div>
+            <div className="p-4 rounded-2xl bg-blue-950/20 border border-blue-500/25">
+              <p className="text-xs text-blue-300 font-semibold flex items-center gap-1.5">
+                <MessageSquare className="w-4 h-4 text-blue-400" /> Total Persistent Track Comments
+              </p>
+              <p className="text-2xl font-extrabold font-mono text-white mt-1">
+                {engagementData?.totals?.total_comments ?? stats?.total_comments ?? 0}
+              </p>
+            </div>
+            <div className="p-4 rounded-2xl bg-neutral-900/50 border border-white/[0.08] flex items-center justify-between">
+              <div>
+                <p className="text-xs text-neutral-300 font-semibold">Synchronized Database State</p>
+                <p className="text-[11px] text-neutral-400">Authoritative MySQL user_favorites & track_comments</p>
+              </div>
+              <button
+                onClick={fetchAdminEngagementData}
+                className="px-3 py-2 rounded-xl bg-amber-500 text-black font-bold text-xs flex items-center gap-1.5 cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loadingEngagement ? 'animate-spin' : ''}`} />
+                <span>Sync</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="p-4 rounded-2xl bg-neutral-900/50 border border-white/[0.08] flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              {[
+                { id: 'tracks', label: 'Per-Track Totals' },
+                { id: 'likes', label: `All Like Records (${engagementData?.likes?.total ?? stats?.total_likes ?? 0})` },
+                { id: 'comments', label: `All Comment Threads (${engagementData?.comments?.total ?? stats?.total_comments ?? 0})` },
+              ].map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => {
+                    setEngagementTab(t.id as any);
+                    setEngagementPage(1);
+                  }}
+                  className={`px-3.5 py-2 rounded-xl text-xs font-bold cursor-pointer ${
+                    engagementTab === t.id
+                      ? 'bg-amber-500 text-black'
+                      : 'bg-neutral-950 text-neutral-400 hover:text-white'
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="relative flex-1 max-w-md">
+              <Search className="w-4 h-4 text-neutral-400 absolute left-3 top-2.5" />
+              <input
+                type="text"
+                value={engagementSearch}
+                onChange={(e) => {
+                  setEngagementSearch(e.target.value);
+                  setEngagementPage(1);
+                }}
+                placeholder="Search by song title, artist, user, or comment text..."
+                className="w-full pl-9 pr-3 py-2 rounded-xl bg-neutral-950 border border-white/10 text-xs text-white"
+              />
+            </div>
+          </div>
+
+          {engagementTab === 'tracks' && (
+            <div className="border border-white/[0.08] rounded-2xl overflow-hidden bg-neutral-900/30">
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead className="bg-white/[0.03] text-neutral-400 uppercase text-[11px] border-b border-white/[0.06]">
+                    <tr>
+                      <th className="py-3 px-4">Track</th>
+                      <th className="py-3 px-4">Artist</th>
+                      <th className="py-3 px-4">Likes Count</th>
+                      <th className="py-3 px-4">Comments Count</th>
+                      <th className="py-3 px-4">Streams</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/[0.04]">
+                    {(engagementData?.tracks_engagement || dbTracks).map((t: any) => (
+                      <tr key={t.id} className="hover:bg-white/[0.02]">
+                        <td className="py-3 px-4">
+                          <div className="flex items-center gap-3">
+                            <img
+                              src={t.cover_art_url || '/assets/albums/default_album.jpg'}
+                              alt={t.title}
+                              className="w-9 h-9 rounded-lg object-cover"
+                            />
+                            <div>
+                              <div className="font-bold text-white">{t.title}</div>
+                              <div className="text-[10px] font-mono text-neutral-500">{t.id}</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-3 px-4 text-neutral-300">{t.artist_name}</td>
+                        <td className="py-3 px-4 font-mono font-bold text-rose-400">
+                          {Number(t.likes_count) || 0} likes
+                        </td>
+                        <td className="py-3 px-4 font-mono font-bold text-blue-400">
+                          {Number(t.comments_count) || 0} comments
+                        </td>
+                        <td className="py-3 px-4 font-mono text-emerald-400">
+                          {(Number(t.flontmie_plays ?? t.stream_count) || 0).toLocaleString()} plays
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {engagementTab === 'likes' && (
+            <div className="border border-white/[0.08] rounded-2xl overflow-hidden bg-neutral-900/30">
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead className="bg-white/[0.03] text-neutral-400 uppercase text-[11px] border-b border-white/[0.06]">
+                    <tr>
+                      <th className="py-3 px-4">Liked At</th>
+                      <th className="py-3 px-4">User</th>
+                      <th className="py-3 px-4">Track</th>
+                      <th className="py-3 px-4 text-right">Inspect User</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/[0.04]">
+                    {(engagementData?.likes?.items || []).map((lk: any, idx: number) => (
+                      <tr key={`${lk.user_id}_${lk.track_id}_${idx}`} className="hover:bg-white/[0.02]">
+                        <td className="py-3 px-4 font-mono text-[11px] text-neutral-400">{lk.created_at}</td>
+                        <td className="py-3 px-4">
+                          <div className="font-semibold text-white">{lk.display_name || lk.username || lk.user_id}</div>
+                          <div className="text-[11px] font-mono text-neutral-400">{lk.email}</div>
+                        </td>
+                        <td className="py-3 px-4">
+                          <div className="font-semibold text-white">{lk.track_title || lk.track_id}</div>
+                          <div className="text-[11px] text-neutral-400">{lk.artist_name}</div>
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          {lk.user_id && (
+                            <button
+                              onClick={() => handleOpenUserDetail(lk.user_id, { page: 1 })}
+                              className="px-2.5 py-1 rounded-lg bg-white/10 text-white text-[11px] font-semibold cursor-pointer"
+                            >
+                              View User
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {engagementTab === 'comments' && (
+            <div className="border border-white/[0.08] rounded-2xl overflow-hidden bg-neutral-900/30">
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead className="bg-white/[0.03] text-neutral-400 uppercase text-[11px] border-b border-white/[0.06]">
+                    <tr>
+                      <th className="py-3 px-4">Posted At</th>
+                      <th className="py-3 px-4">Author</th>
+                      <th className="py-3 px-4">Track</th>
+                      <th className="py-3 px-4">Comment Text</th>
+                      <th className="py-3 px-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/[0.04]">
+                    {(engagementData?.comments?.items || []).map((cm: any) => (
+                      <tr key={cm.id} className="hover:bg-white/[0.02]">
+                        <td className="py-3 px-4 font-mono text-[11px] text-neutral-400 whitespace-nowrap">{cm.created_at}</td>
+                        <td className="py-3 px-4">
+                          <div className="font-semibold text-white">{cm.display_name || cm.user_name}</div>
+                          <div className="text-[11px] font-mono text-neutral-400">{cm.email || cm.user_id}</div>
+                        </td>
+                        <td className="py-3 px-4">
+                          <div className="font-semibold text-white">{cm.track_title || cm.track_id}</div>
+                          <div className="text-[11px] text-neutral-400">{cm.artist_name}</div>
+                        </td>
+                        <td className="py-3 px-4 text-neutral-200 max-w-md">{cm.comment_text}</td>
+                        <td className="py-3 px-4 text-right space-x-2 whitespace-nowrap">
+                          {cm.user_id && (
+                            <button
+                              onClick={() => handleOpenUserDetail(cm.user_id, { page: 1 })}
+                              className="px-2.5 py-1 rounded-lg bg-white/10 text-white text-[11px] font-semibold cursor-pointer"
+                            >
+                              Author Profile
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleDeleteAdminComment(cm.id)}
+                            className="px-2.5 py-1 rounded-lg bg-red-500/20 text-red-300 text-[11px] font-semibold cursor-pointer"
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -2352,6 +3239,358 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </div>
         </div>
       )}
+
+      {/* MODAL 1: PLAYLIST CONTENTS & ORDERED SONGS INSPECTOR */}
+      {(selectedPlaylistDetail || loadingPlaylistDetail) && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-neutral-900 border border-white/15 rounded-2xl max-w-4xl w-full max-h-[88vh] flex flex-col overflow-hidden shadow-2xl">
+            <div className="p-5 border-b border-white/10 flex items-center justify-between gap-4">
+              {loadingPlaylistDetail ? (
+                <div className="flex items-center gap-2 text-amber-400 text-xs font-semibold">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Loading ordered playlist tracks...</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-4 min-w-0">
+                  <img
+                    src={selectedPlaylistDetail?.playlist?.cover_art_url || '/assets/albums/default_album.jpg'}
+                    alt={selectedPlaylistDetail?.playlist?.title}
+                    className="w-14 h-14 rounded-xl object-cover border border-white/10 shrink-0"
+                  />
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                          selectedPlaylistDetail?.playlist?.is_admin_created
+                            ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                            : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                        }`}
+                      >
+                        {selectedPlaylistDetail?.playlist?.is_admin_created ? 'Admin-Created Playlist' : 'User-Created Playlist'}
+                      </span>
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-white/10 text-neutral-200">
+                        {Number(selectedPlaylistDetail?.playlist?.is_public ?? 1) === 1 ? 'Public' : 'Private'}
+                      </span>
+                      <span className="text-xs font-mono text-neutral-400">
+                        {selectedPlaylistDetail?.playlist?.track_count ?? (selectedPlaylistDetail?.tracks || []).length} songs
+                      </span>
+                    </div>
+                    <h3 className="text-lg font-extrabold text-white truncate mt-0.5">
+                      {selectedPlaylistDetail?.playlist?.title}
+                    </h3>
+                    <p className="text-xs text-neutral-400">
+                      Creator:{' '}
+                      <strong className="text-white">
+                        {selectedPlaylistDetail?.playlist?.creator?.display_name || 'Flontmie Editorial'}
+                      </strong>{' '}
+                      {selectedPlaylistDetail?.playlist?.creator?.email
+                        ? `(${selectedPlaylistDetail.playlist.creator.email} · @${selectedPlaylistDetail.playlist.creator.username} · ${selectedPlaylistDetail.playlist.creator.role})`
+                        : ''}
+                      {' · '}Created: {selectedPlaylistDetail?.playlist?.created_at || '—'}
+                      {selectedPlaylistDetail?.playlist?.updated_at ? ` · Updated: ${selectedPlaylistDetail.playlist.updated_at}` : ''}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <button
+                onClick={() => setSelectedPlaylistDetail(null)}
+                className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white cursor-pointer shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5">
+              {!loadingPlaylistDetail && selectedPlaylistDetail && (
+                <div className="border border-white/[0.08] rounded-xl overflow-hidden">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-white/[0.03] text-neutral-400 uppercase text-[11px] border-b border-white/[0.06]">
+                      <tr>
+                        <th className="py-2.5 px-3 w-12">#</th>
+                        <th className="py-2.5 px-3">Song Title</th>
+                        <th className="py-2.5 px-3">Artist & Album</th>
+                        <th className="py-2.5 px-3">Duration</th>
+                        <th className="py-2.5 px-3">Likes / Comments</th>
+                        <th className="py-2.5 px-3">Streams</th>
+                        <th className="py-2.5 px-3">Added</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/[0.04]">
+                      {(selectedPlaylistDetail.tracks || []).map((tr: any, idx: number) => (
+                        <tr key={`${tr.id}_${idx}`} className="hover:bg-white/[0.02]">
+                          <td className="py-2.5 px-3 font-mono font-bold text-amber-400">
+                            #{tr.position ?? idx + 1}
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <div className="flex items-center gap-2.5">
+                              <img
+                                src={tr.cover_art_url || '/assets/albums/default_album.jpg'}
+                                alt={tr.title}
+                                className="w-8 h-8 rounded object-cover"
+                              />
+                              <div>
+                                <div className="font-semibold text-white">{tr.title}</div>
+                                <div className="text-[10px] font-mono text-neutral-500">{tr.id}</div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-3 text-neutral-300">
+                            <div>{tr.artist_name}</div>
+                            <div className="text-[10px] text-neutral-500">{tr.album_title} · {tr.genre}</div>
+                          </td>
+                          <td className="py-2.5 px-3 font-mono text-neutral-400">{tr.duration || '—'}</td>
+                          <td className="py-2.5 px-3 font-mono">
+                            <span className="text-rose-400">{tr.likes_count ?? 0} ♥</span>
+                            {' · '}
+                            <span className="text-blue-400">{tr.comments_count ?? 0} 💬</span>
+                          </td>
+                          <td className="py-2.5 px-3 font-mono text-emerald-400">
+                            {(Number(tr.stream_count) || 0).toLocaleString()}
+                          </td>
+                          <td className="py-2.5 px-3 font-mono text-[11px] text-neutral-400">
+                            {tr.added_at || '—'}
+                          </td>
+                        </tr>
+                      ))}
+                      {(selectedPlaylistDetail.tracks || []).length === 0 && (
+                        <tr>
+                          <td colSpan={7} className="py-8 text-center text-neutral-500">
+                            This playlist currently contains 0 songs.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 2: USER PROFILE CREATIONS & ACTIVITY HISTORY INSPECTOR */}
+      {(selectedUserDetail || loadingUserDetail) && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-neutral-900 border border-white/15 rounded-2xl max-w-5xl w-full max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
+            <div className="p-5 border-b border-white/10 flex items-center justify-between gap-4">
+              {loadingUserDetail ? (
+                <div className="flex items-center gap-2 text-amber-400 text-xs font-semibold">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Loading user profile, creations & activity history...</span>
+                </div>
+              ) : (
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-amber-500/20 text-amber-300">
+                      {selectedUserDetail?.user?.role}
+                    </span>
+                    <span className="text-xs font-mono text-neutral-400">
+                      {selectedUserDetail?.user?.id}
+                    </span>
+                  </div>
+                  <h3 className="text-lg font-extrabold text-white mt-0.5">
+                    {selectedUserDetail?.user?.display_name} (@{selectedUserDetail?.user?.username})
+                  </h3>
+                  <p className="text-xs text-neutral-400 font-mono">
+                    {selectedUserDetail?.user?.email} · Joined: {selectedUserDetail?.user?.created_at} · Last Login:{' '}
+                    {selectedUserDetail?.user?.last_login_at || '—'}
+                  </p>
+                </div>
+              )}
+
+              <button
+                onClick={() => setSelectedUserDetail(null)}
+                className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {!loadingUserDetail && selectedUserDetail && (
+              <div className="flex-1 overflow-y-auto p-5 space-y-5">
+                {/* Summary Tabs */}
+                <div className="flex flex-wrap items-center gap-2">
+                  {[
+                    { id: 'activity', label: `Activity History (${selectedUserDetail?.summary?.activities_count ?? 0})` },
+                    { id: 'playlists', label: `Created Playlists (${selectedUserDetail?.summary?.playlists_count ?? 0})` },
+                    { id: 'likes', label: `Liked Songs (${selectedUserDetail?.summary?.likes_count ?? 0})` },
+                    { id: 'comments', label: `Comments (${selectedUserDetail?.summary?.comments_count ?? 0})` },
+                    { id: 'follows', label: `Followed Artists (${selectedUserDetail?.summary?.followed_artists_count ?? 0})` },
+                    { id: 'uploads', label: `Uploaded Releases (${selectedUserDetail?.summary?.uploaded_tracks_count ?? 0})` },
+                  ].map((tb) => (
+                    <button
+                      key={tb.id}
+                      onClick={() => setUserDetailTab(tb.id as any)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer ${
+                        userDetailTab === tb.id
+                          ? 'bg-amber-500 text-black'
+                          : 'bg-white/[0.06] text-neutral-300 hover:text-white'
+                      }`}
+                    >
+                      {tb.label}
+                    </button>
+                  ))}
+                </div>
+
+                {userDetailTab === 'activity' && (
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <input
+                        type="text"
+                        value={userDetailActType}
+                        onChange={(e) => setUserDetailActType(e.target.value)}
+                        placeholder="Filter by action_type (e.g. track_liked)"
+                        className="px-3 py-1.5 rounded-xl bg-neutral-950 border border-white/10 text-white"
+                      />
+                      <input
+                        type="date"
+                        value={userDetailDateFrom}
+                        onChange={(e) => setUserDetailDateFrom(e.target.value)}
+                        className="px-3 py-1.5 rounded-xl bg-neutral-950 border border-white/10 text-white"
+                      />
+                      <input
+                        type="date"
+                        value={userDetailDateTo}
+                        onChange={(e) => setUserDetailDateTo(e.target.value)}
+                        className="px-3 py-1.5 rounded-xl bg-neutral-950 border border-white/10 text-white"
+                      />
+                      <button
+                        onClick={() =>
+                          handleOpenUserDetail(selectedUserDetail.user.id, {
+                            action_type: userDetailActType,
+                            date_from: userDetailDateFrom,
+                            date_to: userDetailDateTo,
+                            page: 1,
+                          })
+                        }
+                        className="px-3 py-1.5 rounded-xl bg-amber-500 text-black font-bold cursor-pointer"
+                      >
+                        Apply Filters
+                      </button>
+                    </div>
+
+                    <div className="border border-white/[0.08] rounded-xl overflow-hidden">
+                      <table className="w-full text-xs text-left">
+                        <thead className="bg-white/[0.03] text-neutral-400 uppercase text-[11px] border-b border-white/[0.06]">
+                          <tr>
+                            <th className="py-2.5 px-3">Timestamp</th>
+                            <th className="py-2.5 px-3">Action</th>
+                            <th className="py-2.5 px-3">Target</th>
+                            <th className="py-2.5 px-3">Metadata</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/[0.04]">
+                          {(selectedUserDetail?.activities?.items || []).map((act: any) => (
+                            <tr key={act.id}>
+                              <td className="py-2.5 px-3 font-mono text-[11px] text-neutral-400">{act.created_at}</td>
+                              <td className="py-2.5 px-3 font-mono font-bold text-amber-300">{act.action_type}</td>
+                              <td className="py-2.5 px-3 text-white">
+                                {act.target_title || act.target_id} ({act.target_type})
+                              </td>
+                              <td className="py-2.5 px-3 font-mono text-[11px] text-neutral-400 max-w-xs truncate">
+                                {act.metadata ? JSON.stringify(act.metadata) : '—'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {userDetailTab === 'playlists' && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                    {(selectedUserDetail?.creations?.playlists || []).map((pl: any) => (
+                      <div
+                        key={pl.id}
+                        className="p-3.5 rounded-xl bg-white/[0.03] border border-white/[0.08] flex items-center justify-between gap-3"
+                      >
+                        <div>
+                          <div className="font-bold text-white">{pl.title}</div>
+                          <div className="text-[11px] text-neutral-400">
+                            {pl.track_count} songs · {Number(pl.is_public ?? 1) === 1 ? 'Public' : 'Private'} · Created{' '}
+                            {pl.created_at}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => handleOpenPlaylistDetail(pl.id)}
+                          className="px-3 py-1.5 rounded-lg bg-amber-500 text-black font-bold text-[11px] cursor-pointer"
+                        >
+                          View Songs
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {userDetailTab === 'likes' && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                    {(selectedUserDetail?.creations?.liked_tracks || []).map((lt: any) => (
+                      <div key={lt.id} className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.08] flex items-center justify-between">
+                        <div>
+                          <div className="font-semibold text-white">{lt.title}</div>
+                          <div className="text-[11px] text-neutral-400">{lt.artist_name}</div>
+                        </div>
+                        <span className="font-mono text-[11px] text-neutral-400">{lt.liked_at}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {userDetailTab === 'comments' && (
+                  <div className="space-y-2 text-xs">
+                    {(selectedUserDetail?.creations?.comments || []).map((cm: any) => (
+                      <div key={cm.id} className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.08] flex items-center justify-between gap-3">
+                        <div>
+                          <div className="font-semibold text-white">
+                            On: {cm.track_title || cm.track_id} — <span className="text-neutral-400">{cm.created_at}</span>
+                          </div>
+                          <div className="text-neutral-200 mt-1">{cm.comment_text}</div>
+                        </div>
+                        <button
+                          onClick={() => handleDeleteAdminComment(cm.id)}
+                          className="px-2.5 py-1 rounded bg-red-500/20 text-red-300 text-[11px] font-semibold cursor-pointer"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {userDetailTab === 'follows' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                    {(selectedUserDetail?.creations?.followed_artists || []).map((fa: any) => (
+                      <div key={fa.artist_id} className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.08] flex items-center justify-between">
+                        <span className="font-semibold text-white">{fa.artist_name || fa.artist_id}</span>
+                        <span className="font-mono text-[11px] text-neutral-400">{fa.created_at}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {userDetailTab === 'uploads' && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                    {(selectedUserDetail?.creations?.uploaded_tracks || []).map((ut: any) => (
+                      <div key={ut.id} className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.08] flex items-center justify-between">
+                        <div>
+                          <div className="font-semibold text-white">{ut.title}</div>
+                          <div className="text-[11px] text-neutral-400">{ut.artist_name} · {ut.genre}</div>
+                        </div>
+                        <span className="font-mono text-[11px] text-emerald-400">
+                          {ut.likes_count ?? 0} ♥ · {ut.comments_count ?? 0} 💬
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+

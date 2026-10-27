@@ -45,25 +45,37 @@ if ($method === 'GET' && ($action === 'overview' || $action === 'dashboard')) {
     $openFlags = (int)$pdo->query("SELECT COUNT(*) FROM content_flags WHERE status = 'open'")->fetchColumn();
     $totalStreams = (int)$pdo->query("SELECT COALESCE(SUM(stream_count), 0) FROM tracks WHERE is_deleted = 0")->fetchColumn();
     $totalFlontmiePlays = (int)$pdo->query("SELECT COALESCE(SUM(flontmie_plays), 0) FROM tracks WHERE is_deleted = 0")->fetchColumn();
-    $totalLikes = (int)$pdo->query("SELECT COALESCE(SUM(likes_count), 0) FROM tracks WHERE is_deleted = 0")->fetchColumn();
+    $totalLikes = (int)$pdo->query("SELECT COUNT(*) FROM user_favorites")->fetchColumn();
+    $totalComments = (int)$pdo->query("SELECT COUNT(*) FROM track_comments")->fetchColumn();
+    $totalActivities = 0;
+    try {
+        $totalActivities = (int)$pdo->query("SELECT COUNT(*) FROM user_activities")->fetchColumn();
+    } catch (Exception $e) {}
 
     // Users list
     $users = $pdo->query("
-        SELECT id, username, email, role, status, display_name, avatar_url, bio, country, distributor_id, label_id, artist_id, email_verified, last_login_at, created_at
-        FROM users
-        ORDER BY created_at DESC
+        SELECT u.id, u.username, u.email, u.role, u.status, u.display_name, u.avatar_url, u.bio, u.country,
+               u.distributor_id, u.label_id, u.artist_id, u.email_verified, u.last_login_at, u.created_at,
+               (SELECT COUNT(*) FROM playlists p WHERE p.user_id = u.id) AS playlists_count,
+               (SELECT COUNT(*) FROM user_favorites uf WHERE uf.user_id = u.id) AS likes_count,
+               (SELECT COUNT(*) FROM track_comments tc WHERE tc.user_id = u.id) AS comments_count
+        FROM users u
+        ORDER BY u.created_at DESC
         LIMIT 250
     ")->fetchAll();
 
     // Tracks list
     $tracks = $pdo->query("
-        SELECT id, video_id, title, artist_id, artist_name, album_id, album_name, duration, genre, country, release_year, release_date,
-               cover_art_url, audio_url, video_url, local_audio_path, local_video_path, local_artwork_path, local_lyrics_path,
-               audio_file_size, audio_format, import_status, stream_count, flontmie_plays, likes_count, explicit, isrc,
-               status, featured_on_home, editorial_boost, license_status, license_notes, lyrics, distributor_id, label_id, uploaded_by_user_id, created_at
-        FROM tracks
-        WHERE is_deleted = 0
-        ORDER BY created_at DESC
+        SELECT t.id, t.video_id, t.title, t.artist_id, t.artist_name, t.album_id, t.album_name, t.duration, t.genre, t.country, t.release_year, t.release_date,
+               t.cover_art_url, t.audio_url, t.video_url, t.local_audio_path, t.local_video_path, t.local_artwork_path, t.local_lyrics_path,
+               t.audio_file_size, t.audio_format, t.import_status, t.stream_count, t.flontmie_plays,
+               (SELECT COUNT(*) FROM user_favorites uf WHERE uf.track_id = t.id) AS likes_count,
+               (SELECT COUNT(*) FROM track_comments tc WHERE tc.track_id = t.id) AS comments_count,
+               t.explicit, t.isrc,
+               t.status, t.featured_on_home, t.editorial_boost, t.license_status, t.license_notes, t.lyrics, t.distributor_id, t.label_id, t.uploaded_by_user_id, t.created_at
+        FROM tracks t
+        WHERE t.is_deleted = 0
+        ORDER BY t.created_at DESC
         LIMIT 300
     ")->fetchAll();
 
@@ -71,6 +83,8 @@ if ($method === 'GET' && ($action === 'overview' || $action === 'dashboard')) {
         $t['cover_art_url'] = ArtistEnrichment::resolveArtworkUrl($t['cover_art_url'] ?? '', $t['video_id'] ?? $t['id']);
         $t['yt_plays'] = ArtistEnrichment::parseMetric((string)($t['stream_count'] ?? '0'))['compact'];
         $t['flontmie_plays'] = (int)($t['flontmie_plays'] ?? 0);
+        $t['likes_count'] = (int)($t['likes_count'] ?? 0);
+        $t['comments_count'] = (int)($t['comments_count'] ?? 0);
         $t['has_local_audio'] = !empty($t['local_audio_path']);
         $t['has_local_video'] = !empty($t['local_video_path']) || !empty($t['video_url']);
         $t['has_lyrics'] = !empty($t['lyrics']) || !empty($t['local_lyrics_path']);
@@ -110,18 +124,40 @@ if ($method === 'GET' && ($action === 'overview' || $action === 'dashboard')) {
         $alb['cover_art_url'] = ArtistEnrichment::resolveArtworkUrl($alb['cover_art_url'] ?? '', $alb['artist_id'] ?? $alb['id']);
     }
 
-    // Playlists list
+    // Playlists list with creator details
     $playlists = $pdo->query("
-        SELECT id, user_id, title, description, cover_art_url, genre_category, is_public, is_featured, status, track_ids_json, created_at
-        FROM playlists
-        ORDER BY created_at DESC
-        LIMIT 150
+        SELECT p.id, p.user_id, p.title, p.description, p.cover_art_url, p.genre_category, p.is_public, p.is_featured, p.status, p.track_ids_json, p.created_at, p.updated_at,
+               COALESCE(NULLIF(u.display_name, ''), u.username, 'Flontmie Admin') AS creator_name,
+               u.username AS creator_username,
+               u.email AS creator_email,
+               COALESCE(u.role, 'admin') AS creator_role
+        FROM playlists p
+        LEFT JOIN users u ON p.user_id = u.id
+        ORDER BY p.created_at DESC
+        LIMIT 200
     ")->fetchAll();
+    $adminPlaylistsCount = 0;
+    $userPlaylistsCount = 0;
     foreach ($playlists as &$pl) {
         $pl['cover_art_url'] = ArtistEnrichment::resolveArtworkUrl($pl['cover_art_url'] ?? '', $pl['id']);
         $tIds = !empty($pl['track_ids_json']) ? json_decode($pl['track_ids_json'], true) : [];
-        $pl['track_ids'] = is_array($tIds) ? $tIds : [];
+        if (!is_array($tIds) || empty($tIds)) {
+            try {
+                $ptSt = $pdo->prepare("SELECT track_id FROM playlist_tracks WHERE playlist_id = ? ORDER BY position ASC");
+                $ptSt->execute([$pl['id']]);
+                $tIds = array_column($ptSt->fetchAll(), 'track_id');
+            } catch (Exception $e) {
+                $tIds = [];
+            }
+        }
+        $pl['track_ids'] = is_array($tIds) ? array_values($tIds) : [];
         $pl['track_count'] = count($pl['track_ids']);
+        $pl['is_admin_created'] = (($pl['creator_role'] ?? '') === 'admin') || empty($pl['user_id']);
+        if ($pl['is_admin_created']) {
+            $adminPlaylistsCount++;
+        } else {
+            $userPlaylistsCount++;
+        }
     }
 
     // Genres list
@@ -205,6 +241,25 @@ if ($method === 'GET' && ($action === 'overview' || $action === 'dashboard')) {
         $storageStats = MediaEngine::getStorageStats($pdo);
     } catch (Exception $e) {}
 
+    // Recent user activities
+    $userActivities = [];
+    try {
+        $userActivities = $pdo->query("
+            SELECT ua.id, ua.user_id,
+                   COALESCE(NULLIF(u.display_name, ''), ua.user_name, u.username, 'User') AS user_name,
+                   COALESCE(u.email, ua.user_email, '') AS user_email,
+                   COALESCE(u.role, ua.user_role, 'listener') AS user_role,
+                   ua.action_type, ua.target_type, ua.target_id, ua.target_title, ua.metadata_json, ua.created_at
+            FROM user_activities ua
+            LEFT JOIN users u ON ua.user_id = u.id
+            ORDER BY ua.created_at DESC
+            LIMIT 80
+        ")->fetchAll();
+        foreach ($userActivities as &$act) {
+            $act['metadata'] = !empty($act['metadata_json']) ? json_decode($act['metadata_json'], true) : [];
+        }
+    } catch (Exception $e) {}
+
     $metricsPayload = [
         'total_users' => $totalUsers,
         'active_users' => $activeUsers,
@@ -218,6 +273,8 @@ if ($method === 'GET' && ($action === 'overview' || $action === 'dashboard')) {
         'total_artists' => $totalArtists,
         'total_albums' => $totalAlbums,
         'total_playlists' => $totalPlaylists,
+        'admin_playlists_count' => $adminPlaylistsCount,
+        'user_playlists_count' => $userPlaylistsCount,
         'total_distributors' => $totalDistributors,
         'total_labels' => $totalLabels,
         'pending_claims' => $pendingClaims,
@@ -225,7 +282,9 @@ if ($method === 'GET' && ($action === 'overview' || $action === 'dashboard')) {
         'open_reports' => $openFlags,
         'total_streams' => $totalStreams,
         'total_flontmie_plays' => $totalFlontmiePlays,
-        'total_likes' => $totalLikes
+        'total_likes' => $totalLikes,
+        'total_comments' => $totalComments,
+        'total_activities' => $totalActivities
     ];
 
     json_response([
@@ -250,6 +309,7 @@ if ($method === 'GET' && ($action === 'overview' || $action === 'dashboard')) {
             'top_tracks' => $topTracks
         ],
         'audit_logs' => $auditLogs,
+        'user_activities' => $userActivities,
         'security_events' => $securityEvents,
         'active_sessions' => $activeSessions,
         'sessions' => $activeSessions,
@@ -924,12 +984,33 @@ if ($method === 'POST' && $action === 'bulk_track_action') {
 }
 
 // --- 8. PLAYLIST MANAGEMENT (CREATE, UPDATE, DELETE) ---
+function syncAdminPlaylistTracks(PDO $pdo, string $playlistId, array $trackIds): array {
+    $cleanIds = [];
+    foreach ($trackIds as $tid) {
+        $tid = trim((string)$tid);
+        if ($tid !== '' && !in_array($tid, $cleanIds, true)) {
+            $cleanIds[] = $tid;
+        }
+    }
+    try {
+        $pdo->prepare("DELETE FROM playlist_tracks WHERE playlist_id = ?")->execute([$playlistId]);
+        if (!empty($cleanIds)) {
+            $ins = $pdo->prepare("INSERT IGNORE INTO playlist_tracks (playlist_id, track_id, position) VALUES (?, ?, ?)");
+            foreach ($cleanIds as $idx => $tid) {
+                $ins->execute([$playlistId, $tid, $idx]);
+            }
+        }
+    } catch (Exception $e) {}
+    return $cleanIds;
+}
+
 if ($method === 'POST' && ($action === 'save_playlist' || $action === 'update_playlist')) {
     $playlistId = trim($input['id'] ?? $input['playlist_id'] ?? '');
     if (!empty($input['delete']) && !empty($playlistId)) {
         $pdo->prepare("DELETE FROM playlists WHERE id = ?")->execute([$playlistId]);
         $pdo->prepare("DELETE FROM playlist_tracks WHERE playlist_id = ?")->execute([$playlistId]);
         Auth::logAudit($admin['id'], 'ADMIN_PLAYLIST_DELETED', 'PLAYLIST', $playlistId);
+        Auth::logUserActivity($admin, 'playlist_deleted', 'playlist', $playlistId, $playlistId, []);
         json_response(['status' => 'success', 'message' => 'Playlist deleted.']);
     }
 
@@ -939,7 +1020,7 @@ if ($method === 'POST' && ($action === 'save_playlist' || $action === 'update_pl
     $genreCategory = !empty($input['genre_category']) ? trim($input['genre_category']) : null;
     $isPublic = isset($input['is_public']) ? (!empty($input['is_public']) ? 1 : 0) : null;
     $isFeatured = isset($input['is_featured']) ? (!empty($input['is_featured']) ? 1 : 0) : null;
-    $status = in_array($input['status'] ?? '', ['published', 'draft', 'hidden'], true) ? $input['status'] : null;
+    $status = in_array($input['status'] ?? '', ['published', 'draft', 'hidden', 'active'], true) ? $input['status'] : null;
     $trackIds = is_array($input['track_ids'] ?? null) ? array_values(array_unique($input['track_ids'])) : null;
 
     if (empty($playlistId)) {
@@ -947,14 +1028,20 @@ if ($method === 'POST' && ($action === 'save_playlist' || $action === 'update_pl
             json_response(['status' => 'error', 'message' => 'Playlist title is required.'], 400);
         }
         $playlistId = 'ply_' . bin2hex(random_bytes(6));
+        $cleanTracks = syncAdminPlaylistTracks($pdo, $playlistId, $trackIds ?? []);
         $pdo->prepare("
             INSERT INTO playlists (id, user_id, title, description, cover_art_url, genre_category, is_public, is_featured, status, track_ids_json)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ")->execute([
             $playlistId, $admin['id'], $title, $description ?? '', $coverUrl, $genreCategory ?: 'all', $isPublic ?? 1, $isFeatured ?? 0, $status ?: 'published',
-            json_encode($trackIds ?? [])
+            json_encode($cleanTracks)
         ]);
         Auth::logAudit($admin['id'], 'ADMIN_PLAYLIST_CREATED', 'PLAYLIST', $playlistId, ['title' => $title]);
+        Auth::logUserActivity($admin, 'playlist_created', 'playlist', $playlistId, $title, [
+            'track_count' => count($cleanTracks),
+            'is_public' => (bool)($isPublic ?? 1),
+            'creator_role' => 'admin'
+        ]);
         json_response(['status' => 'success', 'message' => "Created playlist '{$title}'.", 'playlist_id' => $playlistId]);
     } else {
         $sql = "
@@ -968,15 +1055,20 @@ if ($method === 'POST' && ($action === 'save_playlist' || $action === 'update_pl
                 status = COALESCE(?, status)
         ";
         $params = [$title, $description, $coverUrl, $genreCategory, $isPublic, $isFeatured, $status];
+        $cleanTracks = null;
         if ($trackIds !== null) {
+            $cleanTracks = syncAdminPlaylistTracks($pdo, $playlistId, $trackIds);
             $sql .= ", track_ids_json = ?";
-            $params[] = json_encode($trackIds);
+            $params[] = json_encode($cleanTracks);
         }
         $sql .= " WHERE id = ?";
         $params[] = $playlistId;
         $pdo->prepare($sql)->execute($params);
 
         Auth::logAudit($admin['id'], 'ADMIN_PLAYLIST_UPDATED', 'PLAYLIST', $playlistId, ['title' => $title]);
+        Auth::logUserActivity($admin, 'playlist_updated', 'playlist', $playlistId, $title ?: $playlistId, [
+            'track_count' => $cleanTracks !== null ? count($cleanTracks) : null
+        ]);
         json_response(['status' => 'success', 'message' => "Updated playlist.", 'playlist_id' => $playlistId]);
     }
 }
@@ -989,6 +1081,7 @@ if ($method === 'POST' && $action === 'delete_playlist') {
     $pdo->prepare("DELETE FROM playlists WHERE id = ?")->execute([$playlistId]);
     $pdo->prepare("DELETE FROM playlist_tracks WHERE playlist_id = ?")->execute([$playlistId]);
     Auth::logAudit($admin['id'], 'ADMIN_PLAYLIST_DELETED', 'PLAYLIST', $playlistId);
+    Auth::logUserActivity($admin, 'playlist_deleted', 'playlist', $playlistId, $playlistId, []);
     json_response(['status' => 'success', 'message' => 'Playlist deleted.']);
 }
 
@@ -1131,6 +1224,705 @@ if ($method === 'POST' && ($action === 'save_settings' || $action === 'update_se
 
     Auth::logAudit($admin['id'], 'ADMIN_SETTINGS_UPDATED', 'SYSTEM', 'SETTINGS', array_keys($settings));
     json_response(['status' => 'success', 'message' => 'Platform settings saved to database.']);
+}
+
+// --- 12. ADMIN VISIBILITY: SEARCHABLE, PAGINATED PLAYLISTS & PLAYLIST CONTENTS ---
+if ($method === 'GET' && $action === 'playlists') {
+    $q = trim($_GET['q'] ?? '');
+    $creatorType = strtolower(trim($_GET['creator_type'] ?? 'all')); // all | admin | user
+    $visibility = strtolower(trim($_GET['visibility'] ?? 'all')); // all | public | private
+    $filterUserId = trim($_GET['user_id'] ?? '');
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $perPage = min(100, max(5, (int)($_GET['per_page'] ?? 25)));
+    $offset = ($page - 1) * $perPage;
+
+    $where = ["1=1"];
+    $params = [];
+
+    if ($q !== '') {
+        $where[] = "(p.title LIKE ? OR p.description LIKE ? OR u.display_name LIKE ? OR u.username LIKE ? OR u.email LIKE ?)";
+        $like = '%' . $q . '%';
+        array_push($params, $like, $like, $like, $like, $like);
+    }
+    if ($creatorType === 'admin') {
+        $where[] = "(u.role = 'admin' OR p.user_id IS NULL OR p.user_id = '')";
+    } elseif ($creatorType === 'user') {
+        $where[] = "(u.role IS NOT NULL AND u.role != 'admin')";
+    }
+    if ($visibility === 'public') {
+        $where[] = "p.is_public = 1";
+    } elseif ($visibility === 'private') {
+        $where[] = "p.is_public = 0";
+    }
+    if ($filterUserId !== '') {
+        $where[] = "p.user_id = ?";
+        $params[] = $filterUserId;
+    }
+
+    $whereSql = implode(' AND ', $where);
+
+    $cntStmt = $pdo->prepare("
+        SELECT COUNT(*)
+        FROM playlists p
+        LEFT JOIN users u ON p.user_id = u.id
+        WHERE $whereSql
+    ");
+    $cntStmt->execute($params);
+    $total = (int)$cntStmt->fetchColumn();
+
+    $stmt = $pdo->prepare("
+        SELECT p.*,
+               COALESCE(NULLIF(u.display_name, ''), u.username, 'Flontmie Admin') AS creator_name,
+               u.username AS creator_username,
+               u.email AS creator_email,
+               COALESCE(u.role, 'admin') AS creator_role,
+               u.avatar_url AS creator_avatar
+        FROM playlists p
+        LEFT JOIN users u ON p.user_id = u.id
+        WHERE $whereSql
+        ORDER BY p.created_at DESC
+        LIMIT $perPage OFFSET $offset
+    ");
+    $stmt->execute($params);
+    $rows = $stmt->fetchAll();
+
+    foreach ($rows as &$r) {
+        $r['cover_art_url'] = ArtistEnrichment::resolveArtworkUrl($r['cover_art_url'] ?? '', $r['id']);
+        $tIds = !empty($r['track_ids_json']) ? json_decode($r['track_ids_json'], true) : [];
+        if (!is_array($tIds) || empty($tIds)) {
+            try {
+                $ptSt = $pdo->prepare("SELECT track_id FROM playlist_tracks WHERE playlist_id = ? ORDER BY position ASC");
+                $ptSt->execute([$r['id']]);
+                $tIds = array_column($ptSt->fetchAll(), 'track_id');
+            } catch (Exception $e) {
+                $tIds = [];
+            }
+        }
+        $r['track_ids'] = is_array($tIds) ? array_values($tIds) : [];
+        $r['track_count'] = count($r['track_ids']);
+        $r['is_admin_created'] = (($r['creator_role'] ?? '') === 'admin') || empty($r['user_id']);
+    }
+
+    $summaryAll = (int)$pdo->query("SELECT COUNT(*) FROM playlists")->fetchColumn();
+    $summaryAdmin = (int)$pdo->query("SELECT COUNT(*) FROM playlists p LEFT JOIN users u ON p.user_id = u.id WHERE u.role = 'admin' OR p.user_id IS NULL OR p.user_id = ''")->fetchColumn();
+    $summaryUser = max(0, $summaryAll - $summaryAdmin);
+    $summaryPublic = (int)$pdo->query("SELECT COUNT(*) FROM playlists WHERE is_public = 1")->fetchColumn();
+    $summaryPrivate = max(0, $summaryAll - $summaryPublic);
+
+    json_response([
+        'status' => 'success',
+        'playlists' => $rows,
+        'total' => $total,
+        'page' => $page,
+        'per_page' => $perPage,
+        'total_pages' => max(1, (int)ceil($total / $perPage)),
+        'summary' => [
+            'total_all' => $summaryAll,
+            'total_playlists' => $summaryAll,
+            'admin_created' => $summaryAdmin,
+            'admin_playlists_count' => $summaryAdmin,
+            'user_created' => $summaryUser,
+            'user_playlists_count' => $summaryUser,
+            'public_count' => $summaryPublic,
+            'public_playlists_count' => $summaryPublic,
+            'private_count' => $summaryPrivate,
+            'private_playlists_count' => $summaryPrivate
+        ]
+    ]);
+}
+
+if ($method === 'GET' && $action === 'playlist_detail') {
+    $playlistId = trim($_GET['playlist_id'] ?? $_GET['id'] ?? '');
+    if ($playlistId === '') {
+        json_response(['status' => 'error', 'message' => 'playlist_id is required'], 400);
+    }
+
+    $stmt = $pdo->prepare("
+        SELECT p.*,
+               COALESCE(NULLIF(u.display_name, ''), u.username, 'Flontmie Admin') AS creator_name,
+               u.username AS creator_username,
+               u.email AS creator_email,
+               COALESCE(u.role, 'admin') AS creator_role,
+               u.avatar_url AS creator_avatar,
+               u.status AS creator_status
+        FROM playlists p
+        LEFT JOIN users u ON p.user_id = u.id
+        WHERE p.id = ?
+        LIMIT 1
+    ");
+    $stmt->execute([$playlistId]);
+    $pl = $stmt->fetch();
+    if (!$pl) {
+        json_response(['status' => 'error', 'message' => 'Playlist not found'], 404);
+    }
+
+    $pl['cover_art_url'] = ArtistEnrichment::resolveArtworkUrl($pl['cover_art_url'] ?? '', $pl['id']);
+    $pl['is_admin_created'] = (($pl['creator_role'] ?? '') === 'admin') || empty($pl['user_id']);
+    $pl['creator'] = [
+        'id' => $pl['user_id'] ?? null,
+        'display_name' => $pl['creator_name'] ?? 'Flontmie Admin',
+        'username' => $pl['creator_username'] ?? 'admin',
+        'email' => $pl['creator_email'] ?? '',
+        'role' => $pl['creator_role'] ?? 'admin',
+        'status' => $pl['creator_status'] ?? 'active'
+    ];
+
+    // Resolve ordered tracks and added_at timestamps from playlist_tracks + track_ids_json
+    $ptMap = [];
+    $ptOrderedIds = [];
+    try {
+        $ptSt = $pdo->prepare("SELECT track_id, position, added_at FROM playlist_tracks WHERE playlist_id = ? ORDER BY position ASC");
+        $ptSt->execute([$playlistId]);
+        foreach ($ptSt->fetchAll() as $ptRow) {
+            $ptMap[$ptRow['track_id']] = $ptRow;
+            $ptOrderedIds[] = $ptRow['track_id'];
+        }
+    } catch (Exception $e) {}
+
+    $jsonIds = !empty($pl['track_ids_json']) ? json_decode($pl['track_ids_json'], true) : [];
+    $orderedIds = (is_array($jsonIds) && !empty($jsonIds)) ? array_values(array_filter(array_map('strval', $jsonIds))) : $ptOrderedIds;
+
+    $pl['track_ids'] = $orderedIds;
+    $pl['track_count'] = count($orderedIds);
+
+    $tracks = [];
+    if (!empty($orderedIds)) {
+        $placeholders = implode(',', array_fill(0, count($orderedIds), '?'));
+        $params = array_merge($orderedIds, $orderedIds);
+        $tStmt = $pdo->prepare("
+            SELECT t.id, t.video_id, t.title, t.artist_id, t.artist_name, t.album_id, t.album_name,
+                   t.duration, t.genre, t.release_year, t.cover_art_url, t.local_video_path, t.video_url,
+                   t.flontmie_plays, t.stream_count, t.status, t.created_at,
+                   (SELECT COUNT(*) FROM user_favorites uf WHERE uf.track_id = t.id) AS likes_count,
+                   (SELECT COUNT(*) FROM track_comments tc WHERE tc.track_id = t.id) AS comments_count
+            FROM tracks t
+            WHERE (t.id IN ($placeholders) OR t.video_id IN ($placeholders))
+        ");
+        $tStmt->execute($params);
+        $rows = $tStmt->fetchAll();
+
+        $byId = [];
+        foreach ($rows as $r) {
+            $r['cover_art_url'] = ArtistEnrichment::resolveArtworkUrl($r['cover_art_url'] ?? '', $r['video_id'] ?? $r['id']);
+            $r['audio_url'] = '/phpbackend/api/stream.php?id=' . urlencode($r['id']);
+            $r['album_title'] = $r['album_name'] ?? '';
+            $r['likes_count'] = (int)($r['likes_count'] ?? 0);
+            $r['comments_count'] = (int)($r['comments_count'] ?? 0);
+            $r['flontmie_plays'] = (int)($r['flontmie_plays'] ?? 0);
+            $r['stream_count'] = (int)($r['flontmie_plays'] ?? $r['stream_count'] ?? 0);
+            unset($r['local_video_path']);
+            $byId[$r['id']] = $r;
+            if (!empty($r['video_id'])) {
+                $byId[$r['video_id']] = $r;
+            }
+        }
+
+        $pos = 1;
+        foreach ($orderedIds as $tid) {
+            if (isset($byId[$tid])) {
+                $item = $byId[$tid];
+                $item['position'] = $pos++;
+                $item['added_at'] = $ptMap[$tid]['added_at'] ?? ($ptMap[$item['id']]['added_at'] ?? $pl['created_at']);
+                $tracks[] = $item;
+            } else {
+                $tracks[] = [
+                    'position' => $pos++,
+                    'id' => $tid,
+                    'title' => 'Unavailable / Removed Track (' . $tid . ')',
+                    'artist_name' => 'Unknown',
+                    'album_name' => '',
+                    'album_title' => '',
+                    'duration' => 0,
+                    'genre' => '',
+                    'likes_count' => 0,
+                    'comments_count' => 0,
+                    'flontmie_plays' => 0,
+                    'stream_count' => 0,
+                    'added_at' => $ptMap[$tid]['added_at'] ?? $pl['created_at']
+                ];
+            }
+        }
+    }
+
+    json_response([
+        'status' => 'success',
+        'playlist' => $pl,
+        'tracks' => $tracks
+    ]);
+}
+
+// --- 13. ADMIN VISIBILITY: USER ACTIVITY LOGS & FILTERS ---
+if ($method === 'GET' && $action === 'activities') {
+    $q = trim($_GET['q'] ?? '');
+    $filterUserId = trim($_GET['user_id'] ?? '');
+    $actionType = trim($_GET['action_type'] ?? '');
+    $targetType = trim($_GET['target_type'] ?? '');
+    $dateFrom = trim($_GET['date_from'] ?? '');
+    $dateTo = trim($_GET['date_to'] ?? '');
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $perPage = min(100, max(5, (int)($_GET['per_page'] ?? 30)));
+    $offset = ($page - 1) * $perPage;
+
+    $where = ["1=1"];
+    $params = [];
+
+    if ($q !== '') {
+        $where[] = "(ua.target_title LIKE ? OR ua.action_type LIKE ? OR ua.user_name LIKE ? OR ua.user_email LIKE ? OR u.display_name LIKE ? OR u.email LIKE ?)";
+        $like = '%' . $q . '%';
+        array_push($params, $like, $like, $like, $like, $like, $like);
+    }
+    if ($filterUserId !== '') {
+        $where[] = "ua.user_id = ?";
+        $params[] = $filterUserId;
+    }
+    if ($actionType !== '' && $actionType !== 'all') {
+        $where[] = "ua.action_type = ?";
+        $params[] = $actionType;
+    }
+    if ($targetType !== '' && $targetType !== 'all') {
+        $where[] = "ua.target_type = ?";
+        $params[] = $targetType;
+    }
+    if ($dateFrom !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateFrom)) {
+        $where[] = "ua.created_at >= ?";
+        $params[] = $dateFrom . ' 00:00:00';
+    }
+    if ($dateTo !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateTo)) {
+        $where[] = "ua.created_at <= ?";
+        $params[] = $dateTo . ' 23:59:59';
+    }
+
+    $whereSql = implode(' AND ', $where);
+
+    $cntStmt = $pdo->prepare("
+        SELECT COUNT(*)
+        FROM user_activities ua
+        LEFT JOIN users u ON ua.user_id = u.id
+        WHERE $whereSql
+    ");
+    $cntStmt->execute($params);
+    $total = (int)$cntStmt->fetchColumn();
+
+    $stmt = $pdo->prepare("
+        SELECT ua.id, ua.user_id,
+               COALESCE(NULLIF(u.display_name, ''), ua.user_name, u.username, 'User') AS user_name,
+               COALESCE(NULLIF(u.display_name, ''), ua.user_name, u.username, 'User') AS display_name,
+               COALESCE(u.email, ua.user_email, '') AS user_email,
+               COALESCE(u.email, ua.user_email, '') AS email,
+               COALESCE(u.role, ua.user_role, 'listener') AS user_role,
+               COALESCE(u.role, ua.user_role, 'listener') AS role,
+               u.username AS user_username,
+               ua.action_type, ua.target_type, ua.target_id, ua.target_title, ua.metadata_json, ua.ip_address, ua.created_at
+        FROM user_activities ua
+        LEFT JOIN users u ON ua.user_id = u.id
+        WHERE $whereSql
+        ORDER BY ua.created_at DESC
+        LIMIT $perPage OFFSET $offset
+    ");
+    $stmt->execute($params);
+    $rows = $stmt->fetchAll();
+
+    foreach ($rows as &$r) {
+        $meta = !empty($r['metadata_json']) ? json_decode($r['metadata_json'], true) : [];
+        if (is_array($meta)) {
+            unset($meta['password'], $meta['token'], $meta['csrf_token']);
+        } else {
+            $meta = [];
+        }
+        $r['metadata'] = $meta;
+    }
+
+    $actionTypes = [];
+    try {
+        $actionTypes = array_column($pdo->query("SELECT DISTINCT action_type FROM user_activities ORDER BY action_type ASC")->fetchAll(), 'action_type');
+    } catch (Exception $e) {}
+
+    json_response([
+        'status' => 'success',
+        'activities' => $rows,
+        'total' => $total,
+        'page' => $page,
+        'per_page' => $perPage,
+        'total_pages' => max(1, (int)ceil($total / $perPage)),
+        'action_types' => $actionTypes
+    ]);
+}
+
+// --- 14. ADMIN VISIBILITY: USER PROFILE CREATIONS & ACTIVITY HISTORY ---
+if ($method === 'GET' && $action === 'user_detail') {
+    $targetUserId = trim($_GET['user_id'] ?? $_GET['id'] ?? '');
+    if ($targetUserId === '') {
+        json_response(['status' => 'error', 'message' => 'user_id is required'], 400);
+    }
+
+    $uStmt = $pdo->prepare("
+        SELECT id, username, email, role, status, display_name, avatar_url, bio, country,
+               distributor_id, label_id, artist_id, email_verified, last_login_at, created_at
+        FROM users
+        WHERE id = ?
+        LIMIT 1
+    ");
+    $uStmt->execute([$targetUserId]);
+    $userRow = $uStmt->fetch();
+    if (!$userRow) {
+        json_response(['status' => 'error', 'message' => 'User not found'], 404);
+    }
+
+    // 1. User's created playlists
+    $plStmt = $pdo->prepare("
+        SELECT id, user_id, title, description, cover_art_url, genre_category, is_public, is_featured, status, track_ids_json, created_at, updated_at
+        FROM playlists
+        WHERE user_id = ?
+        ORDER BY created_at DESC
+    ");
+    $plStmt->execute([$targetUserId]);
+    $userPlaylists = $plStmt->fetchAll();
+    foreach ($userPlaylists as &$pl) {
+        $pl['cover_art_url'] = ArtistEnrichment::resolveArtworkUrl($pl['cover_art_url'] ?? '', $pl['id']);
+        $tIds = !empty($pl['track_ids_json']) ? json_decode($pl['track_ids_json'], true) : [];
+        $pl['track_ids'] = is_array($tIds) ? array_values($tIds) : [];
+        $pl['track_count'] = count($pl['track_ids']);
+        $pl['is_admin_created'] = ($userRow['role'] === 'admin');
+    }
+
+    // 2. User's liked tracks
+    $likesStmt = $pdo->prepare("
+        SELECT uf.track_id AS id, uf.track_id, uf.created_at AS liked_at,
+               t.title, t.artist_name, t.album_name, t.genre, t.cover_art_url,
+               (SELECT COUNT(*) FROM user_favorites uf2 WHERE uf2.track_id = t.id) AS likes_count
+        FROM user_favorites uf
+        LEFT JOIN tracks t ON uf.track_id = t.id
+        WHERE uf.user_id = ?
+        ORDER BY uf.created_at DESC
+        LIMIT 200
+    ");
+    $likesStmt->execute([$targetUserId]);
+    $userLikes = $likesStmt->fetchAll();
+    foreach ($userLikes as &$lk) {
+        $lk['cover_art_url'] = ArtistEnrichment::resolveArtworkUrl($lk['cover_art_url'] ?? '', $lk['track_id']);
+    }
+
+    // 3. User's comments
+    $cStmt = $pdo->prepare("
+        SELECT tc.id, tc.track_id, COALESCE(NULLIF(tc.comment_text, ''), tc.body, '') AS comment_text,
+               COALESCE(NULLIF(tc.body, ''), tc.comment_text, '') AS body, tc.created_at,
+               t.title AS track_title, t.artist_name
+        FROM track_comments tc
+        LEFT JOIN tracks t ON tc.track_id = t.id
+        WHERE tc.user_id = ?
+        ORDER BY tc.created_at DESC
+        LIMIT 200
+    ");
+    $cStmt->execute([$targetUserId]);
+    $userComments = $cStmt->fetchAll();
+
+    // 4. User's followed artists
+    $fStmt = $pdo->prepare("
+        SELECT ufa.artist_id, ufa.created_at, ufa.created_at AS followed_at,
+               a.name AS artist_name, a.avatar_url, a.country
+        FROM user_followed_artists ufa
+        LEFT JOIN artists a ON ufa.artist_id = a.id
+        WHERE ufa.user_id = ?
+        ORDER BY ufa.created_at DESC
+        LIMIT 200
+    ");
+    $fStmt->execute([$targetUserId]);
+    $userFollows = $fStmt->fetchAll();
+
+    // 5. User's uploaded tracks
+    $upStmt = $pdo->prepare("
+        SELECT id, title, artist_name, album_name, genre, duration, flontmie_plays,
+               (SELECT COUNT(*) FROM user_favorites uf WHERE uf.track_id = tracks.id) AS likes_count,
+               (SELECT COUNT(*) FROM track_comments tc WHERE tc.track_id = tracks.id) AS comments_count,
+               status, created_at
+        FROM tracks
+        WHERE uploaded_by_user_id = ? AND is_deleted = 0
+        ORDER BY created_at DESC
+        LIMIT 200
+    ");
+    $upStmt->execute([$targetUserId]);
+    $userUploads = $upStmt->fetchAll();
+
+    // 6. Paginated & filterable activity history for this user
+    $actType = trim($_GET['action_type'] ?? '');
+    $dateFrom = trim($_GET['date_from'] ?? '');
+    $dateTo = trim($_GET['date_to'] ?? '');
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $perPage = min(100, max(5, (int)($_GET['per_page'] ?? 25)));
+    $offset = ($page - 1) * $perPage;
+
+    $actWhere = ["user_id = ?"];
+    $actParams = [$targetUserId];
+    if ($actType !== '' && $actType !== 'all') {
+        $actWhere[] = "action_type = ?";
+        $actParams[] = $actType;
+    }
+    if ($dateFrom !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateFrom)) {
+        $actWhere[] = "created_at >= ?";
+        $actParams[] = $dateFrom . ' 00:00:00';
+    }
+    if ($dateTo !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateTo)) {
+        $actWhere[] = "created_at <= ?";
+        $actParams[] = $dateTo . ' 23:59:59';
+    }
+    $actWhereSql = implode(' AND ', $actWhere);
+
+    $actCntStmt = $pdo->prepare("SELECT COUNT(*) FROM user_activities WHERE $actWhereSql");
+    $actCntStmt->execute($actParams);
+    $actTotal = (int)$actCntStmt->fetchColumn();
+
+    $actStmt = $pdo->prepare("
+        SELECT id, user_id, action_type, target_type, target_id, target_title, metadata_json, ip_address, created_at
+        FROM user_activities
+        WHERE $actWhereSql
+        ORDER BY created_at DESC
+        LIMIT $perPage OFFSET $offset
+    ");
+    $actStmt->execute($actParams);
+    $activities = $actStmt->fetchAll();
+    foreach ($activities as &$act) {
+        $act['metadata'] = !empty($act['metadata_json']) ? json_decode($act['metadata_json'], true) : [];
+    }
+
+    json_response([
+        'status' => 'success',
+        'user' => $userRow,
+        'summary' => [
+            'playlists_count' => count($userPlaylists),
+            'likes_count' => count($userLikes),
+            'comments_count' => count($userComments),
+            'follows_count' => count($userFollows),
+            'followed_artists_count' => count($userFollows),
+            'uploads_count' => count($userUploads),
+            'uploaded_tracks_count' => count($userUploads),
+            'activities_count' => $actTotal
+        ],
+        'creations' => [
+            'playlists' => $userPlaylists,
+            'liked_tracks' => $userLikes,
+            'comments' => $userComments,
+            'followed_artists' => $userFollows,
+            'uploaded_tracks' => $userUploads
+        ],
+        'playlists' => $userPlaylists,
+        'likes' => $userLikes,
+        'comments' => $userComments,
+        'follows' => $userFollows,
+        'uploads' => $userUploads,
+        'activities' => [
+            'items' => $activities,
+            'total' => $actTotal,
+            'page' => $page,
+            'per_page' => $perPage,
+            'total_pages' => max(1, (int)ceil($actTotal / $perPage))
+        ],
+        'activities_list' => $activities
+    ]);
+}
+
+// --- 15. ADMIN VISIBILITY: ENGAGEMENT (ACTUAL LIKE & COMMENT TOTALS & RECORDS) ---
+if ($method === 'GET' && $action === 'engagement') {
+    $q = trim($_GET['q'] ?? '');
+    $filterTrackId = trim($_GET['track_id'] ?? '');
+    $filterUserId = trim($_GET['user_id'] ?? '');
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $perPage = min(100, max(5, (int)($_GET['per_page'] ?? 25)));
+    $offset = ($page - 1) * $perPage;
+
+    $totalLikes = (int)$pdo->query("SELECT COUNT(*) FROM user_favorites")->fetchColumn();
+    $totalComments = (int)$pdo->query("SELECT COUNT(*) FROM track_comments")->fetchColumn();
+    $uniqueLikers = (int)$pdo->query("SELECT COUNT(DISTINCT user_id) FROM user_favorites")->fetchColumn();
+    $uniqueCommenters = (int)$pdo->query("SELECT COUNT(DISTINCT user_id) FROM track_comments")->fetchColumn();
+
+    // 1. Track breakdown
+    $tWhere = ["t.is_deleted = 0"];
+    $tParams = [];
+    if ($q !== '') {
+        $tWhere[] = "(t.title LIKE ? OR t.artist_name LIKE ? OR t.album_name LIKE ?)";
+        $like = '%' . $q . '%';
+        array_push($tParams, $like, $like, $like);
+    }
+    if ($filterTrackId !== '') {
+        $tWhere[] = "t.id = ?";
+        $tParams[] = $filterTrackId;
+    }
+    $tWhereSql = implode(' AND ', $tWhere);
+
+    $tStmt = $pdo->prepare("
+        SELECT t.id, t.title, t.artist_id, t.artist_name, t.album_name, t.genre, t.cover_art_url, t.flontmie_plays,
+               (SELECT COUNT(*) FROM user_favorites uf WHERE uf.track_id = t.id) AS likes_count,
+               (SELECT COUNT(*) FROM track_comments tc WHERE tc.track_id = t.id) AS comments_count
+        FROM tracks t
+        WHERE $tWhereSql
+        ORDER BY likes_count DESC, comments_count DESC, t.flontmie_plays DESC
+        LIMIT $perPage OFFSET $offset
+    ");
+    $tStmt->execute($tParams);
+    $trackBreakdown = $tStmt->fetchAll();
+    foreach ($trackBreakdown as &$tb) {
+        $tb['cover_art_url'] = ArtistEnrichment::resolveArtworkUrl($tb['cover_art_url'] ?? '', $tb['id']);
+        $tb['likes_count'] = (int)($tb['likes_count'] ?? 0);
+        $tb['comments_count'] = (int)($tb['comments_count'] ?? 0);
+        $tb['flontmie_plays'] = (int)($tb['flontmie_plays'] ?? 0);
+    }
+
+    // 2. Likes records
+    $lWhere = ["1=1"];
+    $lParams = [];
+    if ($q !== '') {
+        $lWhere[] = "(t.title LIKE ? OR t.artist_name LIKE ? OR u.display_name LIKE ? OR u.email LIKE ? OR u.username LIKE ?)";
+        $like = '%' . $q . '%';
+        array_push($lParams, $like, $like, $like, $like, $like);
+    }
+    if ($filterTrackId !== '') {
+        $lWhere[] = "uf.track_id = ?";
+        $lParams[] = $filterTrackId;
+    }
+    if ($filterUserId !== '') {
+        $lWhere[] = "uf.user_id = ?";
+        $lParams[] = $filterUserId;
+    }
+    $lWhereSql = implode(' AND ', $lWhere);
+
+    $lCntStmt = $pdo->prepare("
+        SELECT COUNT(*)
+        FROM user_favorites uf
+        LEFT JOIN users u ON uf.user_id = u.id
+        LEFT JOIN tracks t ON uf.track_id = t.id
+        WHERE $lWhereSql
+    ");
+    $lCntStmt->execute($lParams);
+    $likesFilteredTotal = (int)$lCntStmt->fetchColumn();
+
+    $lStmt = $pdo->prepare("
+        SELECT uf.user_id, uf.track_id, uf.created_at,
+               COALESCE(NULLIF(u.display_name, ''), u.username, 'Listener') AS display_name,
+               COALESCE(NULLIF(u.display_name, ''), u.username, 'Listener') AS user_name,
+               u.username AS username,
+               u.email AS email,
+               COALESCE(u.role, 'listener') AS user_role,
+               COALESCE(t.title, uf.track_id) AS track_title,
+               COALESCE(t.artist_name, '') AS artist_name
+        FROM user_favorites uf
+        LEFT JOIN users u ON uf.user_id = u.id
+        LEFT JOIN tracks t ON uf.track_id = t.id
+        WHERE $lWhereSql
+        ORDER BY uf.created_at DESC
+        LIMIT $perPage OFFSET $offset
+    ");
+    $lStmt->execute($lParams);
+    $likesRecords = $lStmt->fetchAll();
+
+    // 3. Comments records
+    $cWhere = ["1=1"];
+    $cParams = [];
+    if ($q !== '') {
+        $cWhere[] = "(tc.body LIKE ? OR tc.comment_text LIKE ? OR t.title LIKE ? OR t.artist_name LIKE ? OR u.display_name LIKE ? OR u.email LIKE ?)";
+        $like = '%' . $q . '%';
+        array_push($cParams, $like, $like, $like, $like, $like, $like);
+    }
+    if ($filterTrackId !== '') {
+        $cWhere[] = "tc.track_id = ?";
+        $cParams[] = $filterTrackId;
+    }
+    if ($filterUserId !== '') {
+        $cWhere[] = "tc.user_id = ?";
+        $cParams[] = $filterUserId;
+    }
+    $cWhereSql = implode(' AND ', $cWhere);
+
+    $cCntStmt = $pdo->prepare("
+        SELECT COUNT(*)
+        FROM track_comments tc
+        LEFT JOIN users u ON tc.user_id = u.id
+        LEFT JOIN tracks t ON tc.track_id = t.id
+        WHERE $cWhereSql
+    ");
+    $cCntStmt->execute($cParams);
+    $commentsFilteredTotal = (int)$cCntStmt->fetchColumn();
+
+    $cStmt = $pdo->prepare("
+        SELECT tc.id, tc.track_id, tc.user_id,
+               COALESCE(NULLIF(tc.comment_text, ''), tc.body, '') AS comment_text,
+               COALESCE(NULLIF(tc.body, ''), tc.comment_text, '') AS body,
+               tc.created_at,
+               COALESCE(NULLIF(u.display_name, ''), u.username, 'Listener') AS display_name,
+               COALESCE(NULLIF(u.display_name, ''), u.username, 'Listener') AS user_name,
+               u.username AS username,
+               u.email AS email,
+               COALESCE(u.role, 'listener') AS user_role,
+               COALESCE(t.title, tc.track_id) AS track_title,
+               COALESCE(t.artist_name, '') AS artist_name
+        FROM track_comments tc
+        LEFT JOIN users u ON tc.user_id = u.id
+        LEFT JOIN tracks t ON tc.track_id = t.id
+        WHERE $cWhereSql
+        ORDER BY tc.created_at DESC
+        LIMIT $perPage OFFSET $offset
+    ");
+    $cStmt->execute($cParams);
+    $commentsRecords = $cStmt->fetchAll();
+
+    json_response([
+        'status' => 'success',
+        'totals' => [
+            'total_likes' => $totalLikes,
+            'total_comments' => $totalComments,
+            'unique_likers' => $uniqueLikers,
+            'unique_commenters' => $uniqueCommenters
+        ],
+        'summary' => [
+            'total_likes' => $totalLikes,
+            'total_comments' => $totalComments,
+            'unique_likers' => $uniqueLikers,
+            'unique_commenters' => $uniqueCommenters
+        ],
+        'tracks_engagement' => $trackBreakdown,
+        'track_breakdown' => $trackBreakdown,
+        'likes' => [
+            'items' => $likesRecords,
+            'total' => $likesFilteredTotal
+        ],
+        'comments' => [
+            'items' => $commentsRecords,
+            'total' => $commentsFilteredTotal
+        ],
+        'page' => $page,
+        'per_page' => $perPage
+    ]);
+}
+
+if ($method === 'POST' && $action === 'delete_comment') {
+    $commentId = trim((string)($input['comment_id'] ?? $input['id'] ?? ''));
+    if ($commentId === '') {
+        json_response(['status' => 'error', 'message' => 'Valid comment_id is required'], 400);
+    }
+
+    $cStmt = $pdo->prepare("SELECT * FROM track_comments WHERE id = ? LIMIT 1");
+    $cStmt->execute([$commentId]);
+    $comment = $cStmt->fetch();
+    if (!$comment) {
+        json_response(['status' => 'error', 'message' => 'Comment not found'], 404);
+    }
+
+    $trackId = $comment['track_id'];
+    $pdo->prepare("DELETE FROM track_comments WHERE id = ?")->execute([$commentId]);
+
+    $cntStmt = $pdo->prepare("SELECT COUNT(*) FROM track_comments WHERE track_id = ?");
+    $cntStmt->execute([$trackId]);
+    $commentsCount = (int)$cntStmt->fetchColumn();
+    $pdo->prepare("UPDATE tracks SET comments_count = ? WHERE id = ?")->execute([$commentsCount, $trackId]);
+
+    Auth::logAudit($admin['id'], 'ADMIN_COMMENT_DELETED', 'COMMENT', (string)$commentId, ['track_id' => $trackId]);
+    Auth::logUserActivity($admin, 'comment_deleted', 'track', $trackId, $trackId, ['comment_id' => $commentId]);
+
+    json_response([
+        'status' => 'success',
+        'message' => 'Comment deleted and track comment count synchronized.',
+        'comment_id' => $commentId,
+        'track_id' => $trackId,
+        'comments_count' => $commentsCount
+    ]);
 }
 
 json_response(['status' => 'error', 'message' => 'Invalid admin action or HTTP method'], 400);
