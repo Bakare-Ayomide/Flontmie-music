@@ -49,6 +49,7 @@ import { AdminDashboard } from './components/admin/AdminDashboard';
 import { FullPlaybackScreen } from './components/player/FullPlaybackScreen';
 import { PublicArtistPage } from './components/artist/PublicArtistPage';
 import { AuthModal, AuthUser } from './components/auth/AuthModal';
+import { FlontmieOnboarding, OnboardingStep } from './components/auth/FlontmieOnboarding';
 import { ProfilePage } from './components/profile/ProfilePage';
 import { YouTubeMusicDiscovery } from './components/discovery/YouTubeMusicDiscovery';
 import { nativePlatform } from './services/nativePlatform';
@@ -76,6 +77,16 @@ export default function App() {
   const [isAuthChecking, setIsAuthChecking] = useState<boolean>(true);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
   const [authInitialMode, setAuthInitialMode] = useState<'login' | 'signup'>('login');
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    const p = window.location.pathname.toLowerCase();
+    const h = window.location.hash.toLowerCase();
+    if (p === '/admin' || p.startsWith('/admin/') || h === '#admin') return false;
+    if (p === '/onboarding' || h === '#onboarding') return true;
+    const done = localStorage.getItem('flontmie_onboarding_completed_v1');
+    return done !== 'true' && !localStorage.getItem('flontmie_jwt');
+  });
+  const [onboardingInitialStep, setOnboardingInitialStep] = useState<OnboardingStep | undefined>(undefined);
 
   // Desktop sidebar collapse state
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
@@ -235,6 +246,8 @@ export default function App() {
           setSelectedPlaylistId(null);
           setSelectedArtistId(null);
           setCurrentPersona('listener');
+        } else if (path === '/onboarding' || hash === '#onboarding') {
+          setIsOnboardingOpen(true);
         } else {
           setCurrentTab('home');
           setSelectedPlaylistId(null);
@@ -354,7 +367,16 @@ export default function App() {
       try {
         await api.hydrateSavedTokens();
         if (!api.getToken()) {
-          if (isMounted) setIsAuthChecking(false);
+          if (isMounted) {
+            setIsAuthChecking(false);
+            const p = window.location.pathname.toLowerCase();
+            const h = window.location.hash.toLowerCase();
+            const isAdm = p === '/admin' || p.startsWith('/admin/') || h === '#admin';
+            const done = localStorage.getItem('flontmie_onboarding_completed_v1') === 'true';
+            if (!isAdm && !done) {
+              setIsOnboardingOpen(true);
+            }
+          }
           return;
         }
         const res = await api.getCurrentUser();
@@ -368,6 +390,17 @@ export default function App() {
           }
           if (res.user.role !== 'admin') {
             setCurrentPersona(res.user.role);
+          }
+          if (res.user.onboarding_completed || res.user.terms_accepted || res.user.role === 'admin') {
+            try {
+              localStorage.setItem('flontmie_onboarding_completed_v1', 'true');
+            } catch {}
+            if (
+              window.location.pathname.toLowerCase() !== '/onboarding' &&
+              window.location.hash.toLowerCase() !== '#onboarding'
+            ) {
+              setIsOnboardingOpen(false);
+            }
           }
         }
       } catch {
@@ -1171,8 +1204,16 @@ export default function App() {
         onToggleSidebar={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
         currentUser={currentUser}
         onOpenAuth={() => {
-          setAuthInitialMode('login');
-          setIsAuthModalOpen(true);
+          if (isAdminRoute) {
+            setAuthInitialMode('login');
+            setIsAuthModalOpen(true);
+          } else {
+            try {
+              localStorage.setItem('flontmie_onboarding_step_v1', '1');
+            } catch {}
+            setOnboardingInitialStep(1);
+            setIsOnboardingOpen(true);
+          }
         }}
         onOpenProfile={() => {
           setIsAdminRoute(false);
@@ -1648,6 +1689,14 @@ export default function App() {
                     }
                   }}
                   onBackToHome={() => setCurrentTab('home')}
+                  onRestartOnboarding={() => {
+                    try {
+                      localStorage.removeItem('flontmie_onboarding_completed_v1');
+                      localStorage.setItem('flontmie_onboarding_step_v1', '1');
+                    } catch {}
+                    setOnboardingInitialStep(1);
+                    setIsOnboardingOpen(true);
+                  }}
                 />
               ) : (
                 <HomeFeed
@@ -1926,6 +1975,57 @@ export default function App() {
             setCurrentPersona(user.role);
           }
           setIsAuthModalOpen(false);
+        }}
+      />
+
+      {/* 5-Screen Flontmie Onboarding Flow (Welcome -> Auth -> Choose Your Interest -> Choose Your Favs -> Accept Terms) */}
+      <FlontmieOnboarding
+        isOpen={isOnboardingOpen && !isAdminRoute}
+        initialStep={onboardingInitialStep}
+        currentUser={currentUser}
+        catalogArtists={Object.values(artistProfiles)}
+        onAuthenticated={(user) => {
+          setCurrentUser(user);
+          if (Array.isArray(user.liked_track_ids)) {
+            setLikedTrackIds(user.liked_track_ids);
+          }
+          if (Array.isArray(user.followed_artist_ids)) {
+            setFollowedArtistIds(user.followed_artist_ids);
+          }
+          refreshCatalogFromDatabase();
+          if (user.role === 'admin') {
+            try {
+              localStorage.setItem('flontmie_onboarding_completed_v1', 'true');
+            } catch {}
+            setIsOnboardingOpen(false);
+            setCurrentPersona('listener');
+            navigateTab('admin');
+          } else {
+            setCurrentPersona(user.role);
+          }
+        }}
+        onComplete={({ user, selectedArtistIds }) => {
+          try {
+            localStorage.setItem('flontmie_onboarding_completed_v1', 'true');
+            localStorage.removeItem('flontmie_onboarding_step_v1');
+          } catch {}
+          if (user) {
+            setCurrentUser(user);
+          }
+          if (selectedArtistIds.length > 0) {
+            setFollowedArtistIds((prev) => Array.from(new Set([...prev, ...selectedArtistIds])));
+          }
+          setIsOnboardingOpen(false);
+          refreshCatalogFromDatabase();
+          navigateTab('home');
+        }}
+        onSkipToHome={() => {
+          try {
+            localStorage.setItem('flontmie_onboarding_completed_v1', 'true');
+            localStorage.removeItem('flontmie_onboarding_step_v1');
+          } catch {}
+          setIsOnboardingOpen(false);
+          navigateTab('home');
         }}
       />
     </div>

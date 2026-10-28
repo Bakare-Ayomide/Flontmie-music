@@ -36,6 +36,7 @@ interface ProfilePageProps {
   onSignOut: () => void;
   onSwitchPortal: (role: Persona) => void;
   onBackToHome: () => void;
+  onRestartOnboarding?: () => void;
 }
 
 export const ProfilePage: React.FC<ProfilePageProps> = ({
@@ -48,6 +49,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
   onSignOut,
   onSwitchPortal,
   onBackToHome,
+  onRestartOnboarding,
 }) => {
   const [activeTab, setActiveTab] = useState<'overview' | 'edit' | 'security'>('overview');
   const [displayName, setDisplayName] = useState(currentUser?.display_name || '');
@@ -139,6 +141,15 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({
         </button>
 
         <div className="flex items-center gap-2">
+          {onRestartOnboarding && (
+            <button
+              onClick={onRestartOnboarding}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/[0.06] hover:bg-white/10 text-neutral-200 text-xs font-semibold border border-white/10 transition-colors cursor-pointer"
+            >
+              <Radio className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Onboarding &amp; Preferences</span>
+            </button>
+          )}
           <button
             onClick={() => onSwitchPortal(userRole)}
             className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/[0.06] hover:bg-white/10 text-neutral-200 text-xs font-semibold border border-white/10 transition-colors"

@@ -193,18 +193,22 @@ if ($method === 'POST' && $action === 'claim' && !empty($id)) {
 }
 
 // --- 4. FOLLOW / UNFOLLOW ARTIST ---
-if ($method === 'POST' && $action === 'follow' && !empty($id)) {
+if ($method === 'POST' && $action === 'follow') {
     $user = Auth::requireAuth();
     $input = get_json_input();
+    $targetId = !empty($id) ? $id : trim($input['artist_id'] ?? $input['id'] ?? '');
+    if (empty($targetId)) {
+        json_response(['status' => 'error', 'message' => 'artist_id is required'], 400);
+    }
     $mode = strtolower(trim($input['mode'] ?? 'toggle'));
 
     $artStmt = $pdo->prepare("SELECT id, name, followers FROM artists WHERE id = ? LIMIT 1");
-    $artStmt->execute([$id]);
+    $artStmt->execute([$targetId]);
     $artistRow = $artStmt->fetch();
-    $artistName = $artistRow['name'] ?? $id;
+    $artistName = $artistRow['name'] ?? $targetId;
 
     $chk = $pdo->prepare("SELECT 1 FROM user_followed_artists WHERE user_id = ? AND artist_id = ? LIMIT 1");
-    $chk->execute([$user['id'], $id]);
+    $chk->execute([$user['id'], $targetId]);
     $alreadyFollowing = (bool)$chk->fetchColumn();
 
     if ($mode === 'follow') {
@@ -216,27 +220,28 @@ if ($method === 'POST' && $action === 'follow' && !empty($id)) {
     }
 
     if ($shouldFollow && !$alreadyFollowing) {
-        $pdo->prepare("INSERT IGNORE INTO user_followed_artists (user_id, artist_id) VALUES (?, ?)")->execute([$user['id'], $id]);
+        $pdo->prepare("INSERT IGNORE INTO user_followed_artists (user_id, artist_id) VALUES (?, ?)")->execute([$user['id'], $targetId]);
     } elseif (!$shouldFollow && $alreadyFollowing) {
-        $pdo->prepare("DELETE FROM user_followed_artists WHERE user_id = ? AND artist_id = ?")->execute([$user['id'], $id]);
+        $pdo->prepare("DELETE FROM user_followed_artists WHERE user_id = ? AND artist_id = ?")->execute([$user['id'], $targetId]);
     }
 
     $cntStmt = $pdo->prepare("SELECT COUNT(*) FROM user_followed_artists WHERE artist_id = ?");
-    $cntStmt->execute([$id]);
+    $cntStmt->execute([$targetId]);
     $followersCount = (int)$cntStmt->fetchColumn();
-    $pdo->prepare("UPDATE artists SET followers = ? WHERE id = ?")->execute([$followersCount, $id]);
+    $pdo->prepare("UPDATE artists SET followers = ? WHERE id = ?")->execute([$followersCount, $targetId]);
 
     Auth::logUserActivity(
         $user,
         $shouldFollow ? 'artist_followed' : 'artist_unfollowed',
         'artist',
-        $id,
+        $targetId,
         $artistName,
         ['followers_count' => $followersCount]
     );
 
     json_response([
         'status' => 'success',
+        'artist_id' => $targetId,
         'following' => $shouldFollow,
         'followers_count' => $followersCount,
         'message' => $shouldFollow ? 'Followed artist' : 'Unfollowed artist'
@@ -299,9 +304,9 @@ if ($method === 'GET') {
     $verifiedArtists = [];
     foreach ($artists as $a) {
         $artId = $a['id'];
-        // Sum real flontmie_plays and verify artist has at least one uploaded track (or was created by admin/distributor)
-        $tStmt = $pdo->prepare("SELECT local_audio_path, local_video_path, COALESCE(flontmie_plays, 0) AS fp FROM tracks WHERE (artist_id = ? OR LOWER(artist_name) = LOWER(?)) AND is_deleted = 0");
-        $tStmt->execute([$artId, $a['name']]);
+        // Sum real flontmie_plays and verify artist has at least one uploaded track (lead or featured, or was created by admin/distributor)
+        $tStmt = $pdo->prepare("SELECT local_audio_path, local_video_path, COALESCE(flontmie_plays, 0) AS fp FROM tracks WHERE (artist_id = ? OR LOWER(artist_name) = LOWER(?) OR LOWER(title) LIKE ?) AND is_deleted = 0");
+        $tStmt->execute([$artId, $a['name'], '%' . strtolower($a['name']) . '%']);
         $tRows = $tStmt->fetchAll();
         $realStreams = 0;
         $uploadedTrackCount = 0;

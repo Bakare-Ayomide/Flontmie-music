@@ -805,6 +805,62 @@ class FlontmieApiService {
     });
   }
 
+  public async requestPasswordReset(email: string): Promise<any> {
+    return this.request('auth.php?action=request_password_reset', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    });
+  }
+
+  public async confirmPasswordReset(email: string, code: string, newPassword: string): Promise<any> {
+    return this.request('auth.php?action=confirm_password_reset', {
+      method: 'POST',
+      body: JSON.stringify({ email, code, new_password: newPassword }),
+    });
+  }
+
+  public async getOnboardingData(): Promise<{
+    status: string;
+    genres: Array<{ id: string; name: string; slug: string }>;
+    artists: Array<{ id: string; name: string; avatar_url: string; country?: string; verified?: number; followers?: number; genres?: string[] }>;
+    legal: {
+      platform_name: string;
+      terms_version: string;
+      privacy_version: string;
+      effective_date: string;
+      terms_sections: Array<{ heading: string; body: string }>;
+      privacy_sections: Array<{ heading: string; body: string }>;
+      system_settings?: Array<{ key: string; value: string; category: string; description: string; updated_at: string }>;
+      role_permissions?: Array<any>;
+    };
+    user?: any;
+  }> {
+    return this.request('auth.php?action=onboarding_data');
+  }
+
+  public async saveOnboardingPreferences(payload: {
+    favorite_genres?: string[];
+    favorite_artist_ids?: string[];
+  }): Promise<any> {
+    return this.request('auth.php?action=save_onboarding', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  public async acceptTerms(payload: {
+    accepted: boolean;
+    terms_version: string;
+    privacy_version?: string;
+    favorite_genres?: string[];
+    favorite_artist_ids?: string[];
+  }): Promise<any> {
+    return this.request('auth.php?action=accept_terms', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
   // --- Admin Governance APIs ---
   public async getAdminDashboard(): Promise<any> {
     return this.request('admin.php?action=dashboard');

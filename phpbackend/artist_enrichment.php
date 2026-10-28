@@ -23,12 +23,38 @@ class ArtistEnrichment {
         'art_asake'        => ['name' => 'Asake',         'wiki' => 'Asake',         'genre' => 'Afrobeats', 'country' => 'NG', 'label' => 'YBNL Nation / EMPIRE'],
         'art_djmaphorisa'  => ['name' => 'DJ Maphorisa',  'wiki' => 'DJ_Maphorisa',  'genre' => 'Afrobeats', 'country' => 'ZA', 'label' => 'New Money Gang'],
         'art_txc'          => ['name' => 'TxC',           'wiki' => 'TxC',           'genre' => 'Afrobeats', 'country' => 'ZA', 'label' => 'Amapiano Collective'],
+        'art_zlatan'       => ['name' => 'Zlatan',        'wiki' => 'Zlatan_(musician)', 'genre' => 'Afrobeats', 'country' => 'NG', 'label' => 'Zanku Records'],
     ];
 
     public static array $VERIFIED_ARTWORK = [
         'c2gK9tq57iQ' => 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/01/ee/63/01ee6370-1805-15e4-de8c-293a889a439c/075679676351.jpg/600x600bb.jpg',
         'art_burna_boy' => 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/01/ee/63/01ee6370-1805-15e4-de8c-293a889a439c/075679676351.jpg/600x600bb.jpg',
         'art_burnaboy' => 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/01/ee/63/01ee6370-1805-15e4-de8c-293a889a439c/075679676351.jpg/600x600bb.jpg',
+        'art_davido' => 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/a8/fb/21/a8fb21ed-2106-199e-75dc-f01099c29394/196874507544.jpg/600x600bb.jpg',
+        'B9tN8R4dY2M' => 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/a8/fb/21/a8fb21ed-2106-199e-75dc-f01099c29394/196874507544.jpg/600x600bb.jpg',
+        'K7pL3mN9qR4' => 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/a8/fb/21/a8fb21ed-2106-199e-75dc-f01099c29394/196874507544.jpg/600x600bb.jpg',
+        'art_fola' => 'https://i.ytimg.com/vi/f0H2UbU-K8E/hqdefault.jpg',
+        'W8mK2pL5tQ9' => 'https://i.ytimg.com/vi/f0H2UbU-K8E/hqdefault.jpg',
+        'H4nL9pM2vR7' => 'https://i.ytimg.com/vi/f0H2UbU-K8E/hqdefault.jpg',
+        'J9kL4mN8pQ2' => 'https://i.ytimg.com/vi/f0H2UbU-K8E/hqdefault.jpg',
+        'art_wizkid' => 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/62/36/e8/6236e8a3-c34e-fcb0-c3e7-0a41db66c6ad/196873749570.jpg/600x600bb.jpg',
+        'Fv9kL2mN5pQ' => 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/62/36/e8/6236e8a3-c34e-fcb0-c3e7-0a41db66c6ad/196873749570.jpg/600x600bb.jpg',
+        'Ks4mL8nP2qR' => 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/62/36/e8/6236e8a3-c34e-fcb0-c3e7-0a41db66c6ad/196873749570.jpg/600x600bb.jpg',
+        'Ml7nP3qR9tW' => 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/62/36/e8/6236e8a3-c34e-fcb0-c3e7-0a41db66c6ad/196873749570.jpg/600x600bb.jpg',
+        'Tb2mN6pQ8rW' => 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/62/36/e8/6236e8a3-c34e-fcb0-c3e7-0a41db66c6ad/196873749570.jpg/600x600bb.jpg',
+        'Sb9mN4pQ2rW' => 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/62/36/e8/6236e8a3-c34e-fcb0-c3e7-0a41db66c6ad/196873749570.jpg/600x600bb.jpg',
+        'art_bellashmurda' => 'https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/84/bd/07/84bd0709-6d90-1be4-4212-babf5729a85d/199316770292_cover.jpg/600x600bb.jpg',
+        'P1zG3tLp0wY' => 'https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/84/bd/07/84bd0709-6d90-1be4-4212-babf5729a85d/199316770292_cover.jpg/600x600bb.jpg',
+        'art_olamide' => 'https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/ba/6d/fb/ba6dfb0f-3eb5-d02a-79f6-6a4483231e13/199316074352_cover.jpg/600x600bb.jpg',
+        'T5kL8mN3pR9' => 'https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/ba/6d/fb/ba6dfb0f-3eb5-d02a-79f6-6a4483231e13/199316074352_cover.jpg/600x600bb.jpg',
+        'art_djmaphorisa' => 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/ec/2a/4c/ec2a4c8a-b98b-50ac-a386-94f92788ac59/6009710469873.jpg/600x600bb.jpg',
+        'Mc6nP9qR4tW' => 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/ec/2a/4c/ec2a4c8a-b98b-50ac-a386-94f92788ac59/6009710469873.jpg/600x600bb.jpg',
+        'art_odumodublvck' => 'https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/24/00/61/24006185-de26-141f-72f5-92c192f90bb9/25UMGIM51411.rgb.jpg/600x600bb.jpg',
+        'Bt5mN8pQ3rW' => 'https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/24/00/61/24006185-de26-141f-72f5-92c192f90bb9/25UMGIM51411.rgb.jpg/600x600bb.jpg',
+        'art_txc' => 'https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/57/ae/ce/57aece01-ca70-5691-2f2f-04cec810e535/198588056394.jpg/600x600bb.jpg',
+        'Nk8mP2qR7tW' => 'https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/57/ae/ce/57aece01-ca70-5691-2f2f-04cec810e535/198588056394.jpg/600x600bb.jpg',
+        'art_asake' => 'https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/31/e4/eb/31e4ebf4-97bd-c193-59c7-1b72ed7ab53a/ticket.wlorjbae.jpg/600x600bb.jpg',
+        'art_zlatan' => 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/2f/4e/0e/2f4e0ee0-72b2-e111-5296-5247fb04f489/701575484911_Cover.jpg/600x600bb.jpg',
     ];
 
     public static function resolveArtworkUrl(?string $url, ?string $lookupKey = null): string {

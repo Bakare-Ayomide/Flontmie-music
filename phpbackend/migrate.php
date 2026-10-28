@@ -78,7 +78,30 @@ try {
     safeAlter($pdo, "ALTER TABLE users ADD COLUMN last_login_ip VARCHAR(64) NULL");
     safeAlter($pdo, "ALTER TABLE users ADD COLUMN failed_login_attempts INT DEFAULT 0");
     safeAlter($pdo, "ALTER TABLE users ADD COLUMN locked_until DATETIME NULL");
+    safeAlter($pdo, "ALTER TABLE users ADD COLUMN favorite_genres_json TEXT NULL");
+    safeAlter($pdo, "ALTER TABLE users ADD COLUMN favorite_artist_ids_json TEXT NULL");
+    safeAlter($pdo, "ALTER TABLE users ADD COLUMN onboarding_completed TINYINT(1) DEFAULT 0");
+    safeAlter($pdo, "ALTER TABLE users ADD COLUMN onboarding_completed_at DATETIME NULL");
+    safeAlter($pdo, "ALTER TABLE users ADD COLUMN terms_accepted TINYINT(1) DEFAULT 0");
+    safeAlter($pdo, "ALTER TABLE users ADD COLUMN terms_version VARCHAR(64) NULL");
+    safeAlter($pdo, "ALTER TABLE users ADD COLUMN privacy_version VARCHAR(64) NULL");
+    safeAlter($pdo, "ALTER TABLE users ADD COLUMN terms_accepted_at DATETIME NULL");
     $results[] = "Table `users` verified.";
+
+    // 1a. User Terms & Privacy Acceptances Ledger
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS user_terms_acceptances (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id VARCHAR(64) NOT NULL,
+            terms_version VARCHAR(64) NOT NULL,
+            privacy_version VARCHAR(64) NOT NULL,
+            ip_address VARCHAR(64) NULL,
+            user_agent VARCHAR(255) NULL,
+            accepted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_uta_user (user_id),
+            INDEX idx_uta_time (accepted_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    ");
 
     // 1b. Server-Side Sessions Table
     $pdo->exec("
@@ -865,22 +888,30 @@ try {
 
     // Ensure baseline platform genres exist
     $defaultGenres = [
-        ['gen_afrobeats', 'Afrobeats', 'afrobeats', 'Afro-fusion and contemporary African rhythms', 'from-amber-600/30 to-red-600/20', 1, 1],
-        ['gen_pop', 'Pop', 'pop', 'Global pop releases', 'from-pink-600/30 to-rose-600/20', 1, 2],
-        ['gen_rap', 'Rap & Hip-Hop', 'rap', 'Hip-hop, rap, and trap releases', 'from-purple-600/30 to-blue-600/20', 1, 3],
-        ['gen_rnb', 'R&B & Soul', 'rnb', 'R&B, soul, and contemporary vocals', 'from-indigo-600/30 to-violet-600/20', 1, 4],
-        ['gen_lofi', 'Lo-Fi & Chill', 'lofi', 'Instrumental beats and chill textures', 'from-emerald-600/30 to-teal-600/20', 1, 5],
-        ['gen_synthwave', 'Electronic', 'synthwave', 'Electronic and club mixes', 'from-cyan-600/30 to-blue-600/20', 1, 6],
-        ['gen_oldschool', 'Classics', 'oldschool', 'Classic funk, soul, and timeless recordings', 'from-orange-600/30 to-amber-600/20', 1, 7],
-        ['gen_ambient', 'Ambient & Soundtracks', 'ambient', 'Cinematic scores and soundscapes', 'from-slate-600/30 to-zinc-600/20', 1, 8]
+        ['gen_rnb', 'R&B', 'rnb', 'R&B, soul, and contemporary vocals', 'from-indigo-600/30 to-violet-600/20', 1, 1],
+        ['gen_afrobeats', 'Afrobeats', 'afrobeats', 'Afro-fusion and contemporary African rhythms', 'from-amber-600/30 to-red-600/20', 1, 2],
+        ['gen_rock', 'Rock', 'rock', 'Alternative, indie, and rock releases', 'from-red-600/30 to-orange-600/20', 1, 3],
+        ['gen_afropop', 'Afropop', 'afropop', 'Melodic Afropop and continental hits', 'from-yellow-600/30 to-amber-600/20', 1, 4],
+        ['gen_pop', 'Pop', 'pop', 'Global pop releases', 'from-pink-600/30 to-rose-600/20', 1, 5],
+        ['gen_country', 'Country', 'country', 'Acoustic storytelling and country releases', 'from-amber-700/30 to-yellow-600/20', 1, 6],
+        ['gen_jazz', 'Jazz', 'jazz', 'Smooth jazz, brass, and improvisation', 'from-blue-600/30 to-indigo-600/20', 1, 7],
+        ['gen_gospel', 'Gospel', 'gospel', 'Inspirational and gospel recordings', 'from-sky-600/30 to-cyan-600/20', 1, 8],
+        ['gen_reggae', 'Reggae', 'reggae', 'Roots reggae, dancehall, and island rhythms', 'from-emerald-600/30 to-green-600/20', 1, 9],
+        ['gen_synthwave', 'Electronic', 'synthwave', 'Electronic and club mixes', 'from-cyan-600/30 to-blue-600/20', 1, 10],
+        ['gen_rap', 'Rap & Hip-Hop', 'rap', 'Hip-hop, rap, and trap releases', 'from-purple-600/30 to-blue-600/20', 1, 11],
+        ['gen_lofi', 'Lo-Fi & Chill', 'lofi', 'Instrumental beats and chill textures', 'from-emerald-600/30 to-teal-600/20', 1, 12],
+        ['gen_oldschool', 'Classics', 'oldschool', 'Classic funk, soul, and timeless recordings', 'from-orange-600/30 to-amber-600/20', 1, 13],
+        ['gen_ambient', 'Ambient & Soundtracks', 'ambient', 'Cinematic scores and soundscapes', 'from-slate-600/30 to-zinc-600/20', 1, 14]
     ];
     $genStmt = $pdo->prepare("
-        INSERT IGNORE INTO platform_genres (id, name, slug, description, color_theme, is_featured, display_order)
+        INSERT INTO platform_genres (id, name, slug, description, color_theme, is_featured, display_order)
         VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE name = VALUES(name), display_order = VALUES(display_order), is_featured = VALUES(is_featured)
     ");
     $genSimpleStmt = $pdo->prepare("
-        INSERT IGNORE INTO genres (id, name, slug, color, sort_order, is_active)
+        INSERT INTO genres (id, name, slug, color, sort_order, is_active)
         VALUES (?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE name = VALUES(name), sort_order = VALUES(sort_order), is_active = VALUES(is_active)
     ");
     foreach ($defaultGenres as $g) {
         $genStmt->execute($g);
@@ -1373,18 +1404,22 @@ try {
         DELETE FROM artists
         WHERE created_by_user_id IS NULL
           AND id NOT IN (SELECT DISTINCT artist_id FROM tracks WHERE is_deleted = 0)
+          AND id NOT IN ('art_asake', 'art_zlatan')
     ");
 
-    // Ensure every artist with uploaded tracks exists in `artists` with status = 'active'
+    // Ensure every artist with uploaded tracks (including featured artists on uploaded tracks) exists in `artists` with verified avatar_url
     foreach ($uploadedCatalog as $vl) {
         $artSlug = strtolower(preg_replace('/[^a-zA-Z0-9]+/', '-', $vl['artist'])) . '-' . substr($vl['artist_id'], 4);
-        $coverUrl = 'https://i.ytimg.com/vi/' . $vl['video_id'] . '/hqdefault.jpg';
+        $rawCover = 'https://i.ytimg.com/vi/' . $vl['video_id'] . '/hqdefault.jpg';
+        $coverUrl = ArtistEnrichment::resolveArtworkUrl($rawCover, $vl['artist_id']);
         $pdo->prepare("
             INSERT INTO artists (id, name, stage_name, slug, avatar_url, header_url, country, verified, is_featured, status, genres_json, claimed_status)
             VALUES (?, ?, ?, ?, ?, ?, 'NG', 1, 1, 'active', ?, 'unclaimed')
             ON DUPLICATE KEY UPDATE
                 name = VALUES(name),
                 stage_name = VALUES(stage_name),
+                avatar_url = VALUES(avatar_url),
+                header_url = VALUES(header_url),
                 is_featured = 1,
                 verified = 1,
                 status = 'active'
@@ -1396,6 +1431,36 @@ try {
             $coverUrl,
             $coverUrl,
             json_encode([$vl['genre']])
+        ]);
+    }
+
+    // Also ensure featured artists on uploaded tracks (Asake, Zlatan) exist in `artists` with verified display pictures
+    $featuredCatalogArtists = [
+        ['id' => 'art_asake', 'name' => 'Asake', 'slug' => 'asake', 'country' => 'NG', 'genre' => 'Afrobeats'],
+        ['id' => 'art_zlatan', 'name' => 'Zlatan', 'slug' => 'zlatan', 'country' => 'NG', 'genre' => 'Afrobeats']
+    ];
+    foreach ($featuredCatalogArtists as $fca) {
+        $fcaCover = ArtistEnrichment::resolveArtworkUrl('', $fca['id']);
+        $pdo->prepare("
+            INSERT INTO artists (id, name, stage_name, slug, avatar_url, header_url, country, verified, is_featured, status, genres_json, claimed_status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1, 'active', ?, 'unclaimed')
+            ON DUPLICATE KEY UPDATE
+                name = VALUES(name),
+                stage_name = VALUES(stage_name),
+                avatar_url = VALUES(avatar_url),
+                header_url = VALUES(header_url),
+                is_featured = 1,
+                verified = 1,
+                status = 'active'
+        ")->execute([
+            $fca['id'],
+            $fca['name'],
+            $fca['name'],
+            $fca['slug'],
+            $fcaCover,
+            $fcaCover,
+            $fca['country'],
+            json_encode([$fca['genre']])
         ]);
     }
 

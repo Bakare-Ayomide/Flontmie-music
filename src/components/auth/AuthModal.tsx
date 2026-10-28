@@ -40,6 +40,14 @@ export interface AuthUser {
   streams_logged?: number;
   liked_track_ids?: string[];
   followed_artist_ids?: string[];
+  favorite_genres?: string[];
+  favorite_artist_ids?: string[];
+  onboarding_completed?: number | boolean;
+  onboarding_completed_at?: string | null;
+  terms_accepted?: number | boolean;
+  terms_version?: string | null;
+  privacy_version?: string | null;
+  terms_accepted_at?: string | null;
 }
 
 interface AuthModalProps {
