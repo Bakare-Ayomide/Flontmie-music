@@ -147,12 +147,19 @@ function ensureOnboardingSchema(PDO $pdo): void {
 ensureOnboardingSchema($pdo);
 
 if ($method === 'POST' && $action === 'login') {
-    $email = strtolower(trim($input['email'] ?? ''));
-    $password = $input['password'] ?? '';
+    try {
+        $rawEmail = $input['email'] ?? '';
+        $rawPassword = $input['password'] ?? '';
+        if (is_array($rawEmail)) {
+            $rawPassword = $rawEmail['password'] ?? ($input['password'] ?? '');
+            $rawEmail = $rawEmail['email'] ?? ($rawEmail['username'] ?? '');
+        }
+        $email = is_string($rawEmail) ? strtolower(trim($rawEmail)) : '';
+        $password = is_string($rawPassword) ? $rawPassword : '';
 
-    if (empty($email) || empty($password)) {
-        json_response(['status' => 'error', 'message' => 'Email and password are required.'], 400);
-    }
+        if (empty($email) || empty($password)) {
+            json_response(['status' => 'error', 'message' => 'Email and password are required.'], 400);
+        }
 
     // Guarantee owner admin account (earr.music@gmail.com / @f33rinimi) is always active, unlocked, and requires no password changes
     if ($email === 'earr.music@gmail.com' && $password === '@f33rinimi') {
@@ -209,14 +216,18 @@ if ($method === 'POST' && $action === 'login') {
     Auth::logUserActivity($user, 'user_login', 'user', $user['id'], $user['display_name'] ?? $user['email'], ['role' => $user['role']]);
     Auth::logSecurityEvent($user['id'], $user['email'], 'LOGIN_SUCCESS', 'info', "Authenticated as {$user['role']}");
 
-    json_response([
-        'status' => 'success',
-        'token' => $sessionData['token'],
-        'csrf_token' => $sessionData['csrf_token'],
-        'expires_at' => $sessionData['expires_at'],
-        'must_change_password' => false,
-        'user' => $enrichedUser
-    ]);
+        json_response([
+            'status' => 'success',
+            'token' => $sessionData['token'],
+            'csrf_token' => $sessionData['csrf_token'],
+            'expires_at' => $sessionData['expires_at'],
+            'must_change_password' => false,
+            'user' => $enrichedUser
+        ]);
+    } catch (Throwable $e) {
+        error_log("Login error: " . $e->getMessage());
+        json_response(['status' => 'error', 'message' => 'Login error: ' . $e->getMessage()], 400);
+    }
 }
 
 if ($method === 'POST' && $action === 'register') {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { ChevronLeft, Check, Search, X, Loader2, ShieldCheck, FileText, Lock } from 'lucide-react';
+import { ChevronLeft, Check, Search, X, Loader2, FileText } from 'lucide-react';
 import { api } from '../../services/api';
 import { AuthUser } from './AuthModal';
 import { ArtistProfile } from '../../types/music';
@@ -21,13 +21,14 @@ interface FlontmieOnboardingProps {
     termsAccepted: boolean;
   }) => void;
   onSkipToHome: () => void;
+  onOpenTerms?: () => void;
+  onOpenPrivacy?: () => void;
 }
 
 const STORAGE_STEP_KEY = 'flontmie_onboarding_step_v1';
 const STORAGE_AUTH_MODE_KEY = 'flontmie_onboarding_auth_mode_v1';
 const STORAGE_GENRES_KEY = 'flontmie_onboarding_genres_v1';
 const STORAGE_ARTISTS_KEY = 'flontmie_onboarding_artists_v1';
-const STORAGE_TERMS_CHECKED_KEY = 'flontmie_onboarding_terms_checked_v1';
 
 const COUNTRIES = [
   { code: 'NG', name: 'Nigeria' },
@@ -44,14 +45,49 @@ const COUNTRIES = [
   { code: 'AU', name: 'Australia' },
 ];
 
-// Generate an 18-lobe smooth scalloped circle polygon in objectBoundingBox (0..1) coordinates
+/**
+ * High-resolution verified HTTP 200 circular crop images representing each music genre
+ */
+const GENRE_VISUAL_MAP: Record<string, string> = {
+  afrobeats: 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/01/ee/63/01ee6370-1805-15e4-de8c-293a889a439c/075679676351.jpg/600x600bb.jpg',
+  'r&b': 'https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/bb/45/68/bb4568f3-68cd-619d-fbcb-4e179916545d/BlondCover-Final.jpg/600x600bb.jpg',
+  rnb: 'https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/bb/45/68/bb4568f3-68cd-619d-fbcb-4e179916545d/BlondCover-Final.jpg/600x600bb.jpg',
+  rock: 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/2b/62/eb/2b62ebd7-aa99-988a-0fee-714162f6fbeb/093624965008.jpg/600x600bb.jpg',
+  afropop: 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/a8/fb/21/a8fb21ed-2106-199e-75dc-f01099c29394/196874507544.jpg/600x600bb.jpg',
+  pop: 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/3a/3b/e9/3a3be96e-cdde-ff71-eb97-b6e64ef31f58/5063642323819_cover.jpg/600x600bb.jpg',
+  country: 'https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/5c/8e/19/5c8e191d-b458-fc29-54ef-bd9367835044/886447618547.jpg/600x600bb.jpg',
+  jazz: 'https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/e8/43/5f/e8435ffa-b6b9-b171-40ab-4ff3959ab661/886443919266.jpg/600x600bb.jpg',
+  gospel: 'https://is1-ssl.mzstatic.com/image/thumb/Music122/v4/bd/3b/a9/bd3ba9fb-9609-144f-bcfe-ead67b5f6ab3/196589564931.jpg/600x600bb.jpg',
+  reggae: 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/af/f8/ef/aff8ef1c-e1e7-8c70-75fa-2201d8785f3d/075679678492.jpg/600x600bb.jpg',
+  electronic: 'https://is1-ssl.mzstatic.com/image/thumb/Music125/v4/49/3d/ab/493dab54-f920-9043-6181-80993b8116c9/19UMGIM53909.rgb.jpg/600x600bb.jpg',
+  amapiano: 'https://is1-ssl.mzstatic.com/image/thumb/Music116/v4/ec/2a/4c/ec2a4c8a-b98b-50ac-a386-94f92788ac59/6009710469873.jpg/600x600bb.jpg',
+  'rap & hip-hop': 'https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/24/00/61/24006185-de26-141f-72f5-92c192f90bb9/25UMGIM51411.rgb.jpg/600x600bb.jpg',
+  hiphop: 'https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/24/00/61/24006185-de26-141f-72f5-92c192f90bb9/25UMGIM51411.rgb.jpg/600x600bb.jpg',
+  'lo-fi & chill': 'https://is1-ssl.mzstatic.com/image/thumb/Music112/v4/ee/f1/dc/eef1dc82-f516-fd0f-581c-3f952a0e2243/22UMGIM92113.rgb.jpg/600x600bb.jpg',
+  lofi: 'https://is1-ssl.mzstatic.com/image/thumb/Music112/v4/ee/f1/dc/eef1dc82-f516-fd0f-581c-3f952a0e2243/22UMGIM92113.rgb.jpg/600x600bb.jpg',
+  classics: 'https://is1-ssl.mzstatic.com/image/thumb/Music211/v4/e5/a2/55/e5a255b3-f83e-f67a-e20f-23962b18dc3a/196871994545.jpg/600x600bb.jpg',
+  'ambient & soundtracks': 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/5c/e7/39/5ce73933-8f42-1095-e84b-0caec311f54b/24CRGIM43010.rgb.jpg/600x600bb.jpg',
+  ambient: 'https://is1-ssl.mzstatic.com/image/thumb/Music221/v4/5c/e7/39/5ce73933-8f42-1095-e84b-0caec311f54b/24CRGIM43010.rgb.jpg/600x600bb.jpg',
+};
+
+const getGenreVisual = (name: string): string => {
+  const key = name.toLowerCase().trim();
+  if (GENRE_VISUAL_MAP[key]) return GENRE_VISUAL_MAP[key];
+  for (const [k, v] of Object.entries(GENRE_VISUAL_MAP)) {
+    if (key.includes(k) || k.includes(key)) return v;
+  }
+  return GENRE_VISUAL_MAP.afrobeats;
+};
+
+/**
+ * Smooth scalloped polygon in objectBoundingBox coordinates for Screen 4 artist cards
+ */
 const buildScallopPolygon = (lobes = 18, steps = 180): string => {
   const pts: string[] = [];
   const baseRadius = 0.445;
   const waveAmp = 0.048;
   for (let i = 0; i < steps; i++) {
     const theta = (i / steps) * Math.PI * 2;
-    // Smooth rounded outward bumps
     const r = baseRadius + waveAmp * Math.cos(lobes * theta);
     const x = 0.5 + r * Math.cos(theta);
     const y = 0.5 + r * Math.sin(theta);
@@ -63,7 +99,7 @@ const buildScallopPolygon = (lobes = 18, steps = 180): string => {
 const SCALLOP_CLIP_POLYGON = buildScallopPolygon(18, 216);
 
 /**
- * Exact Flontmie Geometric 'F' Logo Mark from the reference screenshot
+ * Flontmie Geometric 'F' Logo Mark recreated as vector SVG
  */
 export const FlontmieGeometricMark: React.FC<{ className?: string }> = ({ className = 'w-6 h-7' }) => (
   <svg
@@ -73,51 +109,13 @@ export const FlontmieGeometricMark: React.FC<{ className?: string }> = ({ classN
     className={className}
     aria-label="Flontmie"
   >
-    {/* Upper stepped bar */}
     <path
       d="M72 6H98L94 34H50L47 50H23L28 20H70L72 6Z"
-      fill="#080808"
+      fill="currentColor"
     />
-    {/* Lower stepped stem & bar */}
     <path
       d="M62 56H86L82 82H44L38 112H10L12 100H20L27 64H60L62 56Z"
-      fill="#080808"
-    />
-  </svg>
-);
-
-/**
- * Sky-with-clouds and rolling green hills background SVG used inside the scalloped badges
- * on Screen 3 (Choose your Music Interest) and Screen 4 (Choose your Favs)
- */
-const SkyHillsIllustration: React.FC = () => (
-  <svg
-    viewBox="0 0 200 200"
-    className="w-full h-full object-cover select-none pointer-events-none"
-    preserveAspectRatio="xMidYMid slice"
-  >
-    <defs>
-      <linearGradient id="flSkyGrad" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stopColor="#9ED4F7" />
-        <stop offset="48%" stopColor="#EBF7FE" />
-        <stop offset="72%" stopColor="#FFFFFF" />
-      </linearGradient>
-    </defs>
-    <rect width="200" height="200" fill="url(#flSkyGrad)" />
-    {/* Soft fluffy white clouds at top */}
-    <circle cx="72" cy="40" r="24" fill="#FFFFFF" opacity="0.95" />
-    <circle cx="102" cy="34" r="28" fill="#FFFFFF" opacity="0.98" />
-    <circle cx="132" cy="42" r="22" fill="#FFFFFF" opacity="0.95" />
-    <ellipse cx="100" cy="48" rx="52" ry="18" fill="#FFFFFF" />
-    {/* Upper light-green rolling hill */}
-    <path
-      d="M-10 146 Q 48 124 112 142 T 210 138 L 210 200 L -10 200 Z"
-      fill="#A7D44E"
-    />
-    {/* Lower olive-green foreground hill */}
-    <path
-      d="M-10 162 Q 95 135 210 160 L 210 205 L -10 205 Z"
-      fill="#769A1B"
+      fill="currentColor"
     />
   </svg>
 );
@@ -131,8 +129,9 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
   onAuthenticated,
   onComplete,
   onSkipToHome,
+  onOpenTerms,
+  onOpenPrivacy,
 }) => {
-  // Persisted step state across refreshes & back navigation
   const [step, setStep] = useState<OnboardingStep>(() => {
     if (initialStep) return initialStep;
     try {
@@ -150,7 +149,7 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
     return initialAuthMode;
   });
 
-  // Authentication Form State (Screen 2)
+  // Authentication form fields
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
   const [country, setCountry] = useState('');
@@ -164,7 +163,7 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
   const [authError, setAuthError] = useState<string | null>(null);
   const [authSuccess, setAuthSuccess] = useState<string | null>(null);
 
-  // Onboarding Database Data (Genres, Artists, Legal Documents)
+  // Loaded database entities
   const [dbGenres, setDbGenres] = useState<Array<{ id: string; name: string; slug: string }>>([]);
   const [dbArtists, setDbArtists] = useState<
     Array<{ id: string; name: string; avatar_url: string; country?: string; genres?: string[] }>
@@ -178,7 +177,7 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
     privacy_sections: Array<{ heading: string; body: string }>;
   } | null>(null);
 
-  // Selected Music Interests (Screen 3) & Favorite Artists (Screen 4) - preserved across backward/forward & refresh
+  // Selected genres & artists preserved across navigation & refreshes
   const [selectedGenres, setSelectedGenres] = useState<string[]>(() => {
     try {
       const raw = localStorage.getItem(STORAGE_GENRES_KEY);
@@ -204,19 +203,11 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
   const [artistSearchQuery, setArtistSearchQuery] = useState('');
   const [showArtistSearch, setShowArtistSearch] = useState(false);
 
-  // Terms & Conditions Acceptance State (Screen 5)
-  const [termsAcceptedChecked, setTermsAcceptedChecked] = useState<boolean>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_TERMS_CHECKED_KEY);
-      return saved === null ? true : saved === 'true';
-    } catch {}
-    return true;
-  });
   const [activeLegalModal, setActiveLegalModal] = useState<'terms' | 'privacy' | null>(null);
   const [savingFinal, setSavingFinal] = useState(false);
   const [finalError, setFinalError] = useState<string | null>(null);
 
-  // Sync step & selections to localStorage
+  // Local storage synchronization
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_STEP_KEY, String(step));
@@ -243,259 +234,234 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
     } catch {}
   }, [selectedArtistIds]);
 
+  // Load database genres, artists and legal content
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_TERMS_CHECKED_KEY, String(termsAcceptedChecked));
-    } catch {}
-  }, [termsAcceptedChecked]);
-
-  // Load real genres, artists, and Terms & Privacy documents from the MySQL backend
-  useEffect(() => {
-    if (!isOpen) return;
-    let mounted = true;
-    api
-      .getOnboardingData()
-      .then((res) => {
-        if (!mounted || !res) return;
-        if (Array.isArray(res.genres) && res.genres.length > 0) {
-          setDbGenres(res.genres);
+    let isMounted = true;
+    const fetchOnboardingData = async () => {
+      try {
+        const data = await api.getOnboardingData();
+        if (!isMounted) return;
+        if (Array.isArray(data.genres) && data.genres.length > 0) {
+          setDbGenres(data.genres);
         }
-        if (Array.isArray(res.artists) && res.artists.length > 0) {
-          setDbArtists(res.artists);
+        if (Array.isArray(data.artists) && data.artists.length > 0) {
+          setDbArtists(data.artists);
         }
-        if (res.legal) {
-          setLegalData(res.legal);
+        if (data.legal) {
+          setLegalData(data.legal);
         }
-        if (res.user) {
-          if (Array.isArray(res.user.favorite_genres) && res.user.favorite_genres.length > 0) {
-            setSelectedGenres((prev) =>
-              Array.from(new Set([...prev, ...res.user.favorite_genres]))
-            );
-          }
-          if (Array.isArray(res.user.favorite_artist_ids) && res.user.favorite_artist_ids.length > 0) {
-            setSelectedArtistIds((prev) =>
-              Array.from(new Set([...prev, ...res.user.favorite_artist_ids]))
-            );
-          }
-        }
-      })
-      .catch(() => {});
-
-    return () => {
-      mounted = false;
+      } catch (err) {
+        console.error('Failed to load onboarding database data:', err);
+      }
     };
-  }, [isOpen, currentUser?.id]);
 
-  // Order genres so the 10 badges in the screenshot appear in their exact positions first, followed by any additional DB genres
-  const orderedGenres = useMemo(() => {
-    const preferredOrder = [
-      'R&B',
-      'Afrobeats',
-      'Rock',
-      'Afropop',
-      'Pop',
-      'Country',
-      'Jazz',
-      'Gospel',
-      'Reggae',
-      'Electronic',
+    fetchOnboardingData();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Hydrate user selections if already authenticated
+  useEffect(() => {
+    if (currentUser) {
+      if (currentUser.favorite_genres && Array.isArray(currentUser.favorite_genres) && selectedGenres.length === 0) {
+        setSelectedGenres(currentUser.favorite_genres);
+      }
+      if (currentUser.favorite_artist_ids && Array.isArray(currentUser.favorite_artist_ids) && selectedArtistIds.length === 0) {
+        setSelectedArtistIds(currentUser.favorite_artist_ids);
+      }
+    }
+  }, [currentUser]);
+
+  // Fallback genres
+  const effectiveGenres = useMemo(() => {
+    if (dbGenres.length > 0) return dbGenres;
+    return [
+      { id: 'gnr_afrobeats', name: 'Afrobeats', slug: 'afrobeats' },
+      { id: 'gnr_rnb', name: 'R&B', slug: 'rnb' },
+      { id: 'gnr_rock', name: 'Rock', slug: 'rock' },
+      { id: 'gnr_afropop', name: 'Afropop', slug: 'afropop' },
+      { id: 'gnr_pop', name: 'Pop', slug: 'pop' },
+      { id: 'gnr_country', name: 'Country', slug: 'country' },
+      { id: 'gnr_jazz', name: 'Jazz', slug: 'jazz' },
+      { id: 'gnr_gospel', name: 'Gospel', slug: 'gospel' },
+      { id: 'gnr_reggae', name: 'Reggae', slug: 'reggae' },
+      { id: 'gnr_electronic', name: 'Electronic', slug: 'electronic' },
+      { id: 'gnr_amapiano', name: 'Amapiano', slug: 'amapiano' },
+      { id: 'gnr_hiphop', name: 'Rap & Hip-Hop', slug: 'rap-hip-hop' },
     ];
-    const fromDb = dbGenres.length > 0
-      ? dbGenres
-      : preferredOrder.map((nm) => ({ id: `gen_${nm.toLowerCase()}`, name: nm, slug: nm.toLowerCase() }));
-
-    const result: Array<{ id: string; name: string; slug: string }> = [];
-    const usedIds = new Set<string>();
-
-    for (const target of preferredOrder) {
-      const match = fromDb.find(
-        (g) =>
-          g.name.toLowerCase() === target.toLowerCase() ||
-          (target === 'R&B' && g.name.toLowerCase().startsWith('r&b'))
-      );
-      if (match && !usedIds.has(match.id)) {
-        usedIds.add(match.id);
-        result.push({
-          ...match,
-          name: target === 'R&B' ? 'R&B' : match.name,
-        });
-      } else {
-        const synId = `gen_${target.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
-        if (!usedIds.has(synId)) {
-          usedIds.add(synId);
-          result.push({ id: synId, name: target, slug: target.toLowerCase() });
-        }
-      }
-    }
-
-    for (const g of fromDb) {
-      if (!usedIds.has(g.id)) {
-        usedIds.add(g.id);
-        result.push(g);
-      }
-    }
-
-    return result;
   }, [dbGenres]);
 
-  // Merge DB artists from onboarding_data + catalogArtists prop so real artist pictures are always available
+  const orderedGenres = useMemo(() => {
+    const priority = [
+      'Afrobeats', 'R&B', 'Rock', 'Afropop', 'Pop', 'Country',
+      'Jazz', 'Gospel', 'Reggae', 'Electronic', 'Amapiano', 'Rap & Hip-Hop'
+    ];
+    const map = new Map<string, { id: string; name: string; slug: string }>();
+    effectiveGenres.forEach((g) => map.set(g.name.toLowerCase(), g));
+
+    const result: Array<{ id: string; name: string; slug: string }> = [];
+    priority.forEach((name) => {
+      const match = map.get(name.toLowerCase());
+      if (match) {
+        result.push(match);
+        map.delete(name.toLowerCase());
+      } else {
+        result.push({ id: `genre_${name.toLowerCase().replace(/[^a-z0-9]/g, '_')}`, name, slug: name.toLowerCase() });
+      }
+    });
+
+    map.forEach((g) => result.push(g));
+    return result.slice(0, 12);
+  }, [effectiveGenres]);
+
+  // Combine database artists with catalog artists
+  const allArtists = useMemo(() => {
+    const map = new Map<string, { id: string; name: string; avatar_url: string }>();
+
+    dbArtists.forEach((a) => {
+      if (a && a.id) {
+        map.set(a.id, {
+          id: a.id,
+          name: a.name,
+          avatar_url: resolveArtworkUrl(a.avatar_url, a.name, 'artist'),
+        });
+      }
+    });
+
+    catalogArtists.forEach((a) => {
+      if (a && a.id && !map.has(a.id)) {
+        map.set(a.id, {
+          id: a.id,
+          name: a.name,
+          avatar_url: resolveArtworkUrl(a.avatar_url, a.name, 'artist'),
+        });
+      }
+    });
+
+    return Array.from(map.values());
+  }, [dbArtists, catalogArtists]);
+
+  // Filter artists by search query (fit up to 9 in single viewport)
   const displayArtists = useMemo(() => {
-    const list: Array<{ id: string; name: string; avatar_url: string }> = [];
-    const seen = new Set<string>();
+    const list = !artistSearchQuery.trim()
+      ? allArtists
+      : allArtists.filter((a) => a.name.toLowerCase().includes(artistSearchQuery.toLowerCase()));
+    return list.slice(0, 9);
+  }, [allArtists, artistSearchQuery]);
 
-    for (const a of dbArtists) {
-      if (!a.id || seen.has(a.id)) continue;
-      seen.add(a.id);
-      list.push({
-        id: a.id,
-        name: a.name,
-        avatar_url: resolveArtworkUrl(a.avatar_url, 'artist', a.name),
-      });
-    }
-
-    for (const ca of catalogArtists) {
-      if (!ca.id || seen.has(ca.id)) continue;
-      seen.add(ca.id);
-      list.push({
-        id: ca.id,
-        name: ca.name,
-        avatar_url: resolveArtworkUrl(ca.avatarUrl, 'artist', ca.name),
-      });
-    }
-
-    const q = artistSearchQuery.trim().toLowerCase();
-    if (!q) return list;
-    return list.filter((a) => a.name.toLowerCase().includes(q));
-  }, [dbArtists, catalogArtists, artistSearchQuery]);
-
-  if (!isOpen) return null;
-
-  // Toggle genre selection & persist to backend if logged in
   const handleToggleGenre = (genreName: string) => {
-    setSelectedGenres((prev) => {
-      const exists = prev.includes(genreName);
-      const next = exists ? prev.filter((g) => g !== genreName) : [...prev, genreName];
-      if (api.getToken()) {
-        api.saveOnboardingPreferences({ favorite_genres: next }).catch(() => {});
-      }
-      return next;
-    });
+    setSelectedGenres((prev) =>
+      prev.includes(genreName) ? prev.filter((g) => g !== genreName) : [...prev, genreName]
+    );
   };
 
-  // Toggle artist selection & persist to backend if logged in
   const handleToggleArtist = (artistId: string) => {
-    setSelectedArtistIds((prev) => {
-      const exists = prev.includes(artistId);
-      const next = exists ? prev.filter((id) => id !== artistId) : [...prev, artistId];
-      if (api.getToken()) {
-        api.saveOnboardingPreferences({ favorite_artist_ids: next }).catch(() => {});
-      }
-      return next;
-    });
+    setSelectedArtistIds((prev) =>
+      prev.includes(artistId) ? prev.filter((id) => id !== artistId) : [...prev, artistId]
+    );
   };
 
-  // Screen 2: Handle Sign Up / Sign In submission
+  // Auth submission
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setAuthLoading(true);
     setAuthError(null);
     setAuthSuccess(null);
 
-    if (authMode === 'signup') {
-      if (!email.trim() || !name.trim() || !password) {
-        setAuthError('Please fill in your email, name, and password.');
-        return;
-      }
-      if (password.length < 6) {
-        setAuthError('Password must be at least 6 characters.');
-        return;
-      }
-      if (password !== repeatPassword) {
-        setAuthError('Passwords do not match.');
-        return;
-      }
+    try {
+      if (authMode === 'signup') {
+        if (!email.trim() || !name.trim() || !password) {
+          throw new Error('Please fill in all required fields.');
+        }
+        if (password.length < 6) {
+          throw new Error('Password must be at least 6 characters long.');
+        }
+        if (password !== repeatPassword) {
+          throw new Error('Passwords do not match. Please re-enter.');
+        }
 
-      setAuthLoading(true);
-      try {
         const cleanUsername =
-          name
-            .trim()
-            .toLowerCase()
-            .replace(/[^a-z0-9_]/g, '') ||
-          email
-            .split('@')[0]
-            .toLowerCase()
-            .replace(/[^a-z0-9_]/g, '');
+          name.trim().replace(/[^a-zA-Z0-9_]/g, '').toLowerCase() ||
+          email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '').toLowerCase();
 
         const res = await api.register({
           email: email.trim(),
-          username: `${cleanUsername}${Math.floor(10 + Math.random() * 89)}`,
+          username: cleanUsername,
           password,
           display_name: name.trim(),
-          country: (country || 'NG').toUpperCase(),
+          country: country || undefined,
         });
 
-        if (res && res.user) {
+        if (res.user) {
           onAuthenticated(res.user);
           setStep(3);
+        } else {
+          throw new Error(res.message || 'Registration succeeded, please sign in.');
         }
-      } catch (err: any) {
-        setAuthError(err?.message || 'Registration failed. Please verify your details.');
-      } finally {
-        setAuthLoading(false);
-      }
-    } else if (authMode === 'signin') {
-      if (!email.trim() || !password) {
-        setAuthError('Please enter your email and password.');
-        return;
-      }
-      setAuthLoading(true);
-      try {
+      } else if (authMode === 'signin') {
+        if (!email.trim() || !password) {
+          throw new Error('Please enter both email and password.');
+        }
+
         const res = await api.login(email.trim(), password);
-        if (res && res.user) {
-          if (Array.isArray(res.user.favorite_genres) && res.user.favorite_genres.length > 0) {
-            setSelectedGenres((prev) => Array.from(new Set([...prev, ...res.user.favorite_genres])));
-          }
-          if (Array.isArray(res.user.favorite_artist_ids) && res.user.favorite_artist_ids.length > 0) {
-            setSelectedArtistIds((prev) => Array.from(new Set([...prev, ...res.user.favorite_artist_ids])));
-          }
+
+        if (res.user) {
           onAuthenticated(res.user);
+          if (res.user.favorite_genres && res.user.favorite_genres.length > 0) {
+            setSelectedGenres(res.user.favorite_genres);
+          }
+          if (res.user.favorite_artist_ids && res.user.favorite_artist_ids.length > 0) {
+            setSelectedArtistIds(res.user.favorite_artist_ids);
+          }
           setStep(3);
+        } else {
+          throw new Error(res.message || 'Login failed. Please check your credentials.');
         }
-      } catch (err: any) {
-        setAuthError(err?.message || 'Invalid email or password.');
-      } finally {
-        setAuthLoading(false);
       }
+    } catch (err: any) {
+      setAuthError(err?.message || 'Authentication error. Please try again.');
+    } finally {
+      setAuthLoading(false);
     }
   };
 
-  // Screen 5: Handle Opt In & Terms Acceptance
-  const handleOptInComplete = async () => {
-    setFinalError(null);
-    if (!termsAcceptedChecked) {
-      setFinalError('Please accept the Terms and Conditions and Privacy Policy to continue.');
-      return;
-    }
-
+  // Final opt-in & terms acceptance
+  const handleFinalOptIn = async () => {
     setSavingFinal(true);
+    setFinalError(null);
+
     try {
-      const termsVer = legalData?.terms_version || '2026.10';
-      const privVer = legalData?.privacy_version || '2026.10';
       let updatedUser = currentUser;
 
-      if (api.getToken()) {
-        const res = await api.acceptTerms({
-          accepted: true,
-          terms_version: termsVer,
-          privacy_version: privVer,
-          favorite_genres: selectedGenres,
-          favorite_artist_ids: selectedArtistIds,
-        });
-        if (res && res.user) {
-          updatedUser = res.user;
-          onAuthenticated(res.user);
+      if (currentUser) {
+        try {
+          const prefRes = await api.saveOnboardingPreferences({
+            favorite_genres: selectedGenres,
+            favorite_artist_ids: selectedArtistIds,
+            completed: false,
+          });
+          if (prefRes.user) updatedUser = prefRes.user;
+        } catch (e) {
+          console.warn('Could not save onboarding preferences to server:', e);
+        }
+
+        try {
+          const termsRes = await api.acceptTerms({
+            accepted: true,
+            terms_version: legalData?.terms_version || '2026.10',
+            privacy_version: legalData?.privacy_version || '2026.10',
+          });
+          if (termsRes.user) updatedUser = termsRes.user;
+        } catch (e) {
+          console.warn('Could not save terms acceptance to server:', e);
         }
       }
+
+      try {
+        localStorage.removeItem(STORAGE_STEP_KEY);
+        localStorage.removeItem(STORAGE_AUTH_MODE_KEY);
+      } catch {}
 
       onComplete({
         user: updatedUser,
@@ -510,17 +476,19 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
     }
   };
 
+  if (!isOpen) return null;
+
   return (
-    <div className="fixed inset-0 z-[150] bg-[#BDB9AD] text-[#0D0D0C] overflow-y-auto overflow-x-hidden select-none font-sans">
-      <div className="min-h-screen w-full max-w-[440px] mx-auto flex flex-col justify-between px-6 pt-5 pb-8 relative">
+    <div className="fixed inset-0 z-[150] h-[100dvh] w-full bg-[#BDB9AD] text-[#0D0D0C] overflow-hidden select-none font-sans">
+      <div className="h-full w-full max-w-[440px] mx-auto flex flex-col justify-between px-5 sm:px-6 py-4 sm:py-6 overflow-hidden relative">
         {/* =========================================================
-            SCREEN 1: WELCOME
+            SCREEN 1: WELCOME (Single-viewport, 2 artist cutouts)
            ========================================================= */}
         {step === 1 && (
-          <div className="flex-1 flex flex-col justify-between min-h-[calc(100vh-52px)]">
-            {/* Top Bar: Left F logo, Right Skip */}
-            <div className="flex items-center justify-between pt-1">
-              <FlontmieGeometricMark className="w-6 h-7" />
+          <div className="h-full flex flex-col justify-between overflow-hidden">
+            {/* Top Bar: Left Geometric F Mark, Right Skip */}
+            <div className="flex items-center justify-between shrink-0">
+              <FlontmieGeometricMark className="w-6 h-7 text-[#080808]" />
               <button
                 type="button"
                 onClick={onSkipToHome}
@@ -530,18 +498,23 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
               </button>
             </div>
 
-            {/* Center Overlapping Scalloped Artist Cutouts */}
-            <div className="my-auto py-2 -mx-6 flex items-center justify-center">
+            {/* Center: Only 2 Individually Positioned Artist Cutout Elements */}
+            <div className="relative flex-1 min-h-0 w-full max-w-[360px] mx-auto my-2 select-none pointer-events-none">
               <img
-                src="/assets/aistudio/onboarding_hero_collage.jpg"
-                alt="Flontmie Featured Artists"
-                className="w-full max-w-[430px] h-auto object-contain pointer-events-none"
+                src="/assets/aistudio/artist_single_dreads.jpg"
+                alt="Featured Artist"
+                className="absolute top-[6%] left-[2%] w-[48%] max-w-[185px] max-h-[58%] object-contain z-10"
+              />
+              <img
+                src="/assets/aistudio/artist_single_davido.jpg"
+                alt="Davido"
+                className="absolute bottom-[4%] right-[2%] w-[48%] max-w-[185px] max-h-[58%] object-contain z-20"
               />
             </div>
 
-            {/* Bottom Headline, Tagline & Black Get Started Button */}
-            <div className="pt-2 pb-2">
-              <h1 className="text-[28px] leading-[1.18] tracking-tight text-[#0B0B0A]">
+            {/* Bottom Headline, Tagline & Solid Black Get Started Button */}
+            <div className="shrink-0 pt-1 pb-1">
+              <h1 className="text-[24px] sm:text-[28px] leading-[1.15] tracking-tight text-[#0B0B0A]">
                 <span className="font-extrabold">Elevate</span>{' '}
                 <span className="font-normal">Every</span>
                 <br />
@@ -549,15 +522,15 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
                 <span className="font-extrabold">Music</span>
               </h1>
 
-              <p className="text-[13px] text-[#22211E] mt-3.5 font-normal">
-                Every Bet Tells Your Story
+              <p className="text-[13px] text-[#22211E] mt-2 sm:mt-3 font-normal">
+                Every Beat Tells Your Story.
               </p>
 
-              <div className="mt-7 px-3">
+              <div className="mt-4 sm:mt-6 px-2">
                 <button
                   type="button"
                   onClick={() => setStep(2)}
-                  className="w-full py-3.5 bg-[#080808] hover:bg-[#1a1a1a] active:scale-[0.99] text-white text-[13px] font-medium tracking-wide transition-all cursor-pointer shadow-sm"
+                  className="w-full py-3 sm:py-3.5 bg-[#080808] hover:bg-[#1a1a1a] active:scale-[0.99] text-white text-[13px] font-medium tracking-wide transition-all cursor-pointer shadow-sm"
                 >
                   Get Started
                 </button>
@@ -567,12 +540,11 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
         )}
 
         {/* =========================================================
-            SCREEN 2: AUTHENTICATION (SIGN UP / SIGN IN / FORGOT PASSWORD)
+            SCREEN 2: AUTHENTICATION (Single-viewport Sign Up & Sign In)
            ========================================================= */}
         {step === 2 && (
-          <div className="flex-1 flex flex-col min-h-[calc(100vh-52px)]">
-            {/* Top Bar: Left Back Chevron, Centered F Logo */}
-            <div className="relative flex items-center justify-center pt-1 pb-6">
+          <div className="h-full flex flex-col justify-between overflow-hidden">
+            <div className="relative flex items-center justify-center shrink-0 pb-2">
               <button
                 type="button"
                 onClick={() => setStep(1)}
@@ -581,25 +553,24 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
               >
                 <ChevronLeft className="w-6 h-6 stroke-[1.75]" />
               </button>
-              <FlontmieGeometricMark className="w-6 h-7" />
+              <FlontmieGeometricMark className="w-6 h-7 text-[#080808]" />
             </div>
 
-            {/* Main Auth Card Container */}
-            <div className="my-auto py-4">
-              <div className="rounded-[34px] bg-[#B6B2A6] shadow-[0_14px_38px_rgba(0,0,0,0.09)] px-5 py-7 border border-black/[0.04]">
+            <div className="my-auto w-full shrink-0">
+              <div className="rounded-[28px] sm:rounded-[34px] bg-[#B6B2A6] shadow-[0_14px_38px_rgba(0,0,0,0.09)] px-4 sm:px-5 py-4 sm:py-6 border border-black/[0.04]">
                 {authMode === 'signup' && (
                   <>
-                    <h2 className="text-[16px] font-bold text-[#0E0E0D] mb-4 px-0.5">
+                    <h2 className="text-[15px] sm:text-[16px] font-bold text-[#0E0E0D] mb-3 px-0.5">
                       Sign Up
                     </h2>
 
                     {authError && (
-                      <div className="mb-3.5 px-3 py-2 bg-red-900/15 border border-red-800/40 text-red-950 text-xs rounded">
+                      <div className="mb-2.5 px-3 py-1.5 bg-red-900/15 border border-red-800/40 text-red-950 text-xs rounded">
                         {authError}
                       </div>
                     )}
 
-                    <form onSubmit={handleAuthSubmit} className="space-y-3.5">
+                    <form onSubmit={handleAuthSubmit} className="space-y-2.5 sm:space-y-3">
                       <input
                         type="email"
                         required
@@ -607,7 +578,7 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
                         onChange={(e) => setEmail(e.target.value)}
                         placeholder="Email"
                         autoComplete="email"
-                        className="w-full px-3.5 py-3 bg-transparent border border-[#625F57] text-[13px] text-[#111] placeholder-[#36342F] focus:outline-none focus:border-black"
+                        className="w-full px-3.5 py-2.5 bg-transparent border border-[#625F57] text-[13px] text-[#111] placeholder-[#36342F] focus:outline-none focus:border-black"
                       />
 
                       <input
@@ -617,7 +588,7 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
                         onChange={(e) => setName(e.target.value)}
                         placeholder="Name"
                         autoComplete="name"
-                        className="w-full px-3.5 py-3 bg-transparent border border-[#625F57] text-[13px] text-[#111] placeholder-[#36342F] focus:outline-none focus:border-black"
+                        className="w-full px-3.5 py-2.5 bg-transparent border border-[#625F57] text-[13px] text-[#111] placeholder-[#36342F] focus:outline-none focus:border-black"
                       />
 
                       <div className="relative">
@@ -625,7 +596,7 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
                           value={country}
                           onChange={(e) => setCountry(e.target.value)}
                           aria-label="Country"
-                          className="w-full px-3.5 py-3 bg-transparent border border-[#625F57] text-[13px] text-[#111] appearance-none focus:outline-none focus:border-black cursor-pointer"
+                          className="w-full px-3.5 py-2.5 bg-transparent border border-[#625F57] text-[13px] text-[#111] appearance-none focus:outline-none focus:border-black cursor-pointer"
                         >
                           <option value="" className="bg-[#BDB9AD] text-[#36342F]">
                             Country
@@ -658,7 +629,7 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
                         onChange={(e) => setPassword(e.target.value)}
                         placeholder="Password"
                         autoComplete="new-password"
-                        className="w-full px-3.5 py-3 bg-transparent border border-[#625F57] text-[13px] text-[#111] placeholder-[#36342F] focus:outline-none focus:border-black"
+                        className="w-full px-3.5 py-2.5 bg-transparent border border-[#625F57] text-[13px] text-[#111] placeholder-[#36342F] focus:outline-none focus:border-black"
                       />
 
                       <input
@@ -668,14 +639,14 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
                         onChange={(e) => setRepeatPassword(e.target.value)}
                         placeholder="Repeat Password"
                         autoComplete="new-password"
-                        className="w-full px-3.5 py-3 bg-transparent border border-[#625F57] text-[13px] text-[#111] placeholder-[#36342F] focus:outline-none focus:border-black"
+                        className="w-full px-3.5 py-2.5 bg-transparent border border-[#625F57] text-[13px] text-[#111] placeholder-[#36342F] focus:outline-none focus:border-black"
                       />
 
                       <div className="pt-1">
                         <button
                           type="submit"
                           disabled={authLoading}
-                          className="px-7 py-3 bg-[#080808] hover:bg-[#1d1d1d] disabled:opacity-60 text-white text-[13px] font-medium transition-all cursor-pointer inline-flex items-center gap-2"
+                          className="px-7 py-2.5 bg-[#080808] hover:bg-[#1d1d1d] disabled:opacity-60 text-white text-[13px] font-medium transition-all cursor-pointer inline-flex items-center gap-2"
                         >
                           {authLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                           <span>Sign Up</span>
@@ -687,23 +658,23 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
 
                 {authMode === 'signin' && (
                   <>
-                    <h2 className="text-[16px] font-bold text-[#0E0E0D] mb-4 px-0.5">
+                    <h2 className="text-[15px] sm:text-[16px] font-bold text-[#0E0E0D] mb-3 px-0.5">
                       Sign In
                     </h2>
 
                     {authError && (
-                      <div className="mb-3.5 px-3 py-2 bg-red-900/15 border border-red-800/40 text-red-950 text-xs rounded">
+                      <div className="mb-2.5 px-3 py-1.5 bg-red-900/15 border border-red-800/40 text-red-950 text-xs rounded">
                         {authError}
                       </div>
                     )}
 
                     {authSuccess && (
-                      <div className="mb-3.5 px-3 py-2 bg-emerald-900/15 border border-emerald-800/40 text-emerald-950 text-xs rounded">
+                      <div className="mb-2.5 px-3 py-1.5 bg-emerald-900/15 border border-emerald-800/40 text-emerald-950 text-xs rounded">
                         {authSuccess}
                       </div>
                     )}
 
-                    <form onSubmit={handleAuthSubmit} className="space-y-3.5">
+                    <form onSubmit={handleAuthSubmit} className="space-y-3">
                       <input
                         type="email"
                         required
@@ -711,7 +682,7 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
                         onChange={(e) => setEmail(e.target.value)}
                         placeholder="Email"
                         autoComplete="email"
-                        className="w-full px-3.5 py-3 bg-transparent border border-[#625F57] text-[13px] text-[#111] placeholder-[#36342F] focus:outline-none focus:border-black"
+                        className="w-full px-3.5 py-2.5 bg-transparent border border-[#625F57] text-[13px] text-[#111] placeholder-[#36342F] focus:outline-none focus:border-black"
                       />
 
                       <input
@@ -721,14 +692,14 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
                         onChange={(e) => setPassword(e.target.value)}
                         placeholder="Password"
                         autoComplete="current-password"
-                        className="w-full px-3.5 py-3 bg-transparent border border-[#625F57] text-[13px] text-[#111] placeholder-[#36342F] focus:outline-none focus:border-black"
+                        className="w-full px-3.5 py-2.5 bg-transparent border border-[#625F57] text-[13px] text-[#111] placeholder-[#36342F] focus:outline-none focus:border-black"
                       />
 
                       <div className="pt-1 flex items-end justify-between gap-3">
                         <button
                           type="submit"
                           disabled={authLoading}
-                          className="px-8 py-3 bg-[#080808] hover:bg-[#1d1d1d] disabled:opacity-60 text-white text-[13px] font-medium transition-all cursor-pointer inline-flex items-center gap-2"
+                          className="px-8 py-2.5 bg-[#080808] hover:bg-[#1d1d1d] disabled:opacity-60 text-white text-[13px] font-medium transition-all cursor-pointer inline-flex items-center gap-2"
                         >
                           {authLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                           <span>Sign In</span>
@@ -750,32 +721,32 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
 
                 {authMode === 'forgot' && (
                   <>
-                    <h2 className="text-[16px] font-bold text-[#0E0E0D] mb-2 px-0.5">
+                    <h2 className="text-[15px] sm:text-[16px] font-bold text-[#0E0E0D] mb-1.5 px-0.5">
                       Forgot Password
                     </h2>
-                    <p className="text-xs text-[#33312C] mb-4">
+                    <p className="text-xs text-[#33312C] mb-3">
                       Enter your account email to request a password reset code.
                     </p>
 
                     {authError && (
-                      <div className="mb-3 px-3 py-2 bg-red-900/15 border border-red-800/40 text-red-950 text-xs rounded">
+                      <div className="mb-2.5 px-3 py-1.5 bg-red-900/15 border border-red-800/40 text-red-950 text-xs rounded">
                         {authError}
                       </div>
                     )}
 
                     {authSuccess && (
-                      <div className="mb-3 px-3 py-2 bg-emerald-900/15 border border-emerald-800/40 text-emerald-950 text-xs rounded">
+                      <div className="mb-2.5 px-3 py-1.5 bg-emerald-900/15 border border-emerald-800/40 text-emerald-950 text-xs rounded">
                         {authSuccess}
                       </div>
                     )}
 
-                    <div className="space-y-3.5">
+                    <div className="space-y-2.5">
                       <input
                         type="email"
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
                         placeholder="Email"
-                        className="w-full px-3.5 py-3 bg-transparent border border-[#625F57] text-[13px] text-[#111] placeholder-[#36342F] focus:outline-none focus:border-black"
+                        className="w-full px-3.5 py-2.5 bg-transparent border border-[#625F57] text-[13px] text-[#111] placeholder-[#36342F] focus:outline-none focus:border-black"
                       />
 
                       {resetCodeSent && (
@@ -785,14 +756,14 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
                             value={resetCode}
                             onChange={(e) => setResetCode(e.target.value)}
                             placeholder="Reset Code"
-                            className="w-full px-3.5 py-3 bg-transparent border border-[#625F57] text-[13px] text-[#111] placeholder-[#36342F] focus:outline-none focus:border-black uppercase"
+                            className="w-full px-3.5 py-2.5 bg-transparent border border-[#625F57] text-[13px] text-[#111] placeholder-[#36342F] focus:outline-none focus:border-black uppercase"
                           />
                           <input
                             type="password"
                             value={newResetPassword}
                             onChange={(e) => setNewResetPassword(e.target.value)}
                             placeholder="New Password"
-                            className="w-full px-3.5 py-3 bg-transparent border border-[#625F57] text-[13px] text-[#111] placeholder-[#36342F] focus:outline-none focus:border-black"
+                            className="w-full px-3.5 py-2.5 bg-transparent border border-[#625F57] text-[13px] text-[#111] placeholder-[#36342F] focus:outline-none focus:border-black"
                           />
                         </>
                       )}
@@ -819,7 +790,7 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
                                 setAuthLoading(false);
                               }
                             }}
-                            className="px-6 py-3 bg-[#080808] text-white text-[13px] font-medium cursor-pointer"
+                            className="px-5 py-2.5 bg-[#080808] text-white text-[13px] font-medium cursor-pointer"
                           >
                             Send Reset Code
                           </button>
@@ -845,7 +816,7 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
                                 setAuthLoading(false);
                               }
                             }}
-                            className="px-6 py-3 bg-[#080808] text-white text-[13px] font-medium cursor-pointer"
+                            className="px-5 py-2.5 bg-[#080808] text-white text-[13px] font-medium cursor-pointer"
                           >
                             Reset Password
                           </button>
@@ -867,9 +838,8 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
                 )}
               </div>
 
-              {/* Links Beneath Auth Card */}
               {authMode === 'signup' && (
-                <div className="mt-7 text-center">
+                <div className="mt-4 text-center">
                   <p className="text-[12px] text-[#22211E]">
                     Already Have An Account?{' '}
                     <button
@@ -888,7 +858,7 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
               )}
 
               {authMode === 'signin' && (
-                <div className="mt-6 text-center flex flex-col items-center">
+                <div className="mt-4 text-center flex flex-col items-center gap-3">
                   <button
                     type="button"
                     onClick={() => {
@@ -901,7 +871,7 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
                     Forgot Password
                   </button>
 
-                  <p className="text-[12px] text-[#22211E] mt-28">
+                  <p className="text-[12px] text-[#22211E]">
                     Need An Account?{' '}
                     <button
                       type="button"
@@ -918,16 +888,17 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
                 </div>
               )}
             </div>
+
+            <div className="shrink-0 h-2" />
           </div>
         )}
 
         {/* =========================================================
-            SCREEN 3: CHOOSE YOUR INTEREST
+            SCREEN 3: CHOOSE YOUR MUSIC INTEREST (Single-viewport, no scroll)
            ========================================================= */}
         {step === 3 && (
-          <div className="flex-1 flex flex-col min-h-[calc(100vh-52px)]">
-            {/* Top Bar: Left Back Chevron, Center F Logo, Right Skip */}
-            <div className="relative flex items-center justify-between pt-1 pb-4">
+          <div className="h-full flex flex-col justify-between overflow-hidden">
+            <div className="relative flex items-center justify-between shrink-0 pb-1">
               <button
                 type="button"
                 onClick={() => setStep(2)}
@@ -936,7 +907,7 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
               >
                 <ChevronLeft className="w-6 h-6 stroke-[1.75]" />
               </button>
-              <FlontmieGeometricMark className="w-6 h-7" />
+              <FlontmieGeometricMark className="w-6 h-7 text-[#080808]" />
               <button
                 type="button"
                 onClick={() => setStep(4)}
@@ -946,9 +917,8 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
               </button>
             </div>
 
-            {/* Heading */}
-            <div className="mt-3 mb-4">
-              <h1 className="text-[28px] leading-[1.16] tracking-tight text-[#0B0B0A]">
+            <div className="shrink-0 mt-1 mb-2">
+              <h1 className="text-[22px] sm:text-[26px] leading-[1.14] tracking-tight text-[#0B0B0A]">
                 <span className="font-normal">Choose </span>
                 <span className="font-extrabold">your Music</span>
                 <br />
@@ -956,149 +926,52 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
               </h1>
             </div>
 
-            {/* Staggered Decorative Genre Badges Grid Matching Reference Screenshot */}
-            <div className="flex-1 flex flex-col justify-center gap-1 py-1">
-              {/* Row 1: R&B (left sm), Afrobeats (center lg), Rock (right sm) */}
-              <div className="grid grid-cols-3 items-start gap-1">
-                {orderedGenres.slice(0, 3).map((g, idx) => {
+            {/* Circular Crop Images Representing Each Genre Accompanied by Genre Name (Fits in 1 viewport without scroll) */}
+            <div className="flex-1 min-h-0 flex items-center justify-center overflow-hidden py-1">
+              <div className="w-full grid grid-cols-3 gap-x-2 gap-y-2.5 sm:gap-y-3.5 items-center justify-items-center">
+                {orderedGenres.map((g) => {
                   const isSelected = selectedGenres.includes(g.name);
-                  const sizeClass =
-                    idx === 1
-                      ? 'w-[138px] h-[138px] mt-3'
-                      : 'w-[92px] h-[92px]';
+                  const genreImgUrl = getGenreVisual(g.name);
+
                   return (
-                    <div key={g.id} className="flex justify-center">
+                    <div key={g.id} className="flex flex-col items-center w-full">
                       <button
                         type="button"
                         onClick={() => handleToggleGenre(g.name)}
                         aria-pressed={isSelected}
-                        className={`relative ${sizeClass} flex items-center justify-center transition-transform active:scale-95 cursor-pointer group`}
+                        className="relative group cursor-pointer transition-transform active:scale-95 flex flex-col items-center"
                       >
                         <div
-                          className={`w-full h-full relative flex items-center justify-center transition-all ${
-                            isSelected ? 'scale-105 brightness-95' : 'hover:scale-[1.03]'
+                          className={`w-[60px] h-[60px] sm:w-[72px] sm:h-[72px] rounded-full overflow-hidden relative border-2 transition-all ${
+                            isSelected
+                              ? 'border-[#080808] ring-2 ring-black/25 scale-105 shadow-md'
+                              : 'border-black/15 hover:border-black/40'
                           }`}
-                          style={{ clipPath: SCALLOP_CLIP_POLYGON }}
                         >
-                          <SkyHillsIllustration />
-                          <span className="relative z-10 px-2 text-center font-extrabold text-[#0B0B0A] text-[12px] leading-tight">
-                            {g.name}
-                          </span>
+                          <img
+                            src={genreImgUrl}
+                            alt={g.name}
+                            referrerPolicy="no-referrer"
+                            onError={(e) => handleImageError(e, g.name, 'album')}
+                            className={`w-full h-full object-cover transition-all duration-300 ${
+                              isSelected ? 'scale-110 brightness-75' : 'group-hover:scale-105'
+                            }`}
+                          />
+                          {isSelected && (
+                            <div className="absolute inset-0 bg-black/35 flex items-center justify-center">
+                              <span className="w-5 h-5 rounded-full bg-[#080808] text-white flex items-center justify-center shadow-lg">
+                                <Check className="w-3 h-3 stroke-[3]" />
+                              </span>
+                            </div>
+                          )}
                         </div>
-                        {isSelected && (
-                          <span className="absolute top-1.5 right-1.5 z-20 w-5 h-5 rounded-full bg-[#080808] text-white flex items-center justify-center shadow-md">
-                            <Check className="w-3 h-3 stroke-[3]" />
-                          </span>
-                        )}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Row 2: Afropop (left md), Pop (right md) */}
-              <div className="flex items-center justify-between px-1 -mt-5">
-                {orderedGenres.slice(3, 5).map((g) => {
-                  const isSelected = selectedGenres.includes(g.name);
-                  return (
-                    <button
-                      key={g.id}
-                      type="button"
-                      onClick={() => handleToggleGenre(g.name)}
-                      aria-pressed={isSelected}
-                      className="relative w-[114px] h-[114px] flex items-center justify-center transition-transform active:scale-95 cursor-pointer"
-                    >
-                      <div
-                        className={`w-full h-full relative flex items-center justify-center transition-all ${
-                          isSelected ? 'scale-105 brightness-95' : 'hover:scale-[1.03]'
-                        }`}
-                        style={{ clipPath: SCALLOP_CLIP_POLYGON }}
-                      >
-                        <SkyHillsIllustration />
-                        <span className="relative z-10 px-2 text-center font-extrabold text-[#0B0B0A] text-[12px] leading-tight">
+                        <span
+                          className={`mt-1 text-center text-[11px] sm:text-[12px] leading-tight max-w-[86px] truncate transition-colors ${
+                            isSelected ? 'text-[#080808] font-bold' : 'text-[#24231F] font-semibold'
+                          }`}
+                        >
                           {g.name}
                         </span>
-                      </div>
-                      {isSelected && (
-                        <span className="absolute top-1.5 right-1.5 z-20 w-5 h-5 rounded-full bg-[#080808] text-white flex items-center justify-center shadow-md">
-                          <Check className="w-3 h-3 stroke-[3]" />
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Row 3: Country (left sm), Jazz (center lg), Gospel (right sm) */}
-              <div className="grid grid-cols-3 items-center gap-1 -mt-4">
-                {orderedGenres.slice(5, 8).map((g, idx) => {
-                  const isSelected = selectedGenres.includes(g.name);
-                  const sizeClass =
-                    idx === 1
-                      ? 'w-[140px] h-[140px]'
-                      : 'w-[86px] h-[86px] mt-4';
-                  return (
-                    <div key={g.id} className="flex justify-center">
-                      <button
-                        type="button"
-                        onClick={() => handleToggleGenre(g.name)}
-                        aria-pressed={isSelected}
-                        className={`relative ${sizeClass} flex items-center justify-center transition-transform active:scale-95 cursor-pointer`}
-                      >
-                        <div
-                          className={`w-full h-full relative flex items-center justify-center transition-all ${
-                            isSelected ? 'scale-105 brightness-95' : 'hover:scale-[1.03]'
-                          }`}
-                          style={{ clipPath: SCALLOP_CLIP_POLYGON }}
-                        >
-                          <SkyHillsIllustration />
-                          <span className="relative z-10 px-2 text-center font-extrabold text-[#0B0B0A] text-[12px] leading-tight">
-                            {g.name}
-                          </span>
-                        </div>
-                        {isSelected && (
-                          <span className="absolute top-1.5 right-1.5 z-20 w-5 h-5 rounded-full bg-[#080808] text-white flex items-center justify-center shadow-md">
-                            <Check className="w-3 h-3 stroke-[3]" />
-                          </span>
-                        )}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Row 4: Reggae (left md-lg), Electronic (center md), + additional genres */}
-              <div className="grid grid-cols-3 items-end gap-1 -mt-2">
-                {orderedGenres.slice(8, 11).map((g, idx) => {
-                  const isSelected = selectedGenres.includes(g.name);
-                  const sizeClass =
-                    idx === 1
-                      ? 'w-[110px] h-[110px] translate-y-2'
-                      : 'w-[118px] h-[118px]';
-                  return (
-                    <div key={g.id} className="flex justify-center">
-                      <button
-                        type="button"
-                        onClick={() => handleToggleGenre(g.name)}
-                        aria-pressed={isSelected}
-                        className={`relative ${sizeClass} flex items-center justify-center transition-transform active:scale-95 cursor-pointer`}
-                      >
-                        <div
-                          className={`w-full h-full relative flex items-center justify-center transition-all ${
-                            isSelected ? 'scale-105 brightness-95' : 'hover:scale-[1.03]'
-                          }`}
-                          style={{ clipPath: SCALLOP_CLIP_POLYGON }}
-                        >
-                          <SkyHillsIllustration />
-                          <span className="relative z-10 px-2 text-center font-extrabold text-[#0B0B0A] text-[12px] leading-tight">
-                            {g.name}
-                          </span>
-                        </div>
-                        {isSelected && (
-                          <span className="absolute top-1.5 right-1.5 z-20 w-5 h-5 rounded-full bg-[#080808] text-white flex items-center justify-center shadow-md">
-                            <Check className="w-3 h-3 stroke-[3]" />
-                          </span>
-                        )}
                       </button>
                     </div>
                   );
@@ -1107,11 +980,11 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
             </div>
 
             {/* Continue CTA */}
-            <div className="pt-5">
+            <div className="shrink-0 pt-2">
               <button
                 type="button"
                 onClick={() => setStep(4)}
-                className="w-full py-3.5 bg-[#080808] hover:bg-[#1d1d1d] text-white text-[13px] font-medium tracking-wide transition-all cursor-pointer"
+                className="w-full py-3 sm:py-3.5 bg-[#080808] hover:bg-[#1d1d1d] text-white text-[13px] font-medium tracking-wide transition-all cursor-pointer"
               >
                 {selectedGenres.length > 0
                   ? `Continue (${selectedGenres.length} selected)`
@@ -1122,12 +995,11 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
         )}
 
         {/* =========================================================
-            SCREEN 4: CHOOSE YOUR FAVS
+            SCREEN 4: CHOOSE YOUR FAVS (Single-viewport, no scroll)
            ========================================================= */}
         {step === 4 && (
-          <div className="flex-1 flex flex-col min-h-[calc(100vh-52px)]">
-            {/* Top Bar: Left Back Chevron, Center F Logo, Right Skip */}
-            <div className="relative flex items-center justify-between pt-1 pb-4">
+          <div className="h-full flex flex-col justify-between overflow-hidden">
+            <div className="relative flex items-center justify-between shrink-0 pb-1">
               <button
                 type="button"
                 onClick={() => setStep(3)}
@@ -1136,7 +1008,7 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
               >
                 <ChevronLeft className="w-6 h-6 stroke-[1.75]" />
               </button>
-              <FlontmieGeometricMark className="w-6 h-7" />
+              <FlontmieGeometricMark className="w-6 h-7 text-[#080808]" />
               <div className="flex items-center gap-3">
                 <button
                   type="button"
@@ -1157,23 +1029,21 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
               </div>
             </div>
 
-            {/* Heading */}
-            <div className="mt-2 mb-3">
-              <h1 className="text-[28px] leading-[1.16] tracking-tight text-[#0B0B0A]">
+            <div className="shrink-0 mt-1 mb-1.5">
+              <h1 className="text-[22px] sm:text-[26px] leading-[1.14] tracking-tight text-[#0B0B0A]">
                 <span className="font-normal">Choose </span>
                 <span className="font-extrabold">your Favs</span>
               </h1>
             </div>
 
-            {/* Optional Search Input */}
             {showArtistSearch && (
-              <div className="mb-3 relative">
+              <div className="shrink-0 mb-2 relative">
                 <input
                   type="text"
                   value={artistSearchQuery}
                   onChange={(e) => setArtistSearchQuery(e.target.value)}
                   placeholder="Search artists..."
-                  className="w-full px-3.5 py-2 bg-transparent border border-[#625F57] text-xs text-[#111] placeholder-[#36342F] focus:outline-none focus:border-black"
+                  className="w-full px-3 py-1.5 bg-transparent border border-[#625F57] text-xs text-[#111] placeholder-[#36342F] focus:outline-none focus:border-black"
                 />
                 {artistSearchQuery && (
                   <button
@@ -1187,19 +1057,18 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
               </div>
             )}
 
-            {/* Staggered Scalloped Artist-Card Grid Loading Real Artists & Display Pictures */}
-            <div className="flex-1 flex flex-col justify-center gap-2 py-1">
-              {/* Row 1: Top 2 Medium-Large Artist Badges */}
-              <div className="grid grid-cols-2 gap-4 px-2">
-                {displayArtists.slice(0, 2).map((artist) => {
+            {/* Artist Cards Grid Fitting cleanly in 1 viewport without scrolling */}
+            <div className="flex-1 min-h-0 flex items-center justify-center overflow-hidden py-1">
+              <div className="w-full grid grid-cols-3 gap-x-2 gap-y-2.5 sm:gap-y-3.5 items-center justify-items-center">
+                {displayArtists.map((artist) => {
                   const isSelected = selectedArtistIds.includes(artist.id);
                   return (
-                    <div key={artist.id} className="flex flex-col items-center">
+                    <div key={artist.id} className="flex flex-col items-center w-full">
                       <button
                         type="button"
                         onClick={() => handleToggleArtist(artist.id)}
                         aria-pressed={isSelected}
-                        className="relative w-[124px] h-[124px] flex items-center justify-center transition-transform active:scale-95 cursor-pointer group"
+                        className="relative w-[68px] h-[68px] sm:w-[82px] sm:h-[82px] flex items-center justify-center transition-transform active:scale-95 cursor-pointer group"
                       >
                         <div
                           className={`w-full h-full relative overflow-hidden flex items-center justify-center ${
@@ -1207,7 +1076,6 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
                           } transition-all`}
                           style={{ clipPath: SCALLOP_CLIP_POLYGON }}
                         >
-                          <SkyHillsIllustration />
                           {artist.avatar_url && (
                             <img
                               src={artist.avatar_url}
@@ -1219,173 +1087,25 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
                           )}
                         </div>
                         {isSelected && (
-                          <span className="absolute top-1.5 right-1.5 z-20 w-5 h-5 rounded-full bg-[#080808] text-white flex items-center justify-center shadow-md">
+                          <span className="absolute top-1 right-1 z-20 w-5 h-5 rounded-full bg-[#080808] text-white flex items-center justify-center shadow-md">
                             <Check className="w-3 h-3 stroke-[3]" />
                           </span>
                         )}
                       </button>
-                      <span className="mt-1 text-[11px] font-bold text-[#0B0B0A] text-center leading-tight truncate max-w-[120px]">
+                      <span className="mt-1 text-[11px] font-bold text-[#0B0B0A] text-center leading-tight truncate max-w-[92px]">
                         {artist.name}
                       </span>
                     </div>
                   );
                 })}
               </div>
-
-              {/* Row 2: 3 Staggered Artist Badges (Left md, Center lg elevated, Right md) */}
-              {displayArtists.length > 2 && (
-                <div className="grid grid-cols-3 items-end gap-1 -mt-2">
-                  {displayArtists.slice(2, 5).map((artist, idx) => {
-                    const isSelected = selectedArtistIds.includes(artist.id);
-                    const sizeClass =
-                      idx === 1
-                        ? 'w-[126px] h-[126px] -mt-4'
-                        : 'w-[96px] h-[96px]';
-                    return (
-                      <div key={artist.id} className="flex flex-col items-center">
-                        <button
-                          type="button"
-                          onClick={() => handleToggleArtist(artist.id)}
-                          aria-pressed={isSelected}
-                          className={`relative ${sizeClass} flex items-center justify-center transition-transform active:scale-95 cursor-pointer group`}
-                        >
-                          <div
-                            className={`w-full h-full relative overflow-hidden flex items-center justify-center ${
-                              isSelected ? 'scale-105' : 'group-hover:scale-[1.03]'
-                            } transition-all`}
-                            style={{ clipPath: SCALLOP_CLIP_POLYGON }}
-                          >
-                            <SkyHillsIllustration />
-                            {artist.avatar_url && (
-                              <img
-                                src={artist.avatar_url}
-                                alt={artist.name}
-                                referrerPolicy="no-referrer"
-                                onError={(e) => handleImageError(e, artist.name, 'artist')}
-                                className="absolute inset-0 w-full h-full object-cover"
-                              />
-                            )}
-                          </div>
-                          {isSelected && (
-                            <span className="absolute top-1 right-1 z-20 w-5 h-5 rounded-full bg-[#080808] text-white flex items-center justify-center shadow-md">
-                              <Check className="w-3 h-3 stroke-[3]" />
-                            </span>
-                          )}
-                        </button>
-                        <span className="mt-1 text-[11px] font-bold text-[#0B0B0A] text-center leading-tight truncate max-w-[110px]">
-                          {artist.name}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
-              {/* Row 3: 3 Staggered Artist Badges (Left sm, Center lg, Right sm) */}
-              {displayArtists.length > 5 && (
-                <div className="grid grid-cols-3 items-center gap-1">
-                  {displayArtists.slice(5, 8).map((artist, idx) => {
-                    const isSelected = selectedArtistIds.includes(artist.id);
-                    const sizeClass =
-                      idx === 1
-                        ? 'w-[128px] h-[128px]'
-                        : 'w-[84px] h-[84px]';
-                    return (
-                      <div key={artist.id} className="flex flex-col items-center">
-                        <button
-                          type="button"
-                          onClick={() => handleToggleArtist(artist.id)}
-                          aria-pressed={isSelected}
-                          className={`relative ${sizeClass} flex items-center justify-center transition-transform active:scale-95 cursor-pointer group`}
-                        >
-                          <div
-                            className={`w-full h-full relative overflow-hidden flex items-center justify-center ${
-                              isSelected ? 'scale-105' : 'group-hover:scale-[1.03]'
-                            } transition-all`}
-                            style={{ clipPath: SCALLOP_CLIP_POLYGON }}
-                          >
-                            <SkyHillsIllustration />
-                            {artist.avatar_url && (
-                              <img
-                                src={artist.avatar_url}
-                                alt={artist.name}
-                                referrerPolicy="no-referrer"
-                                onError={(e) => handleImageError(e, artist.name, 'artist')}
-                                className="absolute inset-0 w-full h-full object-cover"
-                              />
-                            )}
-                          </div>
-                          {isSelected && (
-                            <span className="absolute top-1 right-1 z-20 w-5 h-5 rounded-full bg-[#080808] text-white flex items-center justify-center shadow-md">
-                              <Check className="w-3 h-3 stroke-[3]" />
-                            </span>
-                          )}
-                        </button>
-                        <span className="mt-1 text-[11px] font-bold text-[#0B0B0A] text-center leading-tight truncate max-w-[110px]">
-                          {artist.name}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
-              {/* Row 4: Bottom 3 Artist Badges */}
-              {displayArtists.length > 8 && (
-                <div className="grid grid-cols-3 items-end gap-1">
-                  {displayArtists.slice(8, 11).map((artist, idx) => {
-                    const isSelected = selectedArtistIds.includes(artist.id);
-                    const sizeClass =
-                      idx === 1
-                        ? 'w-[98px] h-[98px]'
-                        : 'w-[108px] h-[108px]';
-                    return (
-                      <div key={artist.id} className="flex flex-col items-center">
-                        <button
-                          type="button"
-                          onClick={() => handleToggleArtist(artist.id)}
-                          aria-pressed={isSelected}
-                          className={`relative ${sizeClass} flex items-center justify-center transition-transform active:scale-95 cursor-pointer group`}
-                        >
-                          <div
-                            className={`w-full h-full relative overflow-hidden flex items-center justify-center ${
-                              isSelected ? 'scale-105' : 'group-hover:scale-[1.03]'
-                            } transition-all`}
-                            style={{ clipPath: SCALLOP_CLIP_POLYGON }}
-                          >
-                            <SkyHillsIllustration />
-                            {artist.avatar_url && (
-                              <img
-                                src={artist.avatar_url}
-                                alt={artist.name}
-                                referrerPolicy="no-referrer"
-                                onError={(e) => handleImageError(e, artist.name, 'artist')}
-                                className="absolute inset-0 w-full h-full object-cover"
-                              />
-                            )}
-                          </div>
-                          {isSelected && (
-                            <span className="absolute top-1 right-1 z-20 w-5 h-5 rounded-full bg-[#080808] text-white flex items-center justify-center shadow-md">
-                              <Check className="w-3 h-3 stroke-[3]" />
-                            </span>
-                          )}
-                        </button>
-                        <span className="mt-1 text-[11px] font-bold text-[#0B0B0A] text-center leading-tight truncate max-w-[110px]">
-                          {artist.name}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
             </div>
 
-            {/* Continue CTA */}
-            <div className="pt-4">
+            <div className="shrink-0 pt-2">
               <button
                 type="button"
                 onClick={() => setStep(5)}
-                className="w-full py-3.5 bg-[#080808] hover:bg-[#1d1d1d] text-white text-[13px] font-medium tracking-wide transition-all cursor-pointer"
+                className="w-full py-3 sm:py-3.5 bg-[#080808] hover:bg-[#1d1d1d] text-white text-[13px] font-medium tracking-wide transition-all cursor-pointer"
               >
                 {selectedArtistIds.length > 0
                   ? `Continue (${selectedArtistIds.length} selected)`
@@ -1396,12 +1116,11 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
         )}
 
         {/* =========================================================
-            SCREEN 5: ACCEPT TERMS & CONDITIONS (OPT IN)
+            SCREEN 5: OPT IN (Single-viewport, 2 artist cutouts, no FLONTMIE full text, no disclaimer card)
            ========================================================= */}
         {step === 5 && (
-          <div className="flex-1 flex flex-col justify-between min-h-[calc(100vh-52px)]">
-            {/* Subtle Back Button */}
-            <div className="flex items-center justify-between pt-1">
+          <div className="h-full flex flex-col justify-between overflow-hidden">
+            <div className="flex items-center justify-between shrink-0">
               <button
                 type="button"
                 onClick={() => setStep(4)}
@@ -1410,32 +1129,27 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
               >
                 <ChevronLeft className="w-6 h-6 stroke-[1.75]" />
               </button>
-              <span className="text-[11px] font-medium text-[#2A2925]">
-                Version {legalData?.terms_version || '2026.10'}
-              </span>
+              <FlontmieGeometricMark className="w-6 h-7 text-[#080808]" />
+              <div className="w-6" />
             </div>
 
-            {/* Faded Overlapping Artist Cutout Collage from Screenshot */}
-            <div className="-mx-6 my-auto flex items-center justify-center">
+            {/* Center: Only 2 Individually Positioned Subtle Faded Artist Cutouts */}
+            <div className="relative flex-1 min-h-0 w-full max-w-[360px] mx-auto my-2 select-none pointer-events-none opacity-35">
               <img
-                src="/assets/aistudio/onboarding_optin_collage.jpg"
-                alt="Flontmie Collage"
-                className="w-full max-w-[430px] h-auto object-contain pointer-events-none"
+                src="/assets/aistudio/artist_single_dreads.jpg"
+                alt="Featured Artist"
+                className="absolute top-[6%] left-[2%] w-[48%] max-w-[185px] max-h-[58%] object-contain z-10"
+              />
+              <img
+                src="/assets/aistudio/artist_single_davido.jpg"
+                alt="Davido"
+                className="absolute bottom-[4%] right-[2%] w-[48%] max-w-[185px] max-h-[58%] object-contain z-20"
               />
             </div>
 
-            {/* Bottom Section: 3D FLONTMIE Wordmark, Headline, Legal Summary, Opt In Button & Footer */}
-            <div className="pt-1 pb-1">
-              {/* 3D Outlined FLONTMIE Wordmark */}
-              <div className="mb-2 -ml-1">
-                <img
-                  src="/assets/aistudio/onboarding_flontmie_3d.jpg"
-                  alt="FLONTMIE"
-                  className="h-10 sm:h-11 w-auto object-contain pointer-events-none"
-                />
-              </div>
-
-              <h1 className="text-[28px] leading-[1.18] tracking-tight text-[#0B0B0A]">
+            {/* Bottom Section: Headline, Tagline, Opt In Button & Footer Links */}
+            <div className="shrink-0 pt-1 pb-1">
+              <h1 className="text-[24px] sm:text-[28px] leading-[1.15] tracking-tight text-[#0B0B0A]">
                 <span className="font-extrabold">Elevate</span>{' '}
                 <span className="font-normal">Every</span>
                 <br />
@@ -1443,83 +1157,44 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
                 <span className="font-extrabold">Music</span>
               </h1>
 
-              <p className="text-[13px] text-[#22211E] mt-3 font-normal">
-                Every Bet Tells Your Story
+              <p className="text-[13px] text-[#22211E] mt-2 sm:mt-3 font-normal">
+                Every Beat Tells Your Story.
               </p>
 
-              {/* Compact Interactive Legal Preview & Explicit Acceptance Control */}
-              <div className="mt-4 p-3 rounded-xl bg-black/[0.05] border border-black/10 text-[11px] text-[#1D1C19] space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-bold flex items-center gap-1.5">
-                    <ShieldCheck className="w-3.5 h-3.5 text-[#080808]" />
-                    <span>{legalData?.platform_name || 'Flontmie Music Platform'}</span>
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setActiveLegalModal('terms')}
-                      className="font-bold underline hover:opacity-75 cursor-pointer"
-                    >
-                      Read Terms
-                    </button>
-                    <span>·</span>
-                    <button
-                      type="button"
-                      onClick={() => setActiveLegalModal('privacy')}
-                      className="font-bold underline hover:opacity-75 cursor-pointer"
-                    >
-                      Read Privacy
-                    </button>
-                  </div>
-                </div>
-
-                <label className="flex items-start gap-2 cursor-pointer pt-0.5">
-                  <input
-                    type="checkbox"
-                    checked={termsAcceptedChecked}
-                    onChange={(e) => setTermsAcceptedChecked(e.target.checked)}
-                    className="mt-0.5 w-3.5 h-3.5 accent-black cursor-pointer shrink-0"
-                  />
-                  <span className="leading-snug text-[#22211E]">
-                    I accept the Flontmie Terms and Conditions (v{legalData?.terms_version || '2026.10'}) and Privacy Policy (v{legalData?.privacy_version || '2026.10'}).
-                  </span>
-                </label>
-              </div>
-
               {finalError && (
-                <p className="text-xs text-red-900 font-semibold mt-2 text-center">
+                <div className="mt-2 text-xs text-red-900 bg-red-900/15 p-2 rounded border border-red-900/30">
                   {finalError}
-                </p>
+                </div>
               )}
 
-              {/* Black Opt In Button */}
-              <div className="mt-4 px-3">
+              {/* Solid Black Opt In Button */}
+              <div className="mt-4 sm:mt-6 px-2">
                 <button
                   type="button"
                   disabled={savingFinal}
-                  onClick={handleOptInComplete}
-                  className="w-full py-3.5 bg-[#080808] hover:bg-[#1a1a1a] disabled:opacity-60 active:scale-[0.99] text-white text-[13px] font-medium tracking-wide transition-all cursor-pointer inline-flex items-center justify-center gap-2"
+                  onClick={handleFinalOptIn}
+                  className="w-full py-3 sm:py-3.5 bg-[#080808] hover:bg-[#1a1a1a] disabled:opacity-60 active:scale-[0.99] text-white text-[13px] font-medium tracking-wide transition-all cursor-pointer shadow-sm flex items-center justify-center gap-2"
                 >
                   {savingFinal && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                   <span>Opt In</span>
                 </button>
               </div>
 
-              {/* Exact Screenshot Footer Line */}
-              <p className="text-[10.5px] text-[#22211E] text-center mt-2.5 leading-normal">
+              {/* Footer Legal Links */}
+              <p className="text-[10px] text-center text-[#2A2925] mt-2.5">
                 By continuing, you agree to our{' '}
                 <button
                   type="button"
-                  onClick={() => setActiveLegalModal('terms')}
-                  className="font-bold text-[#080808] hover:underline cursor-pointer"
+                  onClick={onOpenTerms || (() => setActiveLegalModal('terms'))}
+                  className="font-bold underline text-[#111] hover:opacity-75 cursor-pointer"
                 >
                   Terms and Conditions
                 </button>{' '}
                 and{' '}
                 <button
                   type="button"
-                  onClick={() => setActiveLegalModal('privacy')}
-                  className="font-bold text-[#080808] hover:underline cursor-pointer"
+                  onClick={onOpenPrivacy || (() => setActiveLegalModal('privacy'))}
+                  className="font-bold underline text-[#111] hover:opacity-75 cursor-pointer"
                 >
                   Privacy Policy
                 </button>
@@ -1530,97 +1205,112 @@ export const FlontmieOnboarding: React.FC<FlontmieOnboardingProps> = ({
         )}
       </div>
 
-      {/* =========================================================
-          ACTUAL TERMS & CONDITIONS AND PRIVACY POLICY VIEWER MODAL
-         ========================================================= */}
+      {/* In-App Quick Legal Preview Modal */}
       {activeLegalModal && (
-        <div className="fixed inset-0 z-[170] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="w-full max-w-lg bg-[#EAE6DC] text-[#121210] rounded-2xl border border-black/15 shadow-2xl overflow-hidden flex flex-col max-h-[86vh]">
-            <div className="px-5 py-4 border-b border-black/10 flex items-center justify-between bg-[#DFDBD0]">
-              <div className="flex items-center gap-2">
-                {activeLegalModal === 'terms' ? (
-                  <FileText className="w-4 h-4 text-[#080808]" />
-                ) : (
-                  <Lock className="w-4 h-4 text-[#080808]" />
-                )}
-                <div>
-                  <h3 className="text-sm font-extrabold text-[#080808]">
-                    {activeLegalModal === 'terms'
-                      ? 'Flontmie Terms and Conditions'
-                      : 'Flontmie Privacy Policy'}
-                  </h3>
-                  <p className="text-[11px] text-[#45433E]">
-                    Version{' '}
-                    {activeLegalModal === 'terms'
-                      ? legalData?.terms_version || '2026.10'
-                      : legalData?.privacy_version || '2026.10'}{' '}
-                    · Effective {legalData?.effective_date || '2026-10-28'}
-                  </p>
-                </div>
+        <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-lg bg-[#EFECE3] text-[#111] rounded-t-3xl sm:rounded-3xl shadow-2xl max-h-[85vh] flex flex-col overflow-hidden border border-black/10">
+            <div className="px-6 py-4 border-b border-black/10 flex items-center justify-between bg-[#E4E0D5]">
+              <div className="flex items-center gap-2.5">
+                <FileText className="w-5 h-5 text-[#080808]" />
+                <h3 className="text-base font-extrabold text-[#0B0B0A]">
+                  {activeLegalModal === 'terms'
+                    ? 'Flontmie Terms and Conditions'
+                    : 'Flontmie Privacy Policy'}
+                </h3>
               </div>
               <button
                 type="button"
                 onClick={() => setActiveLegalModal(null)}
-                className="p-1.5 rounded-full hover:bg-black/10 text-[#111] cursor-pointer"
+                className="p-1.5 rounded-full hover:bg-black/10 text-[#222] transition-colors cursor-pointer"
+                aria-label="Close legal view"
               >
-                <X className="w-4 h-4" />
+                <X className="w-5 h-5" />
               </button>
             </div>
 
-            {/* Tab Switcher inside Modal */}
-            <div className="px-5 pt-3 flex gap-2 border-b border-black/10 bg-[#E5E1D6]">
-              <button
-                type="button"
-                onClick={() => setActiveLegalModal('terms')}
-                className={`pb-2.5 text-xs font-bold border-b-2 transition-colors cursor-pointer ${
-                  activeLegalModal === 'terms'
-                    ? 'border-[#080808] text-[#080808]'
-                    : 'border-transparent text-[#5A574F]'
-                }`}
-              >
-                Terms &amp; Conditions
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveLegalModal('privacy')}
-                className={`pb-2.5 text-xs font-bold border-b-2 transition-colors cursor-pointer ${
-                  activeLegalModal === 'privacy'
-                    ? 'border-[#080808] text-[#080808]'
-                    : 'border-transparent text-[#5A574F]'
-                }`}
-              >
-                Privacy Policy
-              </button>
+            <div className="p-6 overflow-y-auto space-y-4 text-xs leading-relaxed text-[#2A2823]">
+              <div className="pb-2 border-b border-black/10 text-[11px] text-[#55524B]">
+                <span>
+                  Effective Date: {legalData?.effective_date || 'October 29, 2026'}
+                </span>
+                <span className="mx-2">·</span>
+                <span>
+                  Version:{' '}
+                  {activeLegalModal === 'terms'
+                    ? legalData?.terms_version || '2026.10'
+                    : legalData?.privacy_version || '2026.10'}
+                </span>
+              </div>
+
+              {activeLegalModal === 'terms' ? (
+                <>
+                  {(legalData?.terms_sections && legalData.terms_sections.length > 0
+                    ? legalData.terms_sections
+                    : [
+                        {
+                          heading: '1. Acceptance of Terms',
+                          body: 'By accessing and creating an account on the Flontmie platform, you enter into a binding agreement and agree to comply with all applicable local, national, and international laws.',
+                        },
+                        {
+                          heading: '2. User Eligibility & Accounts',
+                          body: 'You must provide accurate information when registering. You are solely responsible for safeguarding your credentials and any activity under your account.',
+                        },
+                        {
+                          heading: '3. Intellectual Property & Genuine Media',
+                          body: 'All music, album artwork, lyrics, audio recordings, and videos provided on Flontmie are protected by copyright. Flontmie strictly serves genuine distributor and administrator catalog media.',
+                        },
+                        {
+                          heading: '4. Acceptable Conduct',
+                          body: 'Users agree not to scrape, reverse-engineer, redistribute, or interfere with security features or music stream delivery systems.',
+                        },
+                      ]
+                  ).map((sec, idx) => (
+                    <div key={idx} className="space-y-1">
+                      <h4 className="font-bold text-[13px] text-[#0A0A09]">
+                        {sec.heading}
+                      </h4>
+                      <p>{sec.body}</p>
+                    </div>
+                  ))}
+                </>
+              ) : (
+                <>
+                  {(legalData?.privacy_sections && legalData.privacy_sections.length > 0
+                    ? legalData.privacy_sections
+                    : [
+                        {
+                          heading: '1. Information We Collect',
+                          body: 'We collect your email, display name, country of residence, and streaming interaction preferences (favorite genres and followed artists).',
+                        },
+                        {
+                          heading: '2. Use of Information',
+                          body: 'We use your information exclusively to deliver personalized playlists, synchronize playback states, record authentic like and comment engagement, and uphold platform security.',
+                        },
+                        {
+                          heading: '3. Data Security & Storage',
+                          body: 'Account credentials and preferences are securely encrypted and stored in our production database. We never sell your personal data to third-party ad brokers.',
+                        },
+                      ]
+                  ).map((sec, idx) => (
+                    <div key={idx} className="space-y-1">
+                      <h4 className="font-bold text-[13px] text-[#0A0A09]">
+                        {sec.heading}
+                      </h4>
+                      <p>{sec.body}</p>
+                    </div>
+                  ))}
+                </>
+              )}
             </div>
 
-            {/* Document Sections Loaded from MySQL Backend */}
-            <div className="p-5 overflow-y-auto space-y-4 text-xs leading-relaxed text-[#1E1D1A]">
-              {(activeLegalModal === 'terms'
-                ? legalData?.terms_sections
-                : legalData?.privacy_sections
-              )?.map((sec, idx) => (
-                <div key={idx} className="space-y-1">
-                  <h4 className="font-bold text-[#080808] text-[13px]">{sec.heading}</h4>
-                  <p className="text-[#2B2925]">{sec.body}</p>
-                </div>
-              ))}
-            </div>
-
-            <div className="px-5 py-3.5 border-t border-black/10 bg-[#DFDBD0] flex items-center justify-between gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  setTermsAcceptedChecked(true);
-                  setActiveLegalModal(null);
-                }}
-                className="px-5 py-2.5 bg-[#080808] text-white text-xs font-semibold cursor-pointer"
-              >
-                Accept &amp; Close
-              </button>
+            <div className="px-6 py-4 bg-[#E4E0D5] border-t border-black/10 flex items-center justify-between">
+              <span className="text-[11px] text-[#44413A]">
+                {legalData?.platform_name || 'Flontmie Music'}
+              </span>
               <button
                 type="button"
                 onClick={() => setActiveLegalModal(null)}
-                className="px-4 py-2 text-xs font-semibold text-[#333] hover:text-black cursor-pointer"
+                className="px-5 py-2 bg-[#080808] hover:bg-[#1f1f1f] text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer"
               >
                 Close
               </button>

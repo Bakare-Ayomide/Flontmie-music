@@ -745,7 +745,21 @@ class FlontmieApiService {
   }
 
   // --- Auth Login / Register (Listener-Only Public Registration) ---
-  public async login(email: string, password: string): Promise<any> {
+  public async login(
+    emailOrPayload: string | { email?: string; password?: string; username?: string },
+    maybePassword?: string
+  ): Promise<any> {
+    let email = '';
+    let password = '';
+
+    if (typeof emailOrPayload === 'string') {
+      email = emailOrPayload.trim();
+      password = maybePassword || '';
+    } else if (emailOrPayload && typeof emailOrPayload === 'object') {
+      email = (emailOrPayload.email || emailOrPayload.username || '').trim();
+      password = emailOrPayload.password || maybePassword || '';
+    }
+
     const res = await this.request<any>('auth.php?action=login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),

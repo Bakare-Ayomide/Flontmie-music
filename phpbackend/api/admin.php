@@ -336,8 +336,8 @@ if ($method === 'POST' && $action === 'create_user') {
     if (empty($displayName)) {
         json_response(['status' => 'error', 'message' => 'Display name is required.'], 400);
     }
-    if (strlen($password) < 8) {
-        json_response(['status' => 'error', 'message' => 'Password must be at least 8 characters long.'], 400);
+    if (strlen($password) < 6) {
+        json_response(['status' => 'error', 'message' => 'Password must be at least 6 characters long.'], 400);
     }
 
     $chk = $pdo->prepare("SELECT id FROM users WHERE email = ? LIMIT 1");
@@ -463,9 +463,14 @@ if ($method === 'POST' && $action === 'update_user') {
         WHERE id = ?
     ")->execute([$newRole, $newStatus, $newName, $newEmail, $distributorId, $labelId, $artistId, $userId]);
 
-    if (!empty($input['new_password']) && strlen($input['new_password']) >= 8) {
+    if (!empty($input['new_password']) && strlen($input['new_password']) >= 6) {
         $hash = password_hash($input['new_password'], PASSWORD_BCRYPT);
         $pdo->prepare("UPDATE users SET password_hash = ? WHERE id = ?")->execute([$hash, $userId]);
+    }
+
+    if (array_key_exists('email_verified', $input)) {
+        $ev = !empty($input['email_verified']) ? 1 : 0;
+        $pdo->prepare("UPDATE users SET email_verified = ? WHERE id = ?")->execute([$ev, $userId]);
     }
 
     if ($newStatus !== 'active') {
@@ -489,7 +494,7 @@ if ($method === 'POST' && $action === 'delete_user') {
         json_response(['status' => 'error', 'message' => 'Cannot delete your own active administrator account.'], 400);
     }
 
-    $stmt = $pdo->prepare("SELECT role, email FROM users WHERE id = ? LIMIT 1");
+    $stmt = $pdo->prepare("SELECT role, email, display_name FROM users WHERE id = ? LIMIT 1");
     $stmt->execute([$userId]);
     $u = $stmt->fetch();
     if (!$u) {
@@ -502,10 +507,24 @@ if ($method === 'POST' && $action === 'delete_user') {
         }
     }
 
-    $pdo->prepare("DELETE FROM user_sessions WHERE user_id = ?")->execute([$userId]);
+    try { $pdo->prepare("DELETE FROM user_sessions WHERE user_id = ?")->execute([$userId]); } catch (Throwable $e) {}
+    try { $pdo->prepare("DELETE FROM user_favorites WHERE user_id = ?")->execute([$userId]); } catch (Throwable $e) {}
+    try { $pdo->prepare("DELETE FROM track_comments WHERE user_id = ?")->execute([$userId]); } catch (Throwable $e) {}
+    try { $pdo->prepare("DELETE FROM artist_follows WHERE user_id = ?")->execute([$userId]); } catch (Throwable $e) {}
+    try { $pdo->prepare("DELETE FROM user_activities WHERE user_id = ?")->execute([$userId]); } catch (Throwable $e) {}
+    try { $pdo->prepare("UPDATE artists SET claimed_user_id = NULL, claimed_status = 'unclaimed' WHERE claimed_user_id = ?")->execute([$userId]); } catch (Throwable $e) {}
+    try { $pdo->prepare("DELETE FROM playlists WHERE user_id = ?")->execute([$userId]); } catch (Throwable $e) {}
+
     $pdo->prepare("DELETE FROM users WHERE id = ?")->execute([$userId]);
-    Auth::logAudit($admin['id'], 'ADMIN_USER_DELETED', 'USER', $userId, ['email' => $u['email']]);
-    json_response(['status' => 'success', 'message' => 'User account permanently deleted.']);
+
+    // Reconcile cached track likes_count & comments_count
+    try {
+        $pdo->exec("UPDATE tracks t SET likes_count = (SELECT COUNT(*) FROM user_favorites uf WHERE uf.track_id = t.id)");
+        $pdo->exec("UPDATE tracks t SET comments_count = (SELECT COUNT(*) FROM track_comments tc WHERE tc.track_id = t.id)");
+    } catch (Throwable $e) {}
+
+    Auth::logAudit($admin['id'], 'ADMIN_USER_DELETED', 'USER', $userId, ['email' => $u['email'], 'display_name' => $u['display_name'] ?? '']);
+    json_response(['status' => 'success', 'message' => "User account {$u['email']} permanently deleted."]);
 }
 
 if ($method === 'POST' && $action === 'revoke_session') {

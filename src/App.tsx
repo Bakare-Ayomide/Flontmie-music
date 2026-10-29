@@ -51,6 +51,8 @@ import { PublicArtistPage } from './components/artist/PublicArtistPage';
 import { AuthModal, AuthUser } from './components/auth/AuthModal';
 import { FlontmieOnboarding, OnboardingStep } from './components/auth/FlontmieOnboarding';
 import { ProfilePage } from './components/profile/ProfilePage';
+import { TermsPage } from './pages/TermsPage';
+import { PrivacyPolicyPage } from './pages/PrivacyPolicyPage';
 import { YouTubeMusicDiscovery } from './components/discovery/YouTubeMusicDiscovery';
 import { nativePlatform } from './services/nativePlatform';
 import { Heart, Compass, Sparkles, Flame, Disc3, ArrowLeft, Music, Layers, Play, Check, WifiOff, Download } from 'lucide-react';
@@ -87,6 +89,14 @@ export default function App() {
     return done !== 'true' && !localStorage.getItem('flontmie_jwt');
   });
   const [onboardingInitialStep, setOnboardingInitialStep] = useState<OnboardingStep | undefined>(undefined);
+  const [activeLegalView, setActiveLegalView] = useState<'terms' | 'privacy' | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const p = window.location.pathname.toLowerCase();
+    const h = window.location.hash.toLowerCase();
+    if (p === '/terms' || h === '#terms') return 'terms';
+    if (p === '/privacy' || h === '#privacy') return 'privacy';
+    return null;
+  });
 
   // Desktop sidebar collapse state
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
@@ -246,12 +256,19 @@ export default function App() {
           setSelectedPlaylistId(null);
           setSelectedArtistId(null);
           setCurrentPersona('listener');
+          setActiveLegalView(null);
+        } else if (path === '/terms' || hash === '#terms') {
+          setActiveLegalView('terms');
+        } else if (path === '/privacy' || hash === '#privacy') {
+          setActiveLegalView('privacy');
         } else if (path === '/onboarding' || hash === '#onboarding') {
           setIsOnboardingOpen(true);
+          setActiveLegalView(null);
         } else {
           setCurrentTab('home');
           setSelectedPlaylistId(null);
           setSelectedArtistId(null);
+          setActiveLegalView(null);
         }
       } catch (err) {
         console.warn('URL parse error:', err);
@@ -2027,7 +2044,47 @@ export default function App() {
           setIsOnboardingOpen(false);
           navigateTab('home');
         }}
+        onOpenTerms={() => {
+          setActiveLegalView('terms');
+          try { window.history.pushState(null, '', '/terms'); } catch {}
+        }}
+        onOpenPrivacy={() => {
+          setActiveLegalView('privacy');
+          try { window.history.pushState(null, '', '/privacy'); } catch {}
+        }}
       />
+
+      {/* Dedicated Terms and Conditions Page View */}
+      {activeLegalView === 'terms' && (
+        <div className="fixed inset-0 z-[170] overflow-y-auto">
+          <TermsPage
+            onBack={() => {
+              setActiveLegalView(null);
+              try { window.history.pushState(null, '', '/'); } catch {}
+            }}
+            onNavigateToPrivacy={() => {
+              setActiveLegalView('privacy');
+              try { window.history.pushState(null, '', '/privacy'); } catch {}
+            }}
+          />
+        </div>
+      )}
+
+      {/* Dedicated Privacy Policy Page View */}
+      {activeLegalView === 'privacy' && (
+        <div className="fixed inset-0 z-[170] overflow-y-auto">
+          <PrivacyPolicyPage
+            onBack={() => {
+              setActiveLegalView(null);
+              try { window.history.pushState(null, '', '/'); } catch {}
+            }}
+            onNavigateToTerms={() => {
+              setActiveLegalView('terms');
+              try { window.history.pushState(null, '', '/terms'); } catch {}
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 }
